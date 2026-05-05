@@ -79,6 +79,24 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
   );
 
   server.registerTool(
+    "update_artboard",
+    {
+      title: "Update artboard",
+      description: "Patch an artboard. Use this for names, positions, dimensions, background, lock, and visibility.",
+      inputSchema: {
+        boardId: z.string(),
+        artboardId: z.string(),
+        patch: z.record(z.string(), z.unknown())
+      }
+    },
+    async ({ boardId, artboardId, patch }) => {
+      const project = await store.applyOperation(boardId, { type: "update_artboard", artboardId, patch });
+      await changed(boardId);
+      return text(project);
+    }
+  );
+
+  server.registerTool(
     "create_variant",
     {
       title: "Create variant",

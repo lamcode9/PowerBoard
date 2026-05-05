@@ -156,6 +156,21 @@ button {
   color: #1d4ed8;
 }
 
+.icon-button:disabled,
+.text-button:disabled,
+.wide-action:disabled,
+.segmented-row button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.icon-button:disabled:hover,
+.text-button:disabled:hover,
+.wide-action:disabled:hover {
+  background: transparent;
+  color: #475569;
+}
+
 .zoom-readout {
   width: 45px;
   color: #334155;
@@ -554,6 +569,20 @@ button {
   cursor: nwse-resize;
 }
 
+.artboard-resize-handle {
+  position: absolute;
+  right: -9px;
+  bottom: -9px;
+  z-index: 5;
+  width: 18px;
+  height: 18px;
+  border: 3px solid #ffffff;
+  border-radius: 999px;
+  background: #2563eb;
+  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.28);
+  cursor: nwse-resize;
+}
+
 .mock-card,
 .mock-dialog,
 .mock-list,
@@ -776,6 +805,15 @@ button {
   gap: 12px;
 }
 
+.field-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.field-grid.two-col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .field {
   display: grid;
   gap: 6px;
@@ -846,6 +884,46 @@ button {
 .segmented-row button:hover {
   background: #f0fdf4;
   color: #047857;
+}
+
+.segmented-row button:disabled:hover {
+  background: #ffffff;
+  color: #334155;
+}
+
+.selection-list {
+  display: grid;
+  gap: 6px;
+}
+
+.selection-row {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.selection-row span,
+.selection-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selection-row span {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.selection-row small {
+  color: #64748b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
 }
 
 .empty-inspector {

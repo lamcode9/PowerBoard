@@ -52,4 +52,22 @@ describe("Board operations", () => {
     next = applyBoardOperation(next, { type: "delete_element", elementId: group.id });
     expect(next.elements.some((element) => element.id === button.id)).toBe(false);
   });
+
+  it("updates artboards through the shared operation service", () => {
+    const project = createDefaultProject();
+    const artboardId = project.artboards[0]!.id;
+
+    const next = applyBoardOperation(project, {
+      type: "update_artboard",
+      artboardId,
+      patch: { name: "Mobile Home Iteration", x: 240, width: 414, background: "#FFFFFF" }
+    });
+
+    const artboard = next.artboards.find((candidate) => candidate.id === artboardId);
+    expect(artboard?.name).toBe("Mobile Home Iteration");
+    expect(artboard?.x).toBe(240);
+    expect(artboard?.width).toBe(414);
+    expect(artboard?.background).toBe("#FFFFFF");
+    expect(next.selection).toEqual([artboardId]);
+  });
 });

@@ -249,6 +249,7 @@ export type BoardProject = z.infer<typeof BoardProjectSchema>;
 
 export const OperationSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("create_artboard"), artboard: ArtboardSchema }),
+  z.object({ type: z.literal("update_artboard"), artboardId: z.string(), patch: z.record(z.string(), z.unknown()) }),
   z.object({ type: z.literal("create_variant"), sourceArtboardId: z.string(), artboardId: z.string().optional(), name: z.string().optional(), offsetX: z.number().default(460) }),
   z.object({ type: z.literal("add_element"), element: BoardElementSchema }),
   z.object({ type: z.literal("update_element"), elementId: z.string(), patch: z.record(z.string(), z.unknown()) }),
@@ -532,6 +533,15 @@ export function applyBoardOperation(project: BoardProject, rawOperation: BoardOp
       ensureMainPage(next).artboardIds.push(operation.artboard.id);
       next.selection = [operation.artboard.id];
       break;
+    case "update_artboard": {
+      const index = next.artboards.findIndex((artboard) => artboard.id === operation.artboardId);
+      if (index === -1) {
+        throw new Error(`Artboard not found: ${operation.artboardId}`);
+      }
+      next.artboards[index] = ArtboardSchema.parse({ ...next.artboards[index]!, ...operation.patch });
+      next.selection = [operation.artboardId];
+      break;
+    }
     case "create_variant": {
       const source = next.artboards.find((artboard) => artboard.id === operation.sourceArtboardId);
       if (!source) {

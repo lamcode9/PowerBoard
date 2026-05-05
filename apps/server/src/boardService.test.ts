@@ -28,6 +28,18 @@ describe("BoardStore", () => {
     expect(redone.elements.some((candidate) => candidate.id === element.id)).toBe(true);
   });
 
+  it("applies artboard edits through undoable operations", async () => {
+    const { store } = await tempStore();
+    const board = await store.createBoard("Artboard Ops");
+    const artboardId = board.artboards[0]!.id;
+
+    const updated = await store.applyOperation(board.id, { type: "update_artboard", artboardId, patch: { x: 320, name: "Moved Screen" } });
+    expect(updated.artboards.find((candidate) => candidate.id === artboardId)?.x).toBe(320);
+
+    const undone = await store.undo(board.id);
+    expect(undone.artboards.find((candidate) => candidate.id === artboardId)?.name).toBe(board.artboards[0]!.name);
+  });
+
   it("exports spec, React/Tailwind files, and PNG", async () => {
     const { store } = await tempStore();
     const board = await store.createBoard("Export Board");

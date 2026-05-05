@@ -5,17 +5,20 @@ import {
   BringToFront,
   ChevronDown,
   Component,
+  Copy,
   Download,
   Eye,
   EyeOff,
   FileCode2,
   FileText,
+  Focus,
   Frame,
   Group,
   Image as ImageIcon,
   Layers3,
   Lock,
   LockOpen,
+  Maximize2,
   MousePointer2,
   Plus,
   Redo2,
@@ -39,7 +42,6 @@ import {
   listBoards,
   readBoard,
   redo,
-  saveBoard,
   setSelection as postSelection,
   undo,
   uploadAsset
@@ -67,10 +69,11 @@ const componentTypes: BoardElement["type"][] = [
 
 type DragState = {
   id: string;
+  target: "element" | "artboard";
   mode: "move" | "resize";
   startX: number;
   startY: number;
-  original: Pick<BoardElement, "x" | "y" | "width" | "height">;
+  original: Pick<BoardElement | Artboard, "x" | "y" | "width" | "height">;
 };
 
 type PanState = {
@@ -89,6 +92,13 @@ type GestureLikeEvent = Event & {
 type GestureState = {
   startZoom: number;
   focalPoint: ViewportPoint;
+};
+
+type Bounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 };
 
 const MIN_ZOOM = 0.25;
@@ -324,6 +334,16 @@ export function App() {
     });
   }
 
+  function updateLocalArtboard(id: string, patch: Partial<Artboard>) {
+    setProject((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        artboards: current.artboards.map((artboard) => (artboard.id === id ? { ...artboard, ...patch } : artboard))
+      };
+    });
+  }
+
   function onCanvasPointerMove(event: React.PointerEvent<HTMLDivElement>) {
     if (pan) {
       applyCamera({
@@ -337,13 +357,22 @@ export function App() {
     const currentZoom = cameraRef.current.zoom;
     const dx = (event.clientX - drag.startX) / currentZoom;
     const dy = (event.clientY - drag.startY) / currentZoom;
+    const minSize = drag.target === "artboard" ? 120 : 24;
+    const patch =
+      drag.mode === "move"
+        ? { x: Math.round(drag.original.x + dx), y: Math.round(drag.original.y + dy) }
+        : {
+            width: Math.max(minSize, Math.round(drag.original.width + dx)),
+            height: Math.max(minSize, Math.round(drag.original.height + dy))
+          };
+    if (drag.target === "artboard") {
+      updateLocalArtboard(drag.id, patch);
+      return;
+    }
     if (drag.mode === "move") {
-      updateLocalElement(drag.id, { x: Math.round(drag.original.x + dx), y: Math.round(drag.original.y + dy) });
+      updateLocalElement(drag.id, patch);
     } else {
-      updateLocalElement(drag.id, {
-        width: Math.max(24, Math.round(drag.original.width + dx)),
-        height: Math.max(24, Math.round(drag.original.height + dy))
-      });
+      updateLocalElement(drag.id, patch);
     }
   }
 
@@ -353,17 +382,27 @@ export function App() {
       return;
     }
     if (!drag || !project) return;
-    const element = project.elements.find((candidate) => candidate.id === drag.id);
+    const element = drag.target === "element" ? project.elements.find((candidate) => candidate.id === drag.id) : undefined;
+    const artboard = drag.target === "artboard" ? project.artboards.find((candidate) => candidate.id === drag.id) : undefined;
     setDrag(null);
-    if (!element) return;
-    await runOperation({
-      type: "move_resize_element",
-      elementId: element.id,
-      x: element.x,
-      y: element.y,
-      width: element.width,
-      height: element.height
-    });
+    if (element) {
+      await runOperation({
+        type: "move_resize_element",
+        elementId: element.id,
+        x: element.x,
+        y: element.y,
+        width: element.width,
+        height: element.height
+      });
+      return;
+    }
+    if (artboard) {
+      await runOperation({
+        type: "update_artboard",
+        artboardId: artboard.id,
+        patch: { x: artboard.x, y: artboard.y, width: artboard.width, height: artboard.height }
+      });
+    }
   }
 
   async function addArtboard() {
@@ -437,6 +476,51 @@ export function App() {
     group.semanticRole = "component group";
     group.zIndex = Math.max(...elements.map((element) => element.zIndex)) + 1;
     await runOperation({ type: "group_elements", group, elementIds: elements.map((element) => element.id) });
+  }
+
+  async function duplicateSelection() {
+    if (!project) return;
+    if (!selectedIds.length) {
+      setStatus("Select something to duplicate");
+      return;
+    }
+    const selectedArtboards = project.artboards.filter((artboard) => selectedIds.includes(artboard.id));
+    if (selectedArtboards.length === 1 && selectedIds.length === 1) {
+      await runOperation({
+        type: "create_variant",
+        sourceArtboardId: selectedArtboards[0]!.id,
+        name: `${selectedArtboards[0]!.name} Copy`,
+        offsetX: selectedArtboards[0]!.width + 120
+      });
+      return;
+    }
+
+    const rootElements = selectedElementRoots(project, selectedIds);
+    if (!rootElements.length) {
+      setStatus("Select elements to duplicate, or one artboard to create a variant");
+      return;
+    }
+    const sourceElements = rootElements.flatMap((element) => [element, ...elementDescendants(project, element.id)]);
+    const idMap = new Map(sourceElements.map((element) => [element.id, createId(element.type)]));
+    const clonedElements = sourceElements.map((element) => ({
+      ...structuredClone(element),
+      id: idMap.get(element.id)!,
+      parentId: element.parentId && idMap.has(element.parentId) ? idMap.get(element.parentId)! : element.parentId,
+      x: element.parentId && idMap.has(element.parentId) ? element.x : element.x + 28,
+      y: element.parentId && idMap.has(element.parentId) ? element.y : element.y + 28,
+      name: uniqueElementName(project, element.artboardId, `${element.name} Copy`),
+      zIndex: element.zIndex + 1
+    }));
+
+    let nextProject = project;
+    for (const element of clonedElements) {
+      nextProject = await applyOperation(nextProject.id, { type: "add_element", element });
+    }
+    setProject(nextProject);
+    const nextSelection = rootElements.map((element) => idMap.get(element.id)!).filter(Boolean);
+    setSelectedIds(nextSelection);
+    await postSelection(project.id, nextSelection).catch(() => undefined);
+    setStatus(`Duplicated ${rootElements.length} ${rootElements.length === 1 ? "element" : "elements"}`);
   }
 
   async function connectArtboards() {
@@ -540,18 +624,43 @@ export function App() {
 
   async function updateArtboard(patch: Partial<Artboard>) {
     if (!project || !selectedArtboard) return;
-    const next = {
-      ...project,
-      artboards: project.artboards.map((artboard) => (artboard.id === selectedArtboard.id ? { ...artboard, ...patch } : artboard)),
-      metadata: { ...project.metadata, updatedAt: new Date().toISOString() }
-    };
-    setProject(next);
-    try {
-      await saveBoard(next);
-      setStatus("Saved");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Artboard update failed");
+    await runOperation({ type: "update_artboard", artboardId: selectedArtboard.id, patch });
+  }
+
+  function focusSelection() {
+    if (!project) return;
+    const bounds = boundsForSelection(project, selectedIds);
+    if (!bounds) {
+      setStatus("Select an artboard or element to focus");
+      return;
     }
+    focusBounds(bounds, "Focused selection");
+  }
+
+  function fitAll() {
+    if (!project) return;
+    const bounds = boundsForProject(project);
+    if (!bounds) {
+      setStatus("No visible artboards to fit");
+      return;
+    }
+    focusBounds(bounds, "Fit visible artboards");
+  }
+
+  function focusBounds(bounds: Bounds, message: string) {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const rect = viewport.getBoundingClientRect();
+    const padding = 180;
+    const zoomForWidth = rect.width / Math.max(1, bounds.width + padding);
+    const zoomForHeight = rect.height / Math.max(1, bounds.height + padding);
+    const nextZoom = clamp(Math.min(zoomForWidth, zoomForHeight), MIN_ZOOM, MAX_ZOOM);
+    applyCamera({
+      zoom: nextZoom,
+      x: rect.width / 2 - (bounds.x + bounds.width / 2) * nextZoom,
+      y: rect.height / 2 - (bounds.y + bounds.height / 2) * nextZoom
+    });
+    setStatus(message);
   }
 
   function zoomAtViewportCenter(nextZoom: number) {
@@ -662,10 +771,13 @@ export function App() {
           <IconButton label="Redo" onClick={redoBoard}>
             <Redo2 size={18} />
           </IconButton>
-          <IconButton label="Group" onClick={groupSelection}>
+          <IconButton label="Group" onClick={groupSelection} disabled={selectedIds.length < 2}>
             <Group size={18} />
           </IconButton>
-          <IconButton label="Delete" onClick={deleteSelection}>
+          <IconButton label="Duplicate" onClick={duplicateSelection} disabled={!selectedIds.length}>
+            <Copy size={18} />
+          </IconButton>
+          <IconButton label="Delete" onClick={deleteSelection} disabled={!selectedIds.some((id) => project.elements.some((element) => element.id === id))}>
             <Trash2 size={18} />
           </IconButton>
         </div>
@@ -687,6 +799,12 @@ export function App() {
         <div className="toolbar-spacer" />
 
         <div className="toolbar-group">
+          <IconButton label="Focus selection" onClick={focusSelection} disabled={!selectedIds.length}>
+            <Focus size={18} />
+          </IconButton>
+          <IconButton label="Fit all" onClick={fitAll}>
+            <Maximize2 size={18} />
+          </IconButton>
           <IconButton label="Zoom out" onClick={() => zoomAtViewportCenter(cameraRef.current.zoom / 1.12)}>
             <ZoomOut size={18} />
           </IconButton>
@@ -750,7 +868,7 @@ export function App() {
           <div className="layers-list">
             {project.artboards.map((artboard) => (
               <div key={artboard.id} className="layer-group">
-                <button className={selectedIds.includes(artboard.id) ? "layer-row selected" : "layer-row"} onClick={() => select([artboard.id])}>
+                <button className={selectedIds.includes(artboard.id) ? "layer-row selected" : "layer-row"} onClick={(event) => select([artboard.id], event.shiftKey)}>
                   <Frame size={15} />
                   <span>{artboard.name}</span>
                   <small>{artboard.id}</small>
@@ -797,7 +915,9 @@ export function App() {
       <aside className="right-panel">
         <section className="panel-section">
           <PanelTitle icon={<Save size={16} />} title="Inspector" />
-          {selectedElement ? (
+          {selectedIds.length > 1 ? (
+            <SelectionInspector project={project} selectedIds={selectedIds} onFocus={focusSelection} onGroup={groupSelection} onDuplicate={duplicateSelection} onDelete={deleteSelection} />
+          ) : selectedElement ? (
             <ElementInspector project={project} element={selectedElement} onChange={updateSelectedElement} onReorder={(delta) => updateSelectedElement({ zIndex: selectedElement.zIndex + delta })} />
           ) : selectedArtboard ? (
             <ArtboardInspector artboard={selectedArtboard} onChange={updateArtboard} />
@@ -858,7 +978,7 @@ function LayerNode({
   return (
     <>
       <div className={selectedIds.includes(element.id) ? "layer-row selected element-layer" : "layer-row element-layer"} style={{ "--indent": `${depth * 16}px` } as React.CSSProperties}>
-        <button onClick={() => onSelect([element.id])} title={`${element.name} · ${element.id}`}>
+        <button onClick={(event) => onSelect([element.id], event.shiftKey)} title={`${element.name} · ${element.id}`}>
           {children.length ? <ChevronDown size={13} /> : <span className="layer-spacer" />}
           <span>{element.name}</span>
           <small>{element.id}</small>
@@ -891,15 +1011,26 @@ function ArtboardView({
   onDragStart: (state: DragState) => void;
 }) {
   const elements = project.elements.filter((element) => element.artboardId === artboard.id && !element.parentId && element.visible).sort((a, b) => a.zIndex - b.zIndex);
+  const selected = selectedIds.includes(artboard.id);
   return (
     <div
-      className={selectedIds.includes(artboard.id) ? "artboard-frame selected" : "artboard-frame"}
+      className={selected ? "artboard-frame selected" : "artboard-frame"}
       style={{ left: CANVAS_ORIGIN_X + artboard.x, top: CANVAS_ORIGIN_Y + artboard.y, width: artboard.width, height: artboard.height }}
       data-board-artboard={artboard.id}
       data-board-name={artboard.name}
       title={`${artboard.name} · ${artboard.id}`}
     >
-      <button className="artboard-label" onPointerDown={(event) => (event.stopPropagation(), onSelect([artboard.id], event.shiftKey))}>
+      <button
+        className="artboard-label"
+        onPointerDown={(event) => {
+          event.stopPropagation();
+          onSelect([artboard.id], event.shiftKey);
+          if (!artboard.locked && !event.shiftKey) {
+            capturePointer(event.currentTarget, event.pointerId);
+            onDragStart({ id: artboard.id, target: "artboard", mode: "move", startX: event.clientX, startY: event.clientY, original: artboard });
+          }
+        }}
+      >
         <span>{artboard.name}</span>
         <small>{artboard.id}</small>
       </button>
@@ -908,6 +1039,17 @@ function ArtboardView({
           <ElementView key={element.id} element={element} project={project} selectedIds={selectedIds} onSelect={onSelect} onDragStart={onDragStart} />
         ))}
       </div>
+      {selected && !artboard.locked ? (
+        <button
+          className="artboard-resize-handle"
+          aria-label="Resize artboard"
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            capturePointer(event.currentTarget, event.pointerId);
+            onDragStart({ id: artboard.id, target: "artboard", mode: "resize", startX: event.clientX, startY: event.clientY, original: artboard });
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -942,7 +1084,7 @@ function ElementView({
         onSelect([element.id], event.shiftKey);
         if (!element.locked && !event.shiftKey) {
           capturePointer(event.currentTarget, event.pointerId);
-          onDragStart({ id: element.id, mode: "move", startX: event.clientX, startY: event.clientY, original: element });
+          onDragStart({ id: element.id, target: "element", mode: "move", startX: event.clientX, startY: event.clientY, original: element });
         }
       }}
     >
@@ -963,7 +1105,7 @@ function ElementView({
           onPointerDown={(event) => {
             event.stopPropagation();
             capturePointer(event.currentTarget, event.pointerId);
-            onDragStart({ id: element.id, mode: "resize", startX: event.clientX, startY: event.clientY, original: element });
+            onDragStart({ id: element.id, target: "element", mode: "resize", startX: event.clientX, startY: event.clientY, original: element });
           }}
         />
       ) : null}
@@ -1110,6 +1252,60 @@ function ConnectorLayer({ project, selectedIds }: { project: BoardProject; selec
   );
 }
 
+function SelectionInspector({
+  project,
+  selectedIds,
+  onFocus,
+  onGroup,
+  onDuplicate,
+  onDelete
+}: {
+  project: BoardProject;
+  selectedIds: string[];
+  onFocus: () => void;
+  onGroup: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+}) {
+  const selectedElements = selectedIds.map((id) => project.elements.find((element) => element.id === id)).filter((element): element is BoardElement => Boolean(element));
+  const selectedArtboards = selectedIds.map((id) => project.artboards.find((artboard) => artboard.id === id)).filter((artboard): artboard is Artboard => Boolean(artboard));
+  return (
+    <div className="inspector-fields">
+      <ReadOnlyField label="Selection" value={`${selectedIds.length} selected`} />
+      <ReadOnlyField label="Elements" value={String(selectedElements.length)} />
+      <ReadOnlyField label="Artboards" value={String(selectedArtboards.length)} />
+      <div className="segmented-row">
+        <button onClick={onFocus}>
+          <Focus size={15} /> Focus
+        </button>
+        <button onClick={onDuplicate}>
+          <Copy size={15} /> Duplicate
+        </button>
+      </div>
+      <div className="segmented-row">
+        <button onClick={onGroup} disabled={selectedElements.length < 2 || selectedArtboards.length > 0}>
+          <Group size={15} /> Group
+        </button>
+        <button onClick={onDelete} disabled={!selectedElements.length}>
+          <Trash2 size={15} /> Delete
+        </button>
+      </div>
+      <div className="selection-list">
+        {selectedIds.map((id) => {
+          const element = project.elements.find((candidate) => candidate.id === id);
+          const artboard = project.artboards.find((candidate) => candidate.id === id);
+          return (
+            <div key={id} className="selection-row">
+              <span>{element?.name ?? artboard?.name ?? id}</span>
+              <small>{id}</small>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ElementInspector({
   project,
   element,
@@ -1127,6 +1323,12 @@ function ElementInspector({
       <ReadOnlyField label="Path" value={elementPath(project, element)} />
       <Field label="Name" value={element.name} onChange={(name) => onChange({ name })} />
       <Field label="Role" value={element.semanticRole ?? ""} onChange={(semanticRole) => onChange({ semanticRole })} />
+      <div className="field-grid two-col">
+        <NumberField label="X" value={element.x} min={-5000} max={5000} onChange={(x) => onChange({ x: Math.round(x) })} />
+        <NumberField label="Y" value={element.y} min={-5000} max={5000} onChange={(y) => onChange({ y: Math.round(y) })} />
+        <NumberField label="Width" value={element.width} min={12} max={3000} onChange={(width) => onChange({ width: Math.round(width) })} />
+        <NumberField label="Height" value={element.height} min={12} max={3000} onChange={(height) => onChange({ height: Math.round(height) })} />
+      </div>
       {"text" in element.props || ["button", "badge", "sticky", "text"].includes(element.type) ? <Field label="Text" value={readString(element.props.text, "")} onChange={(text) => onChange({ props: { text } })} /> : null}
       {"title" in element.props ? <Field label="Title" value={readString(element.props.title, "")} onChange={(title) => onChange({ props: { title } })} /> : null}
       {"subtitle" in element.props ? <Field label="Subtitle" value={readString(element.props.subtitle, "")} onChange={(subtitle) => onChange({ props: { subtitle } })} /> : null}
@@ -1159,8 +1361,16 @@ function ArtboardInspector({ artboard, onChange }: { artboard: Artboard; onChang
       <ReadOnlyField label="Identifier" value={artboard.id} />
       <Field label="Name" value={artboard.name} onChange={(name) => onChange({ name })} />
       <ColorField label="Background" value={artboard.background} onChange={(background) => onChange({ background })} />
-      <NumberField label="Width" value={artboard.width} min={240} max={1800} onChange={(width) => onChange({ width })} />
-      <NumberField label="Height" value={artboard.height} min={240} max={1800} onChange={(height) => onChange({ height })} />
+      <div className="field-grid two-col">
+        <NumberField label="X" value={artboard.x} min={-20000} max={20000} onChange={(x) => onChange({ x: Math.round(x) })} />
+        <NumberField label="Y" value={artboard.y} min={-20000} max={20000} onChange={(y) => onChange({ y: Math.round(y) })} />
+        <NumberField label="Width" value={artboard.width} min={240} max={2400} onChange={(width) => onChange({ width: Math.round(width) })} />
+        <NumberField label="Height" value={artboard.height} min={240} max={2400} onChange={(height) => onChange({ height: Math.round(height) })} />
+      </div>
+      <div className="segmented-row">
+        <button onClick={() => onChange({ locked: !artboard.locked })}>{artboard.locked ? <Lock size={15} /> : <LockOpen size={15} />} {artboard.locked ? "Locked" : "Unlocked"}</button>
+        <button onClick={() => onChange({ visible: !artboard.visible })}>{artboard.visible ? <Eye size={15} /> : <EyeOff size={15} />} {artboard.visible ? "Visible" : "Hidden"}</button>
+      </div>
       <p className="muted">{artboard.type} · {Math.round(artboard.width)} x {Math.round(artboard.height)}</p>
     </div>
   );
@@ -1213,9 +1423,9 @@ function PanelTitle({ icon, title }: { icon: React.ReactNode; title: string }) {
   );
 }
 
-function IconButton({ label, active, onClick, children }: { label: string; active?: boolean; onClick?: () => void; children: React.ReactNode }) {
+function IconButton({ label, active, disabled, onClick, children }: { label: string; active?: boolean; disabled?: boolean; onClick?: () => void; children: React.ReactNode }) {
   return (
-    <button className={active ? "icon-button active" : "icon-button"} onClick={onClick} title={label} aria-label={label}>
+    <button className={active ? "icon-button active" : "icon-button"} onClick={onClick} title={label} aria-label={label} disabled={disabled}>
       {children}
     </button>
   );
@@ -1362,4 +1572,74 @@ function elementPath(project: BoardProject, element: BoardElement): string {
     parentId = parent.parentId;
   }
   return [artboard?.name, ...ancestors, element.name].filter(Boolean).join(" > ");
+}
+
+function selectedElementRoots(project: BoardProject, selection: string[]): BoardElement[] {
+  const selected = new Set(selection);
+  return project.elements.filter((element) => selected.has(element.id) && !hasSelectedAncestor(project, element, selected));
+}
+
+function hasSelectedAncestor(project: BoardProject, element: BoardElement, selected: Set<string>): boolean {
+  let parentId = element.parentId;
+  while (parentId) {
+    if (selected.has(parentId)) return true;
+    parentId = project.elements.find((candidate) => candidate.id === parentId)?.parentId ?? null;
+  }
+  return false;
+}
+
+function elementDescendants(project: BoardProject, elementId: string): BoardElement[] {
+  const children = project.elements.filter((element) => element.parentId === elementId);
+  return children.flatMap((child) => [child, ...elementDescendants(project, child.id)]);
+}
+
+function boundsForProject(project: BoardProject): Bounds | null {
+  return unionBounds(project.artboards.filter((artboard) => artboard.visible).map(artboardWorldBounds));
+}
+
+function boundsForSelection(project: BoardProject, selection: string[]): Bounds | null {
+  const bounds = selection
+    .map((id) => {
+      const artboard = project.artboards.find((candidate) => candidate.id === id);
+      if (artboard) return artboardWorldBounds(artboard);
+      const element = project.elements.find((candidate) => candidate.id === id);
+      if (element) return elementWorldBounds(project, element);
+      return null;
+    })
+    .filter((bound): bound is Bounds => Boolean(bound));
+  return unionBounds(bounds);
+}
+
+function artboardWorldBounds(artboard: Artboard): Bounds {
+  return {
+    x: CANVAS_ORIGIN_X + artboard.x,
+    y: CANVAS_ORIGIN_Y + artboard.y,
+    width: artboard.width,
+    height: artboard.height
+  };
+}
+
+function elementWorldBounds(project: BoardProject, element: BoardElement): Bounds | null {
+  const artboard = project.artboards.find((candidate) => candidate.id === element.artboardId);
+  if (!artboard) return null;
+  let x = CANVAS_ORIGIN_X + artboard.x + element.x;
+  let y = CANVAS_ORIGIN_Y + artboard.y + element.y;
+  let parentId = element.parentId;
+  while (parentId) {
+    const parent = project.elements.find((candidate) => candidate.id === parentId);
+    if (!parent) break;
+    x += parent.x;
+    y += parent.y;
+    parentId = parent.parentId;
+  }
+  return { x, y, width: element.width, height: element.height };
+}
+
+function unionBounds(bounds: Bounds[]): Bounds | null {
+  if (!bounds.length) return null;
+  const left = Math.min(...bounds.map((bound) => bound.x));
+  const top = Math.min(...bounds.map((bound) => bound.y));
+  const right = Math.max(...bounds.map((bound) => bound.x + bound.width));
+  const bottom = Math.max(...bounds.map((bound) => bound.y + bound.height));
+  return { x: left, y: top, width: right - left, height: bottom - top };
 }
