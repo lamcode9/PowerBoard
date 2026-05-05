@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.DS_Store
+.vite/
+*.log
+boards/*/exports/
+boards/*/assets/
+!boards/.gitkeep

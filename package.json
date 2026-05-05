@@ -1,0 +1,23 @@
+{
+  "name": "board",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm run dev --workspace @board/server\" \"npm run dev --workspace @board/web\"",
+    "build": "npm run build --workspace @board/schema && npm run build --workspace @board/renderers && npm run build --workspace @board/server && npm run build --workspace @board/web",
+    "test": "vitest run",
+    "typecheck": "npm run typecheck --workspace @board/schema && npm run typecheck --workspace @board/renderers && npm run typecheck --workspace @board/server && npm run typecheck --workspace @board/web",
+    "mcp": "npm run mcp --workspace @board/server"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.0",
+    "concurrently": "^9.2.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.14"
+  }
+}

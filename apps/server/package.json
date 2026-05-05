@@ -1,0 +1,30 @@
+{
+  "name": "@board/server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "mcp": "tsx src/mcp.ts"
+  },
+  "dependencies": {
+    "@board/renderers": "file:../../packages/renderers",
+    "@board/schema": "file:../../packages/schema",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "cors": "^2.8.5",
+    "express": "^5.2.1",
+    "sharp": "^0.34.5",
+    "tsx": "^4.21.0",
+    "ws": "^8.18.3",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.9.3"
+  }
+}

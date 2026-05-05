@@ -1,0 +1,393 @@
+{
+  "schemaVersion": 1,
+  "id": "board_default",
+  "name": "Danny App Mockups",
+  "pages": [
+    {
+      "id": "page_main",
+      "name": "Main",
+      "artboardIds": [
+        "art_home_mobile",
+        "art_dashboard_web"
+      ]
+    }
+  ],
+  "artboards": [
+    {
+      "id": "art_home_mobile",
+      "name": "Mobile Home",
+      "type": "mobile",
+      "x": 120,
+      "y": 90,
+      "width": 393,
+      "height": 852,
+      "background": "#F5F7FB",
+      "devicePreset": "iphone-15",
+      "locked": false,
+      "visible": true
+    },
+    {
+      "id": "art_dashboard_web",
+      "name": "Web Dashboard",
+      "type": "web",
+      "x": 620,
+      "y": 90,
+      "width": 1200,
+      "height": 800,
+      "background": "#F8FAFC",
+      "devicePreset": "web-landing",
+      "locked": false,
+      "visible": true
+    }
+  ],
+  "elements": [
+    {
+      "id": "el_mobile_title",
+      "type": "text",
+      "name": "Mobile Home / Header Title",
+      "artboardId": "art_home_mobile",
+      "parentId": "el_mobile_header_frame",
+      "x": 4,
+      "y": 10,
+      "width": 240,
+      "height": 44,
+      "zIndex": 1,
+      "locked": false,
+      "visible": true,
+      "semanticRole": "heading",
+      "style": {
+        "color": "#101828",
+        "fontSize": 28,
+        "fontWeight": 760,
+        "lineHeight": 34
+      },
+      "layout": {
+        "mode": "absolute"
+      },
+      "props": {
+        "text": "Today"
+      }
+    },
+    {
+      "id": "el_mobile_card",
+      "type": "card",
+      "name": "Mobile Home / Safe-to-Spend Card",
+      "artboardId": "art_home_mobile",
+      "parentId": "el_mobile_summary_frame",
+      "x": 0,
+      "y": 0,
+      "width": 345,
+      "height": 152,
+      "zIndex": 2,
+      "locked": false,
+      "visible": true,
+      "semanticRole": "summary card",
+      "style": {
+        "fill": "#FFFFFF",
+        "color": "#101828",
+        "radius": 24,
+        "shadow": "0 18px 50px rgba(15, 23, 42, 0.10)",
+        "padding": 22
+      },
+      "layout": {
+        "mode": "stack",
+        "direction": "column",
+        "gap": 12
+      },
+      "props": {
+        "eyebrow": "Safe to spend",
+        "title": "$2,480",
+        "subtitle": "After bills and savings"
+      }
+    },
+    {
+      "id": "el_mobile_button",
+      "type": "button",
+      "name": "Mobile Home / Add Transaction Button",
+      "artboardId": "art_home_mobile",
+      "parentId": "el_mobile_action_frame",
+      "x": 0,
+      "y": 20,
+      "width": 345,
+      "height": 56,
+      "zIndex": 3,
+      "locked": false,
+      "visible": true,
+      "semanticRole": "primary button",
+      "style": {
+        "fill": "#111827",
+        "color": "#FFFFFF",
+        "radius": 18,
+        "fontSize": 16,
+        "fontWeight": 720
+      },
+      "layout": {
+        "mode": "absolute"
+      },
+      "props": {
+        "text": "Add transaction"
+      }
+    },
+    {
+      "id": "el_web_nav",
+      "type": "nav",
+      "name": "Web Dashboard / Sidebar Nav",
+      "artboardId": "art_dashboard_web",
+      "parentId": "el_web_sidebar_frame",
+      "x": 0,
+      "y": 0,
+      "width": 240,
+      "height": 800,
+      "zIndex": 1,
+      "locked": false,
+      "visible": true,
+      "semanticRole": "side navigation",
+      "style": {
+        "fill": "#101828",
+        "color": "#FFFFFF",
+        "padding": 24
+      },
+      "layout": {
+        "mode": "stack",
+        "direction": "column",
+        "gap": 18
+      },
+      "props": {
+        "title": "Board",
+        "items": [
+          "Canvas",
+          "Components",
+          "Exports"
+        ]
+      }
+    },
+    {
+      "id": "el_web_table",
+      "type": "table",
+      "name": "Web Dashboard / Work Queue Table",
+      "artboardId": "art_dashboard_web",
+      "parentId": "el_web_content_frame",
+      "x": 24,
+      "y": 36,
+      "width": 824,
+      "height": 340,
+      "zIndex": 2,
+      "locked": true,
+      "visible": true,
+      "semanticRole": "data table",
+      "style": {
+        "fill": "#FFFFFF",
+        "color": "#111827",
+        "radius": 18,
+        "shadow": "0 16px 45px rgba(15, 23, 42, 0.08)",
+        "padding": 20
+      },
+      "layout": {
+        "mode": "stack",
+        "direction": "column",
+        "gap": 12
+      },
+      "props": {
+        "title": "Implementation queue",
+        "columns": [
+          "Screen",
+          "Status",
+          "Owner"
+        ],
+        "rows": [
+          [
+            "Mobile Home",
+            "Ready",
+            "Codex"
+          ],
+          [
+            "Paywall",
+            "Draft",
+            "Danny"
+          ],
+          [
+            "Export",
+            "Ready",
+            "Codex"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "el_mobile_header_frame",
+      "type": "frame",
+      "name": "Mobile Home / Header Frame",
+      "artboardId": "art_home_mobile",
+      "parentId": null,
+      "x": 24,
+      "y": 58,
+      "width": 345,
+      "height": 64,
+      "zIndex": 1,
+      "locked": false,
+      "visible": true,
+      "semanticRole": "screen section",
+      "style": {
+        "fill": "transparent",
+        "stroke": "#BFDBFE",
+        "strokeWidth": 1,
+        "radius": 18
+      },
+      "layout": {
+        "mode": "absolute"
+      },
+      "props": {
+        "hierarchyOnly": true
+      }
+    },
+    {
+      "id": "el_mobile_summary_frame",
+      "type": "frame",
+      "name": "Mobile Home / Summary Frame",
+      "artboardId": "art_home_mobile",
+      "parentId": null,
+      "x": 26,
+      "y": 124,
+      "width": 345,
+      "height": 152,
+      "zIndex": 2,
+      "locked": false,
+      "visible": true,
+      "semanticRole": "screen section",
+      "style": {
+        "fill": "transparent",
+        "stroke": "#BFDBFE",
+        "strokeWidth": 1,
+        "radius": 24
+      },
+      "layout": {
+        "mode": "absolute"
+      },
+      "props": {
+        "hierarchyOnly": true
+      }
+    },
+    {
+      "id": "el_mobile_action_frame",
+      "type": "frame",
+      "name": "Mobile Home / Primary Action Frame",
+      "artboardId": "art_home_mobile",
+      "parentId": null,
+      "x": 24,
+      "y": 728,
+      "width": 345,
+      "height": 96,
+      "zIndex": 3,
+      "locked": false,
+      "visible": true,
+      "semanticRole": "screen section",
+      "style": {
+        "fill": "transparent",
+        "stroke": "#BFDBFE",
+        "strokeWidth": 1,
+        "radius": 20
+      },
+      "layout": {
+        "mode": "absolute"
+      },
+      "props": {
+        "hierarchyOnly": true
+      }
+    },
+    {
+      "id": "el_web_sidebar_frame",
+      "type": "frame",
+      "name": "Web Dashboard / Sidebar Frame",
+      "artboardId": "art_dashboard_web",
+      "parentId": null,
+      "x": 0,
+      "y": 0,
+      "width": 240,
+      "height": 800,
+      "zIndex": 1,
+      "locked": false,
+      "visible": true,
+      "semanticRole": "navigation region",
+      "style": {
+        "fill": "transparent"
+      },
+      "layout": {
+        "mode": "absolute"
+      },
+      "props": {
+        "hierarchyOnly": true
+      }
+    },
+    {
+      "id": "el_web_content_frame",
+      "type": "frame",
+      "name": "Web Dashboard / Main Content Frame",
+      "artboardId": "art_dashboard_web",
+      "parentId": null,
+      "x": 264,
+      "y": 112,
+      "width": 872,
+      "height": 420,
+      "zIndex": 2,
+      "locked": false,
+      "visible": true,
+      "semanticRole": "content region",
+      "style": {
+        "fill": "transparent",
+        "stroke": "#BFDBFE",
+        "strokeWidth": 1,
+        "radius": 24
+      },
+      "layout": {
+        "mode": "absolute"
+      },
+      "props": {
+        "hierarchyOnly": true
+      }
+    }
+  ],
+  "connectors": [
+    {
+      "id": "conn_mobile_web",
+      "fromArtboardId": "art_home_mobile",
+      "toArtboardId": "art_dashboard_web",
+      "label": "Dashboard handoff",
+      "style": {
+        "stroke": "#2563EB"
+      }
+    }
+  ],
+  "assets": [],
+  "tokens": {
+    "colors": {
+      "canvas": "#EEF2F7",
+      "ink": "#101828",
+      "accent": "#2563EB",
+      "success": "#059669",
+      "warning": "#D97706"
+    },
+    "fonts": {
+      "sans": "Inter, ui-sans-serif, system-ui"
+    },
+    "radii": {
+      "sm": 8,
+      "md": 14,
+      "lg": 22
+    },
+    "shadows": {
+      "panel": "0 18px 50px rgba(15, 23, 42, 0.10)"
+    },
+    "spacing": {
+      "xs": 4,
+      "sm": 8,
+      "md": 16,
+      "lg": 24
+    }
+  },
+  "selection": [],
+  "metadata": {
+    "createdAt": "2026-05-05T11:27:08.184Z",
+    "updatedAt": "2026-05-05T16:38:55.980Z",
+    "createdBy": "Paper.Design.Danny"
+  }
+}

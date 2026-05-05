@@ -1,0 +1,1241 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowRight,
+  BoxSelect,
+  BringToFront,
+  ChevronDown,
+  Component,
+  Download,
+  Eye,
+  EyeOff,
+  FileCode2,
+  FileText,
+  Frame,
+  Group,
+  Image as ImageIcon,
+  Layers3,
+  Lock,
+  LockOpen,
+  MousePointer2,
+  Plus,
+  Redo2,
+  Save,
+  Send,
+  Smartphone,
+  Trash2,
+  Undo2,
+  Upload,
+  ZoomIn,
+  ZoomOut
+} from "lucide-react";
+import type { Artboard, BoardElement, BoardOperation, BoardProject } from "@board/schema";
+import { createElementFromPreset, createId, DEVICE_PRESETS } from "@board/schema";
+import {
+  applyOperation,
+  createBoard,
+  exportPng,
+  exportReactTailwind,
+  exportSpec,
+  listBoards,
+  readBoard,
+  redo,
+  saveBoard,
+  setSelection as postSelection,
+  undo,
+  uploadAsset
+} from "./api";
+
+const componentTypes: BoardElement["type"][] = [
+  "button",
+  "card",
+  "dialog",
+  "sheet",
+  "nav",
+  "tabbar",
+  "input",
+  "list",
+  "table",
+  "chart",
+  "badge",
+  "emptyState",
+  "paywall",
+  "sticky",
+  "text",
+  "rect"
+];
+
+type DragState = {
+  id: string;
+  mode: "move" | "resize";
+  startX: number;
+  startY: number;
+  original: Pick<BoardElement, "x" | "y" | "width" | "height">;
+};
+
+type PanState = {
+  startX: number;
+  startY: number;
+  scrollLeft: number;
+  scrollTop: number;
+};
+
+type GestureLikeEvent = Event & {
+  scale?: number;
+  clientX?: number;
+  clientY?: number;
+};
+
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 2;
+const WHEEL_ZOOM_SENSITIVITY = 0.00012;
+const MAX_WHEEL_ZOOM_DELTA = 45;
+const GESTURE_ZOOM_DAMPING = 0.16;
+const GESTURE_WHEEL_SUPPRESSION_MS = 260;
+const MAX_INPUT_ZOOM_FACTOR = 1.0045;
+const CANVAS_WIDTH = 80000;
+const CANVAS_HEIGHT = 56000;
+const CANVAS_ORIGIN_X = 24000;
+const CANVAS_ORIGIN_Y = 16000;
+
+export function App() {
+  const [project, setProject] = useState<BoardProject | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [zoom, setZoom] = useState(0.72);
+  const [presetId, setPresetId] = useState(DEVICE_PRESETS[0]!.id);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const [pan, setPan] = useState<PanState | null>(null);
+  const [spaceDown, setSpaceDown] = useState(false);
+  const [status, setStatus] = useState("Starting workspace...");
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const canvasPlaneRef = useRef<HTMLDivElement | null>(null);
+  const zoomRef = useRef(zoom);
+  const zoomStateFrameRef = useRef<number | null>(null);
+  const pendingZoomStateRef = useRef(zoom);
+  const initialViewportPositionedRef = useRef(false);
+  const gestureStartZoomRef = useRef<number | null>(null);
+  const lastNativeGestureAtRef = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const screenshotInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
+
+  useEffect(() => {
+    return () => {
+      if (zoomStateFrameRef.current !== null) {
+        window.cancelAnimationFrame(zoomStateFrameRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    void boot();
+  }, []);
+
+  useEffect(() => {
+    if (!project || initialViewportPositionedRef.current) return;
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    initialViewportPositionedRef.current = true;
+    window.requestAnimationFrame(() => {
+      viewport.scrollLeft = Math.max(0, (CANVAS_ORIGIN_X - 90) * zoomRef.current);
+      viewport.scrollTop = Math.max(0, (CANVAS_ORIGIN_Y - 80) * zoomRef.current);
+    });
+  }, [project?.id]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isTypingTarget(event.target)) return;
+      if (event.code === "Space") {
+        event.preventDefault();
+        setSpaceDown(true);
+      }
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.key === "=" || event.key === "+") {
+        event.preventDefault();
+        zoomAtViewportCenter(zoomRef.current * 1.12);
+      }
+      if (event.key === "-") {
+        event.preventDefault();
+        zoomAtViewportCenter(zoomRef.current / 1.12);
+      }
+      if (event.key === "0") {
+        event.preventDefault();
+        zoomAtViewportCenter(0.72);
+      }
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code === "Space") {
+        setSpaceDown(false);
+        setPan(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!project) return;
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const onWheel = (event: WheelEvent) => {
+      const suppressDuplicateWheel = performance.now() - lastNativeGestureAtRef.current < GESTURE_WHEEL_SUPPRESSION_MS;
+      if (suppressDuplicateWheel) return;
+      const shouldZoom = event.ctrlKey || event.metaKey || event.altKey;
+      if (!shouldZoom) return;
+      event.preventDefault();
+      const normalizedDelta = normalizeWheelDelta(event);
+      const cappedDelta = clamp(normalizedDelta, -MAX_WHEEL_ZOOM_DELTA, MAX_WHEEL_ZOOM_DELTA);
+      const rawFactor = Math.exp(-cappedDelta * WHEEL_ZOOM_SENSITIVITY);
+      const factor = clamp(rawFactor, 1 / MAX_INPUT_ZOOM_FACTOR, MAX_INPUT_ZOOM_FACTOR);
+      zoomAroundPoint(zoomRef.current * factor, event.clientX, event.clientY);
+    };
+
+    const onGestureStart = (event: GestureLikeEvent) => {
+      event.preventDefault();
+      lastNativeGestureAtRef.current = performance.now();
+      gestureStartZoomRef.current = zoomRef.current;
+    };
+
+    const onGestureChange = (event: GestureLikeEvent) => {
+      event.preventDefault();
+      lastNativeGestureAtRef.current = performance.now();
+      const startZoom = gestureStartZoomRef.current ?? zoomRef.current;
+      const rect = viewport.getBoundingClientRect();
+      const clientX = typeof event.clientX === "number" ? event.clientX : rect.left + rect.width / 2;
+      const clientY = typeof event.clientY === "number" ? event.clientY : rect.top + rect.height / 2;
+      const rawScale = clamp(event.scale ?? 1, 0.55, 1.8);
+      const dampedScale = Math.pow(rawScale, GESTURE_ZOOM_DAMPING);
+      zoomAroundPoint(startZoom * dampedScale, clientX, clientY);
+    };
+
+    const onGestureEnd = (event: GestureLikeEvent) => {
+      event.preventDefault();
+      lastNativeGestureAtRef.current = performance.now();
+      gestureStartZoomRef.current = null;
+    };
+
+    viewport.addEventListener("wheel", onWheel, { passive: false });
+    viewport.addEventListener("gesturestart", onGestureStart as EventListener, { passive: false });
+    viewport.addEventListener("gesturechange", onGestureChange as EventListener, { passive: false });
+    viewport.addEventListener("gestureend", onGestureEnd as EventListener, { passive: false });
+    return () => {
+      viewport.removeEventListener("wheel", onWheel);
+      viewport.removeEventListener("gesturestart", onGestureStart as EventListener);
+      viewport.removeEventListener("gesturechange", onGestureChange as EventListener);
+      viewport.removeEventListener("gestureend", onGestureEnd as EventListener);
+    };
+  }, [project?.id]);
+
+  useEffect(() => {
+    if (!project) return;
+    const ws = new WebSocket(`ws://127.0.0.1:4318/ws?boardId=${project.id}`);
+    ws.onmessage = (event) => {
+      const message = JSON.parse(String(event.data)) as { type?: string; project?: BoardProject; selection?: string[] };
+      if (message.type === "board.changed" && message.project) {
+        setProject(message.project);
+        setSelectedIds(message.project.selection);
+      }
+      if (message.type === "selection.changed" && message.selection) {
+        setSelectedIds(message.selection);
+      }
+    };
+    return () => ws.close();
+  }, [project?.id]);
+
+  const selectedElement = useMemo(() => {
+    if (!project || selectedIds.length !== 1) return null;
+    return project.elements.find((element) => element.id === selectedIds[0]) ?? null;
+  }, [project, selectedIds]);
+
+  const selectedArtboard = useMemo(() => {
+    if (!project || selectedIds.length !== 1) return null;
+    return project.artboards.find((artboard) => artboard.id === selectedIds[0]) ?? null;
+  }, [project, selectedIds]);
+
+  const activeArtboard = useMemo(() => {
+    if (!project) return null;
+    const selectedArtboardId =
+      selectedArtboard?.id ??
+      selectedElement?.artboardId ??
+      selectedIds.map((id) => project.elements.find((element) => element.id === id)?.artboardId).find(Boolean);
+    return project.artboards.find((artboard) => artboard.id === selectedArtboardId) ?? project.artboards[0] ?? null;
+  }, [project, selectedArtboard, selectedElement, selectedIds]);
+
+  async function boot() {
+    try {
+      const boards = await listBoards();
+      const first = boards[0] ? await readBoard(boards[0].id) : await createBoard("Danny's App Mockups");
+      setProject(first);
+      setSelectedIds(first.selection);
+      setStatus("Ready");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not start workspace");
+    }
+  }
+
+  async function runOperation(operation: BoardOperation) {
+    if (!project) return;
+    const next = await applyOperation(project.id, operation);
+    setProject(next);
+    setSelectedIds(next.selection);
+    setStatus("Saved");
+  }
+
+  async function select(ids: string[], additive = false) {
+    if (!project) return;
+    const nextSelection = additive ? toggleSelection(selectedIds, ids[0]!) : ids;
+    setSelectedIds(nextSelection);
+    await postSelection(project.id, nextSelection).catch(() => undefined);
+  }
+
+  function updateLocalElement(id: string, patch: Partial<BoardElement>) {
+    setProject((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        elements: current.elements.map((element) => (element.id === id ? { ...element, ...patch } : element))
+      };
+    });
+  }
+
+  function onCanvasPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    if (pan) {
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      viewport.scrollLeft = pan.scrollLeft - (event.clientX - pan.startX);
+      viewport.scrollTop = pan.scrollTop - (event.clientY - pan.startY);
+      return;
+    }
+    if (!drag || !project) return;
+    const currentZoom = zoomRef.current;
+    const dx = (event.clientX - drag.startX) / currentZoom;
+    const dy = (event.clientY - drag.startY) / currentZoom;
+    if (drag.mode === "move") {
+      updateLocalElement(drag.id, { x: Math.round(drag.original.x + dx), y: Math.round(drag.original.y + dy) });
+    } else {
+      updateLocalElement(drag.id, {
+        width: Math.max(24, Math.round(drag.original.width + dx)),
+        height: Math.max(24, Math.round(drag.original.height + dy))
+      });
+    }
+  }
+
+  async function onCanvasPointerUp() {
+    if (pan) {
+      setPan(null);
+      return;
+    }
+    if (!drag || !project) return;
+    const element = project.elements.find((candidate) => candidate.id === drag.id);
+    setDrag(null);
+    if (!element) return;
+    await runOperation({
+      type: "move_resize_element",
+      elementId: element.id,
+      x: element.x,
+      y: element.y,
+      width: element.width,
+      height: element.height
+    });
+  }
+
+  async function addArtboard() {
+    if (!project) return;
+    const preset = DEVICE_PRESETS.find((candidate) => candidate.id === presetId) ?? DEVICE_PRESETS[0]!;
+    const artboard: Artboard = {
+      id: createId("art"),
+      name: preset.name,
+      type: preset.type,
+      x: 120 + project.artboards.length * 420,
+      y: 96 + (project.artboards.length % 2) * 110,
+      width: preset.width,
+      height: preset.height,
+      background: preset.type === "desktop" || preset.type === "web" ? "#F8FAFC" : "#F5F7FB",
+      devicePreset: preset.id,
+      locked: false,
+      visible: true
+    };
+    await runOperation({ type: "create_artboard", artboard });
+  }
+
+  async function addComponent(type: BoardElement["type"]) {
+    if (!project || !activeArtboard) return;
+    const element = createElementFromPreset(type, activeArtboard.id, 28 + selectedIds.length * 12, 120 + selectedIds.length * 12);
+    element.name = uniqueElementName(project, activeArtboard.id, `${activeArtboard.name} / ${labelFor(type)}`);
+    element.zIndex = Math.max(0, ...project.elements.filter((candidate) => candidate.artboardId === activeArtboard.id).map((candidate) => candidate.zIndex)) + 1;
+    await runOperation({ type: "add_element", element });
+  }
+
+  async function updateSelectedElement(patch: Record<string, unknown>) {
+    if (!selectedElement) return;
+    await runOperation({ type: "update_element", elementId: selectedElement.id, patch });
+  }
+
+  async function deleteSelection() {
+    if (!project) return;
+    const elementIds = selectedIds.filter((id) => project.elements.some((element) => element.id === id));
+    for (const elementId of elementIds) {
+      await runOperation({ type: "delete_element", elementId });
+    }
+  }
+
+  async function groupSelection() {
+    if (!project || selectedIds.length < 2) return;
+    const elements = project.elements.filter((element) => selectedIds.includes(element.id));
+    if (!elements.length) return;
+    const artboardId = elements[0]!.artboardId;
+    if (elements.some((element) => element.artboardId !== artboardId)) {
+      setStatus("Group elements from one artboard at a time");
+      return;
+    }
+    const minX = Math.min(...elements.map((element) => element.x));
+    const minY = Math.min(...elements.map((element) => element.y));
+    const maxX = Math.max(...elements.map((element) => element.x + element.width));
+    const maxY = Math.max(...elements.map((element) => element.y + element.height));
+    const group = createElementFromPreset("group", artboardId, minX, minY);
+    group.width = maxX - minX;
+    group.height = maxY - minY;
+    group.name = uniqueElementName(project, artboardId, groupNameForSelection(project, artboardId, elements));
+    group.semanticRole = "component group";
+    group.zIndex = Math.max(...elements.map((element) => element.zIndex)) + 1;
+    await runOperation({ type: "group_elements", group, elementIds: elements.map((element) => element.id) });
+  }
+
+  async function connectArtboards() {
+    if (!project) return;
+    const artboardIds = selectedIds.filter((id) => project.artboards.some((artboard) => artboard.id === id));
+    const [from, to] = artboardIds.length >= 2 ? artboardIds : project.artboards.slice(0, 2).map((artboard) => artboard.id);
+    if (!from || !to || from === to) return;
+    await runOperation({
+      type: "add_connector",
+      connector: {
+        id: createId("conn"),
+        fromArtboardId: from,
+        toArtboardId: to,
+        label: "Flow",
+        style: { stroke: "#2563EB" }
+      }
+    });
+  }
+
+  async function uploadImage(kind: "image" | "screenshot", file: File) {
+    if (!project || !activeArtboard) return;
+    const result = await uploadAsset(project.id, file);
+    setProject(result.project);
+    const element = createElementFromPreset(kind === "screenshot" ? "screenshotOverlay" : "image", activeArtboard.id, kind === "screenshot" ? 0 : 32, kind === "screenshot" ? 0 : 132);
+    element.props.assetId = result.assetId;
+    element.name = uniqueElementName(project, activeArtboard.id, kind === "screenshot" ? `${activeArtboard.name} / Screenshot Overlay` : `${activeArtboard.name} / ${file.name}`);
+    element.locked = kind === "screenshot";
+    if (kind === "screenshot") {
+      element.width = activeArtboard.width;
+      element.height = activeArtboard.height;
+      element.zIndex = 0;
+    }
+    await applyOperation(project.id, { type: "add_element", element }).then((next) => {
+      setProject(next);
+      setSelectedIds(next.selection);
+      setStatus(kind === "screenshot" ? "Screenshot overlay imported" : "Image added");
+    });
+  }
+
+  async function exportSelectedPng() {
+    if (!project) return;
+    const artboardId = selectedArtboard?.id ?? activeArtboard?.id;
+    if (!artboardId) return;
+    const result = await exportPng(project.id, artboardId);
+    setStatus(`PNG exported: ${result.filePath}`);
+  }
+
+  async function exportCode() {
+    if (!project) return;
+    const result = await exportReactTailwind(project.id);
+    setStatus(`React + Tailwind exported: ${result.dir}`);
+  }
+
+  async function exportImplementationSpec() {
+    if (!project) return;
+    const result = await exportSpec(project.id);
+    setStatus(`Spec exported: ${result.markdownPath}`);
+  }
+
+  async function updateArtboard(patch: Partial<Artboard>) {
+    if (!project || !selectedArtboard) return;
+    const next = {
+      ...project,
+      artboards: project.artboards.map((artboard) => (artboard.id === selectedArtboard.id ? { ...artboard, ...patch } : artboard)),
+      metadata: { ...project.metadata, updatedAt: new Date().toISOString() }
+    };
+    setProject(next);
+    await saveBoard(next);
+  }
+
+  function zoomAtViewportCenter(nextZoom: number) {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      setZoom(clamp(nextZoom, MIN_ZOOM, MAX_ZOOM));
+      return;
+    }
+    const rect = viewport.getBoundingClientRect();
+    zoomAroundPoint(nextZoom, rect.left + rect.width / 2, rect.top + rect.height / 2);
+  }
+
+  function zoomAroundPoint(nextZoom: number, clientX: number, clientY: number) {
+    const viewport = viewportRef.current;
+    const clamped = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM);
+    if (!viewport || clamped === zoomRef.current) return;
+    const currentZoom = zoomRef.current;
+    const rect = viewport.getBoundingClientRect();
+    const offsetX = clientX - rect.left;
+    const offsetY = clientY - rect.top;
+    const contentX = (viewport.scrollLeft + offsetX) / currentZoom;
+    const contentY = (viewport.scrollTop + offsetY) / currentZoom;
+    applyVisualZoom(clamped);
+    viewport.scrollLeft = contentX * clamped - offsetX;
+    viewport.scrollTop = contentY * clamped - offsetY;
+  }
+
+  function applyVisualZoom(nextZoom: number) {
+    zoomRef.current = nextZoom;
+    pendingZoomStateRef.current = nextZoom;
+    if (canvasPlaneRef.current) {
+      canvasPlaneRef.current.style.transform = `scale(${nextZoom})`;
+    }
+    if (zoomStateFrameRef.current !== null) return;
+    zoomStateFrameRef.current = window.requestAnimationFrame(() => {
+      zoomStateFrameRef.current = null;
+      setZoom(pendingZoomStateRef.current);
+    });
+  }
+
+  function onCanvasPointerDownCapture(event: React.PointerEvent<HTMLDivElement>) {
+    if (!viewportRef.current) return;
+    if (event.button !== 1 && !spaceDown) return;
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Some browsers do not allow capture for every pointer type.
+    }
+    setPan({
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: viewportRef.current.scrollLeft,
+      scrollTop: viewportRef.current.scrollTop
+    });
+  }
+
+  if (!project) {
+    return (
+      <main className="loading-shell">
+        <div className="loading-mark">PDD</div>
+        <p>{status}</p>
+      </main>
+    );
+  }
+
+  return (
+    <main className="app-shell" onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
+      <header className="topbar">
+        <div className="brand-block">
+          <div className="brand-mark">PDD</div>
+          <div>
+            <h1>Paper.Design.Danny</h1>
+            <p>{project.name}</p>
+          </div>
+        </div>
+
+        <div className="toolbar-group" aria-label="Canvas tools">
+          <IconButton label="Select" active>
+            <MousePointer2 size={18} />
+          </IconButton>
+          <IconButton label="Undo" onClick={() => undo(project.id).then((next) => (setProject(next), setSelectedIds(next.selection)))}>
+            <Undo2 size={18} />
+          </IconButton>
+          <IconButton label="Redo" onClick={() => redo(project.id).then((next) => (setProject(next), setSelectedIds(next.selection)))}>
+            <Redo2 size={18} />
+          </IconButton>
+          <IconButton label="Group" onClick={groupSelection}>
+            <Group size={18} />
+          </IconButton>
+          <IconButton label="Delete" onClick={deleteSelection}>
+            <Trash2 size={18} />
+          </IconButton>
+        </div>
+
+        <div className="toolbar-group artboard-control">
+          <Smartphone size={16} />
+          <select value={presetId} onChange={(event) => setPresetId(event.target.value)}>
+            {DEVICE_PRESETS.map((preset) => (
+              <option key={preset.id} value={preset.id}>
+                {preset.name}
+              </option>
+            ))}
+          </select>
+          <button className="text-button" onClick={addArtboard}>
+            <Plus size={16} /> Artboard
+          </button>
+        </div>
+
+        <div className="toolbar-spacer" />
+
+        <div className="toolbar-group">
+          <IconButton label="Zoom out" onClick={() => zoomAtViewportCenter(zoomRef.current / 1.12)}>
+            <ZoomOut size={18} />
+          </IconButton>
+          <span className="zoom-readout">{Math.round(zoom * 100)}%</span>
+          <IconButton label="Zoom in" onClick={() => zoomAtViewportCenter(zoomRef.current * 1.12)}>
+            <ZoomIn size={18} />
+          </IconButton>
+        </div>
+
+        <div className="toolbar-group">
+          <IconButton label="Export PNG" onClick={exportSelectedPng}>
+            <Download size={18} />
+          </IconButton>
+          <IconButton label="Export spec" onClick={exportImplementationSpec}>
+            <FileText size={18} />
+          </IconButton>
+          <IconButton label="Export React Tailwind" onClick={exportCode}>
+            <FileCode2 size={18} />
+          </IconButton>
+        </div>
+      </header>
+
+      <aside className="left-panel">
+        <section className="panel-section">
+          <PanelTitle icon={<Component size={16} />} title="App Kit" />
+          <div className="component-grid">
+            {componentTypes.map((type) => (
+              <button key={type} onClick={() => addComponent(type)}>
+                {labelFor(type)}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="panel-section">
+          <PanelTitle icon={<Upload size={16} />} title="Assets" />
+          <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={(event) => event.target.files?.[0] && uploadImage("image", event.target.files[0])} />
+          <input ref={screenshotInputRef} type="file" accept="image/*" hidden onChange={(event) => event.target.files?.[0] && uploadImage("screenshot", event.target.files[0])} />
+          <button className="wide-action" onClick={() => fileInputRef.current?.click()}>
+            <ImageIcon size={16} /> Add image
+          </button>
+          <button className="wide-action" onClick={() => screenshotInputRef.current?.click()}>
+            <BoxSelect size={16} /> Screenshot overlay
+          </button>
+          <div className="asset-list">
+            {project.assets.length ? (
+              project.assets.map((asset) => (
+                <div key={asset.id} className="asset-row">
+                  <img src={asset.src} alt="" />
+                  <span>{asset.name}</span>
+                </div>
+              ))
+            ) : (
+              <p className="muted">No assets yet.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="panel-section layers-section">
+          <PanelTitle icon={<Layers3 size={16} />} title="Layers" />
+          <div className="layers-list">
+            {project.artboards.map((artboard) => (
+              <div key={artboard.id} className="layer-group">
+                <button className={selectedIds.includes(artboard.id) ? "layer-row selected" : "layer-row"} onClick={() => select([artboard.id])}>
+                  <Frame size={15} />
+                  <span>{artboard.name}</span>
+                  <small>{artboard.id}</small>
+                </button>
+                {project.elements
+                  .filter((element) => element.artboardId === artboard.id && !element.parentId)
+                  .sort((a, b) => b.zIndex - a.zIndex)
+                  .map((element) => (
+                    <LayerNode key={element.id} element={element} project={project} depth={0} selectedIds={selectedIds} onSelect={select} onUpdate={(elementId, patch) => runOperation({ type: "update_element", elementId, patch })} />
+                  ))}
+              </div>
+            ))}
+          </div>
+        </section>
+      </aside>
+
+      <section
+        ref={viewportRef}
+        className={classNames("canvas-viewport", pan && "panning", spaceDown && "space-pan")}
+        onPointerDownCapture={onCanvasPointerDownCapture}
+        onPointerDown={() => select([])}
+      >
+        <div className="canvas-space" style={{ width: CANVAS_WIDTH * MAX_ZOOM, height: CANVAS_HEIGHT * MAX_ZOOM }}>
+          <div ref={canvasPlaneRef} className="canvas-plane" style={{ transform: `scale(${zoomRef.current})`, width: CANVAS_WIDTH, height: CANVAS_HEIGHT }}>
+            <ConnectorLayer project={project} selectedIds={selectedIds} />
+            {project.artboards
+              .filter((artboard) => artboard.visible)
+              .map((artboard) => (
+                <ArtboardView
+                  key={artboard.id}
+                  artboard={artboard}
+                  project={project}
+                  selectedIds={selectedIds}
+                  onSelect={(ids, additive) => select(ids, additive)}
+                  onDragStart={(state) => setDrag(state)}
+                />
+              ))}
+          </div>
+        </div>
+      </section>
+
+      <aside className="right-panel">
+        <section className="panel-section">
+          <PanelTitle icon={<Save size={16} />} title="Inspector" />
+          {selectedElement ? (
+            <ElementInspector project={project} element={selectedElement} onChange={updateSelectedElement} onReorder={(delta) => updateSelectedElement({ zIndex: selectedElement.zIndex + delta })} />
+          ) : selectedArtboard ? (
+            <ArtboardInspector artboard={selectedArtboard} onChange={updateArtboard} />
+          ) : (
+            <div className="empty-inspector">
+              <MousePointer2 size={22} />
+              <p>Select an artboard or element.</p>
+            </div>
+          )}
+        </section>
+
+        <section className="panel-section">
+          <PanelTitle icon={<Send size={16} />} title="Flows" />
+          <button className="wide-action" onClick={connectArtboards}>
+            <ArrowRight size={16} /> Connect screens
+          </button>
+          <div className="flow-list">
+            {project.connectors.length ? (
+              project.connectors.map((connector) => {
+                const from = project.artboards.find((artboard) => artboard.id === connector.fromArtboardId)?.name ?? connector.fromArtboardId;
+                const to = project.artboards.find((artboard) => artboard.id === connector.toArtboardId)?.name ?? connector.toArtboardId;
+                return (
+                  <div key={connector.id} className="flow-row">
+                    <span>{from}</span>
+                    <ArrowRight size={14} />
+                    <span>{to}</span>
+                  </div>
+                );
+              })
+            ) : (
+              <p className="muted">No flows yet.</p>
+            )}
+          </div>
+        </section>
+      </aside>
+
+      <footer className="statusbar">{status}</footer>
+    </main>
+  );
+}
+
+function LayerNode({
+  element,
+  project,
+  depth,
+  selectedIds,
+  onSelect,
+  onUpdate
+}: {
+  element: BoardElement;
+  project: BoardProject;
+  depth: number;
+  selectedIds: string[];
+  onSelect: (ids: string[], additive?: boolean) => void;
+  onUpdate: (elementId: string, patch: Record<string, unknown>) => void;
+}) {
+  const children = project.elements.filter((child) => child.parentId === element.id).sort((a, b) => b.zIndex - a.zIndex);
+  return (
+    <>
+      <div className={selectedIds.includes(element.id) ? "layer-row selected element-layer" : "layer-row element-layer"} style={{ "--indent": `${depth * 16}px` } as React.CSSProperties}>
+        <button onClick={() => onSelect([element.id])} title={`${element.name} · ${element.id}`}>
+          {children.length ? <ChevronDown size={13} /> : <span className="layer-spacer" />}
+          <span>{element.name}</span>
+          <small>{element.id}</small>
+        </button>
+        <button title={element.visible ? "Hide" : "Show"} onClick={() => onUpdate(element.id, { visible: !element.visible })}>
+          {element.visible ? <Eye size={13} /> : <EyeOff size={13} />}
+        </button>
+        <button title={element.locked ? "Unlock" : "Lock"} onClick={() => onUpdate(element.id, { locked: !element.locked })}>
+          {element.locked ? <Lock size={13} /> : <LockOpen size={13} />}
+        </button>
+      </div>
+      {children.map((child) => (
+        <LayerNode key={child.id} element={child} project={project} depth={depth + 1} selectedIds={selectedIds} onSelect={onSelect} onUpdate={onUpdate} />
+      ))}
+    </>
+  );
+}
+
+function ArtboardView({
+  artboard,
+  project,
+  selectedIds,
+  onSelect,
+  onDragStart
+}: {
+  artboard: Artboard;
+  project: BoardProject;
+  selectedIds: string[];
+  onSelect: (ids: string[], additive?: boolean) => void;
+  onDragStart: (state: DragState) => void;
+}) {
+  const elements = project.elements.filter((element) => element.artboardId === artboard.id && !element.parentId && element.visible).sort((a, b) => a.zIndex - b.zIndex);
+  return (
+    <div
+      className={selectedIds.includes(artboard.id) ? "artboard-frame selected" : "artboard-frame"}
+      style={{ left: CANVAS_ORIGIN_X + artboard.x, top: CANVAS_ORIGIN_Y + artboard.y, width: artboard.width, height: artboard.height }}
+      data-board-artboard={artboard.id}
+      data-board-name={artboard.name}
+      title={`${artboard.name} · ${artboard.id}`}
+    >
+      <button className="artboard-label" onPointerDown={(event) => (event.stopPropagation(), onSelect([artboard.id], event.shiftKey))}>
+        <span>{artboard.name}</span>
+        <small>{artboard.id}</small>
+      </button>
+      <div className="artboard-surface" style={{ background: artboard.background, borderRadius: artboard.type === "mobile" ? 42 : artboard.type === "tablet" ? 30 : 18 }} onPointerDown={(event) => (event.stopPropagation(), onSelect([artboard.id], event.shiftKey))}>
+        {elements.map((element) => (
+          <ElementView key={element.id} element={element} project={project} selectedIds={selectedIds} onSelect={onSelect} onDragStart={onDragStart} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ElementView({
+  element,
+  project,
+  selectedIds,
+  onSelect,
+  onDragStart
+}: {
+  element: BoardElement;
+  project: BoardProject;
+  selectedIds: string[];
+  onSelect: (ids: string[], additive?: boolean) => void;
+  onDragStart: (state: DragState) => void;
+}) {
+  const selected = selectedIds.includes(element.id);
+  const children = project.elements.filter((child) => child.parentId === element.id && child.visible).sort((a, b) => a.zIndex - b.zIndex);
+  const style = elementToStyle(element);
+  const asset = typeof element.props.assetId === "string" ? project.assets.find((candidate) => candidate.id === element.props.assetId) : undefined;
+
+  return (
+    <div
+      className={classNames("board-element", `kind-${element.type}`, selected && "selected", element.locked && "locked")}
+      style={style}
+      data-board-element={element.id}
+      data-board-name={element.name}
+      title={`${element.name} · ${element.type} · ${element.id}`}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        onSelect([element.id], event.shiftKey);
+        if (!element.locked && !event.shiftKey) {
+          onDragStart({ id: element.id, mode: "move", startX: event.clientX, startY: event.clientY, original: element });
+        }
+      }}
+    >
+      {selected ? (
+        <span className="element-name-badge">
+          {element.name}
+          <small>{element.id}</small>
+        </span>
+      ) : null}
+      <ElementContent element={element} assetSrc={asset?.src} />
+      {children.map((child) => (
+        <ElementView key={child.id} element={child} project={project} selectedIds={selectedIds} onSelect={onSelect} onDragStart={onDragStart} />
+      ))}
+      {selected && !element.locked ? (
+        <button
+          className="resize-handle"
+          aria-label="Resize"
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            onDragStart({ id: element.id, mode: "resize", startX: event.clientX, startY: event.clientY, original: element });
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ElementContent({ element, assetSrc }: { element: BoardElement; assetSrc?: string }) {
+  switch (element.type) {
+    case "frame":
+    case "group":
+    case "rect":
+      return null;
+    case "text":
+      return <span>{readString(element.props.text, element.name)}</span>;
+    case "button":
+      return <span>{readString(element.props.text, "Continue")}</span>;
+    case "input":
+      return (
+        <div className="mock-input">
+          <span>{readString(element.props.label, "Label")}</span>
+          <strong>{readString(element.props.placeholder, "Placeholder")}</strong>
+        </div>
+      );
+    case "card":
+      return (
+        <div className="mock-card">
+          <span>{readString(element.props.eyebrow, "Metric")}</span>
+          <strong>{readString(element.props.title, "Card title")}</strong>
+          <p>{readString(element.props.subtitle, "Supporting detail")}</p>
+        </div>
+      );
+    case "dialog":
+    case "sheet":
+      return (
+        <div className="mock-dialog">
+          <strong>{readString(element.props.title, element.type === "sheet" ? "Sheet" : "Dialog")}</strong>
+          <p>{readString(element.props.body, "Body copy")}</p>
+          <button>{readString(element.props.action, "Continue")}</button>
+        </div>
+      );
+    case "nav":
+    case "tabbar":
+      return (
+        <div className="mock-nav">
+          <strong>{readString(element.props.title, "Navigation")}</strong>
+          <div>{readStringArray(element.props.items, ["Home", "Settings"]).map((item) => <span key={item}>{item}</span>)}</div>
+        </div>
+      );
+    case "list":
+      return (
+        <div className="mock-list">
+          <strong>{readString(element.props.title, "List")}</strong>
+          {readStringArray(element.props.items, ["First item", "Second item"]).map((item) => <p key={item}>{item}</p>)}
+        </div>
+      );
+    case "table":
+      return <MockTable element={element} />;
+    case "chart":
+      return (
+        <div className="mock-chart">
+          <strong>{readString(element.props.title, "Chart")}</strong>
+          <div>{readNumberArray(element.props.values, [30, 55, 80]).map((value, index) => <i key={index} style={{ height: `${Math.max(8, Math.min(100, value))}%` }} />)}</div>
+        </div>
+      );
+    case "paywall":
+      return (
+        <div className="mock-paywall">
+          <span>Pro</span>
+          <strong>{readString(element.props.title, "Go Pro")}</strong>
+          <p>{readString(element.props.price, "$4.99/mo")}</p>
+          <ul>{readStringArray(element.props.features, ["Feature"]).map((feature) => <li key={feature}>{feature}</li>)}</ul>
+          <button>{readString(element.props.action, "Start")}</button>
+        </div>
+      );
+    case "badge":
+      return <span>{readString(element.props.text, "Badge")}</span>;
+    case "sticky":
+      return <span>{readString(element.props.text, "Note")}</span>;
+    case "emptyState":
+      return (
+        <div className="mock-empty">
+          <strong>{readString(element.props.title, "Nothing here yet")}</strong>
+          <p>{readString(element.props.body, "Create something to begin.")}</p>
+        </div>
+      );
+    case "image":
+    case "screenshotOverlay":
+      return assetSrc ? <img src={assetSrc} alt={readString(element.props.alt, element.name)} /> : <span>{element.type === "screenshotOverlay" ? "Screenshot overlay" : "Image"}</span>;
+    default:
+      return <span>{element.name}</span>;
+  }
+}
+
+function MockTable({ element }: { element: BoardElement }) {
+  const columns = readStringArray(element.props.columns, ["Name", "Status"]);
+  const rows = Array.isArray(element.props.rows) ? element.props.rows : [];
+  return (
+    <div className="mock-table">
+      <strong>{readString(element.props.title, "Table")}</strong>
+      <div className="mock-table-grid" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
+        {columns.map((column) => (
+          <b key={column}>{column}</b>
+        ))}
+        {rows.flatMap((row, rowIndex) => {
+          const cells = Array.isArray(row) ? row : [];
+          return columns.map((_, index) => <span key={`${rowIndex}-${index}`}>{readString(cells[index], "-")}</span>);
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ConnectorLayer({ project, selectedIds }: { project: BoardProject; selectedIds: string[] }) {
+  return (
+    <svg className="connector-layer" width={CANVAS_WIDTH} height={CANVAS_HEIGHT} viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}>
+      <defs>
+        <marker id="arrow-head" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#2563EB" />
+        </marker>
+      </defs>
+      {project.connectors.map((connector) => {
+        const from = project.artboards.find((artboard) => artboard.id === connector.fromArtboardId);
+        const to = project.artboards.find((artboard) => artboard.id === connector.toArtboardId);
+        if (!from || !to) return null;
+        const x1 = CANVAS_ORIGIN_X + from.x + from.width;
+        const y1 = CANVAS_ORIGIN_Y + from.y + from.height / 2;
+        const x2 = CANVAS_ORIGIN_X + to.x;
+        const y2 = CANVAS_ORIGIN_Y + to.y + to.height / 2;
+        const mid = x1 + Math.max(80, (x2 - x1) / 2);
+        const selected = selectedIds.includes(connector.id);
+        return (
+          <g key={connector.id} className={selected ? "connector selected" : "connector"}>
+            <path d={`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`} stroke={String(connector.style.stroke ?? "#2563EB")} strokeWidth={selected ? 4 : 2.5} fill="none" markerEnd="url(#arrow-head)" />
+            {connector.label ? (
+              <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 10} textAnchor="middle">
+                {connector.label}
+              </text>
+            ) : null}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function ElementInspector({
+  project,
+  element,
+  onChange,
+  onReorder
+}: {
+  project: BoardProject;
+  element: BoardElement;
+  onChange: (patch: Record<string, unknown>) => void;
+  onReorder: (delta: number) => void;
+}) {
+  return (
+    <div className="inspector-fields">
+      <ReadOnlyField label="Identifier" value={element.id} />
+      <ReadOnlyField label="Path" value={elementPath(project, element)} />
+      <Field label="Name" value={element.name} onChange={(name) => onChange({ name })} />
+      <Field label="Role" value={element.semanticRole ?? ""} onChange={(semanticRole) => onChange({ semanticRole })} />
+      {"text" in element.props || ["button", "badge", "sticky", "text"].includes(element.type) ? <Field label="Text" value={readString(element.props.text, "")} onChange={(text) => onChange({ props: { text } })} /> : null}
+      {"title" in element.props ? <Field label="Title" value={readString(element.props.title, "")} onChange={(title) => onChange({ props: { title } })} /> : null}
+      {"subtitle" in element.props ? <Field label="Subtitle" value={readString(element.props.subtitle, "")} onChange={(subtitle) => onChange({ props: { subtitle } })} /> : null}
+      {"body" in element.props ? <Field label="Body" value={readString(element.props.body, "")} onChange={(body) => onChange({ props: { body } })} /> : null}
+      <ColorField label="Fill" value={element.style.fill ?? "#FFFFFF"} onChange={(fill) => onChange({ style: { fill } })} />
+      <ColorField label="Text" value={element.style.color ?? "#111827"} onChange={(color) => onChange({ style: { color } })} />
+      <NumberField label="Radius" value={element.style.radius ?? 0} min={0} max={80} onChange={(radius) => onChange({ style: { radius } })} />
+      <NumberField label="Opacity" value={element.style.opacity ?? 1} min={0.1} max={1} step={0.05} onChange={(opacity) => onChange({ style: { opacity } })} />
+      <NumberField label="Font" value={element.style.fontSize ?? 14} min={8} max={72} onChange={(fontSize) => onChange({ style: { fontSize } })} />
+      <NumberField label="Layer" value={element.zIndex} min={0} max={999} onChange={(zIndex) => onChange({ zIndex: Math.round(zIndex) })} />
+      <div className="segmented-row">
+        <button onClick={() => onChange({ locked: !element.locked })}>{element.locked ? <Lock size={15} /> : <LockOpen size={15} />} {element.locked ? "Locked" : "Unlocked"}</button>
+        <button onClick={() => onChange({ visible: !element.visible })}>{element.visible ? <Eye size={15} /> : <EyeOff size={15} />} {element.visible ? "Visible" : "Hidden"}</button>
+      </div>
+      <div className="segmented-row">
+        <button onClick={() => onReorder(1)}>
+          <BringToFront size={15} /> Forward
+        </button>
+        <button onClick={() => onReorder(-1)}>
+          <Layers3 size={15} /> Back
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ArtboardInspector({ artboard, onChange }: { artboard: Artboard; onChange: (patch: Partial<Artboard>) => void }) {
+  return (
+    <div className="inspector-fields">
+      <ReadOnlyField label="Identifier" value={artboard.id} />
+      <Field label="Name" value={artboard.name} onChange={(name) => onChange({ name })} />
+      <ColorField label="Background" value={artboard.background} onChange={(background) => onChange({ background })} />
+      <NumberField label="Width" value={artboard.width} min={240} max={1800} onChange={(width) => onChange({ width })} />
+      <NumberField label="Height" value={artboard.height} min={240} max={1800} onChange={(height) => onChange({ height })} />
+      <p className="muted">{artboard.type} · {Math.round(artboard.width)} x {Math.round(artboard.height)}</p>
+    </div>
+  );
+}
+
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
+  return (
+    <label className="field readonly-field">
+      <span>{label}</span>
+      <input value={value} readOnly />
+    </label>
+  );
+}
+
+function Field({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <input value={value} onChange={(event) => onChange(event.target.value)} />
+    </label>
+  );
+}
+
+function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <label className="field color-field">
+      <span>{label}</span>
+      <input type="color" value={normalizeColor(value)} onChange={(event) => onChange(event.target.value)} />
+      <input value={value} onChange={(event) => onChange(event.target.value)} />
+    </label>
+  );
+}
+
+function NumberField({ label, value, min, max, step = 1, onChange }: { label: string; value: number; min: number; max: number; step?: number; onChange: (value: number) => void }) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <input type="range" value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} />
+      <input type="number" value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} />
+    </label>
+  );
+}
+
+function PanelTitle({ icon, title }: { icon: React.ReactNode; title: string }) {
+  return (
+    <div className="panel-title">
+      {icon}
+      <h2>{title}</h2>
+    </div>
+  );
+}
+
+function IconButton({ label, active, onClick, children }: { label: string; active?: boolean; onClick?: () => void; children: React.ReactNode }) {
+  return (
+    <button className={active ? "icon-button active" : "icon-button"} onClick={onClick} title={label} aria-label={label}>
+      {children}
+    </button>
+  );
+}
+
+function elementToStyle(element: BoardElement): React.CSSProperties {
+  return {
+    left: element.x,
+    top: element.y,
+    width: element.width,
+    height: element.height,
+    zIndex: element.zIndex,
+    background: element.style.fill,
+    color: element.style.color,
+    borderColor: element.style.stroke,
+    borderWidth: element.style.strokeWidth,
+    borderStyle: element.style.stroke ? "solid" : undefined,
+    borderRadius: element.style.radius,
+    boxShadow: element.style.shadow,
+    opacity: element.style.opacity,
+    fontFamily: element.style.fontFamily,
+    fontSize: element.style.fontSize,
+    fontWeight: element.style.fontWeight,
+    lineHeight: element.style.lineHeight ? `${element.style.lineHeight}px` : undefined,
+    letterSpacing: element.style.letterSpacing,
+    textAlign: element.style.textAlign,
+    padding: element.style.padding,
+    gap: element.style.gap,
+    alignItems: cssAlign(element.style.align ?? element.layout.align),
+    justifyContent: cssJustify(element.style.justify ?? element.layout.justify)
+  };
+}
+
+function cssAlign(value?: string) {
+  if (value === "start") return "flex-start";
+  if (value === "end") return "flex-end";
+  return value;
+}
+
+function cssJustify(value?: string) {
+  if (value === "start") return "flex-start";
+  if (value === "end") return "flex-end";
+  if (value === "between") return "space-between";
+  return value;
+}
+
+function classNames(...values: (string | false | null | undefined)[]) {
+  return values.filter(Boolean).join(" ");
+}
+
+function readString(value: unknown, fallback: string): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function readStringArray(value: unknown, fallback: string[]): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : fallback;
+}
+
+function readNumberArray(value: unknown, fallback: number[]): number[] {
+  return Array.isArray(value) ? value.filter((item): item is number => typeof item === "number") : fallback;
+}
+
+function labelFor(value: string): string {
+  return value.replace(/([A-Z])/g, " $1").replace(/^./, (char) => char.toUpperCase());
+}
+
+function normalizeColor(value: string): string {
+  return /^#[0-9a-fA-F]{6}$/.test(value) ? value : "#ffffff";
+}
+
+function toggleSelection(selection: string[], id: string): string[] {
+  return selection.includes(id) ? selection.filter((candidate) => candidate !== id) : [...selection, id];
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable;
+}
+
+function normalizeWheelDelta(event: WheelEvent): number {
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+    return event.deltaY * 16;
+  }
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    return event.deltaY * window.innerHeight;
+  }
+  return event.deltaY;
+}
+
+function uniqueElementName(project: BoardProject, artboardId: string, baseName: string): string {
+  const names = new Set(project.elements.filter((element) => element.artboardId === artboardId).map((element) => element.name));
+  if (!names.has(baseName)) return baseName;
+  let index = 2;
+  while (names.has(`${baseName} ${index}`)) index += 1;
+  return `${baseName} ${index}`;
+}
+
+function groupNameForSelection(project: BoardProject, artboardId: string, elements: BoardElement[]): string {
+  const artboard = project.artboards.find((candidate) => candidate.id === artboardId);
+  const prefix = artboard?.name ?? "Artboard";
+  const sorted = [...elements].sort((a, b) => a.y - b.y || a.x - b.x);
+  const names = sorted.slice(0, 2).map((element) => compactName(element.name));
+  const suffix = names.length > 1 ? `${names.join(" + ")} Group` : `${names[0] ?? "Selection"} Group`;
+  return `${prefix} / ${suffix}`;
+}
+
+function compactName(name: string): string {
+  const parts = name.split(" / ");
+  return parts[parts.length - 1] ?? name;
+}
+
+function elementPath(project: BoardProject, element: BoardElement): string {
+  const artboard = project.artboards.find((candidate) => candidate.id === element.artboardId);
+  const ancestors: string[] = [];
+  let parentId = element.parentId;
+  while (parentId) {
+    const parent = project.elements.find((candidate) => candidate.id === parentId);
+    if (!parent) break;
+    ancestors.unshift(parent.name);
+    parentId = parent.parentId;
+  }
+  return [artboard?.name, ...ancestors, element.name].filter(Boolean).join(" > ");
+}
