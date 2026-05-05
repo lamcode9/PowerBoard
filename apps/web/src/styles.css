@@ -363,14 +363,11 @@ button {
   position: relative;
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   overscroll-behavior: contain;
+  overflow-anchor: none;
   touch-action: none;
   background-color: #dfe7f1;
-  background-image:
-    linear-gradient(rgba(100, 116, 139, 0.16) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(100, 116, 139, 0.16) 1px, transparent 1px);
-  background-size: 28px 28px;
 }
 
 .canvas-viewport.space-pan {
@@ -382,14 +379,27 @@ button {
 }
 
 .canvas-space {
-  position: relative;
-  min-width: 100%;
-  min-height: 100%;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.canvas-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(100, 116, 139, 0.16) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(100, 116, 139, 0.16) 1px, transparent 1px);
+  background-size: 28px 28px;
+  pointer-events: none;
 }
 
 .canvas-plane {
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
   transform-origin: 0 0;
+  will-change: transform;
 }
 
 .connector-layer {

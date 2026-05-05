@@ -44,6 +44,7 @@ import {
   undo,
   uploadAsset
 } from "./api";
+import { cameraTransform, panCamera, zoomCameraAroundPoint, type Camera, type ViewportPoint } from "./canvasCamera";
 
 const componentTypes: BoardElement["type"][] = [
   "button",
@@ -75,8 +76,8 @@ type DragState = {
 type PanState = {
   startX: number;
   startY: number;
-  scrollLeft: number;
-  scrollTop: number;
+  cameraX: number;
+  cameraY: number;
 };
 
 type GestureLikeEvent = Event & {
@@ -85,13 +86,19 @@ type GestureLikeEvent = Event & {
   clientY?: number;
 };
 
+type GestureState = {
+  startZoom: number;
+  focalPoint: ViewportPoint;
+};
+
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 2;
-const WHEEL_ZOOM_SENSITIVITY = 0.00012;
-const MAX_WHEEL_ZOOM_DELTA = 45;
-const GESTURE_ZOOM_DAMPING = 0.16;
+const INITIAL_ZOOM = 0.72;
+const WHEEL_ZOOM_SENSITIVITY = 0.0009;
+const MAX_WHEEL_ZOOM_DELTA = 28;
+const GESTURE_ZOOM_DAMPING = 0.32;
 const GESTURE_WHEEL_SUPPRESSION_MS = 260;
-const MAX_INPUT_ZOOM_FACTOR = 1.0045;
+const MAX_INPUT_ZOOM_FACTOR = 1.028;
 const CANVAS_WIDTH = 80000;
 const CANVAS_HEIGHT = 56000;
 const CANVAS_ORIGIN_X = 24000;
@@ -100,7 +107,7 @@ const CANVAS_ORIGIN_Y = 16000;
 export function App() {
   const [project, setProject] = useState<BoardProject | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [zoom, setZoom] = useState(0.72);
+  const [zoom, setZoom] = useState(INITIAL_ZOOM);
   const [presetId, setPresetId] = useState(DEVICE_PRESETS[0]!.id);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [pan, setPan] = useState<PanState | null>(null);
@@ -108,18 +115,14 @@ export function App() {
   const [status, setStatus] = useState("Starting workspace...");
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const canvasPlaneRef = useRef<HTMLDivElement | null>(null);
-  const zoomRef = useRef(zoom);
+  const cameraRef = useRef<Camera>({ x: 0, y: 0, zoom: INITIAL_ZOOM });
   const zoomStateFrameRef = useRef<number | null>(null);
-  const pendingZoomStateRef = useRef(zoom);
   const initialViewportPositionedRef = useRef(false);
-  const gestureStartZoomRef = useRef<number | null>(null);
+  const gestureStateRef = useRef<GestureState | null>(null);
   const lastNativeGestureAtRef = useRef(0);
+  const lastViewportPointRef = useRef<ViewportPoint | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const screenshotInputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    zoomRef.current = zoom;
-  }, [zoom]);
 
   useEffect(() => {
     return () => {
@@ -139,8 +142,11 @@ export function App() {
     if (!viewport) return;
     initialViewportPositionedRef.current = true;
     window.requestAnimationFrame(() => {
-      viewport.scrollLeft = Math.max(0, (CANVAS_ORIGIN_X - 90) * zoomRef.current);
-      viewport.scrollTop = Math.max(0, (CANVAS_ORIGIN_Y - 80) * zoomRef.current);
+      applyCamera({
+        x: -((CANVAS_ORIGIN_X - 90) * cameraRef.current.zoom),
+        y: -((CANVAS_ORIGIN_Y - 80) * cameraRef.current.zoom),
+        zoom: cameraRef.current.zoom
+      });
     });
   }, [project?.id]);
 
@@ -154,15 +160,15 @@ export function App() {
       if (!(event.metaKey || event.ctrlKey)) return;
       if (event.key === "=" || event.key === "+") {
         event.preventDefault();
-        zoomAtViewportCenter(zoomRef.current * 1.12);
+        zoomAtViewportCenter(cameraRef.current.zoom * 1.12);
       }
       if (event.key === "-") {
         event.preventDefault();
-        zoomAtViewportCenter(zoomRef.current / 1.12);
+        zoomAtViewportCenter(cameraRef.current.zoom / 1.12);
       }
       if (event.key === "0") {
         event.preventDefault();
-        zoomAtViewportCenter(0.72);
+        zoomAtViewportCenter(INITIAL_ZOOM);
       }
     };
     const onKeyUp = (event: KeyboardEvent) => {
@@ -187,38 +193,47 @@ export function App() {
     const onWheel = (event: WheelEvent) => {
       const suppressDuplicateWheel = performance.now() - lastNativeGestureAtRef.current < GESTURE_WHEEL_SUPPRESSION_MS;
       if (suppressDuplicateWheel) return;
+      rememberViewportPoint(event);
       const shouldZoom = event.ctrlKey || event.metaKey || event.altKey;
-      if (!shouldZoom) return;
       event.preventDefault();
-      const normalizedDelta = normalizeWheelDelta(event);
-      const cappedDelta = clamp(normalizedDelta, -MAX_WHEEL_ZOOM_DELTA, MAX_WHEEL_ZOOM_DELTA);
-      const rawFactor = Math.exp(-cappedDelta * WHEEL_ZOOM_SENSITIVITY);
-      const factor = clamp(rawFactor, 1 / MAX_INPUT_ZOOM_FACTOR, MAX_INPUT_ZOOM_FACTOR);
-      zoomAroundPoint(zoomRef.current * factor, event.clientX, event.clientY);
+      const wheel = normalizeWheelDeltas(event);
+      if (shouldZoom) {
+        const primaryDelta = Math.abs(wheel.y) >= Math.abs(wheel.x) ? wheel.y : wheel.x;
+        const cappedDelta = clamp(primaryDelta, -MAX_WHEEL_ZOOM_DELTA, MAX_WHEEL_ZOOM_DELTA);
+        const rawFactor = Math.exp(-cappedDelta * WHEEL_ZOOM_SENSITIVITY);
+        const factor = clamp(rawFactor, 1 / MAX_INPUT_ZOOM_FACTOR, MAX_INPUT_ZOOM_FACTOR);
+        zoomAroundViewportPoint(cameraRef.current.zoom * factor, resolveViewportPoint(event));
+        return;
+      }
+
+      const horizontal = event.shiftKey && Math.abs(wheel.x) < Math.abs(wheel.y) ? wheel.y : wheel.x;
+      applyCamera(panCamera(cameraRef.current, -horizontal, -wheel.y));
     };
 
     const onGestureStart = (event: GestureLikeEvent) => {
       event.preventDefault();
       lastNativeGestureAtRef.current = performance.now();
-      gestureStartZoomRef.current = zoomRef.current;
+      rememberViewportPoint(event);
+      gestureStateRef.current = {
+        startZoom: cameraRef.current.zoom,
+        focalPoint: resolveViewportPoint(event)
+      };
     };
 
     const onGestureChange = (event: GestureLikeEvent) => {
       event.preventDefault();
       lastNativeGestureAtRef.current = performance.now();
-      const startZoom = gestureStartZoomRef.current ?? zoomRef.current;
-      const rect = viewport.getBoundingClientRect();
-      const clientX = typeof event.clientX === "number" ? event.clientX : rect.left + rect.width / 2;
-      const clientY = typeof event.clientY === "number" ? event.clientY : rect.top + rect.height / 2;
+      rememberViewportPoint(event);
+      const gesture = gestureStateRef.current ?? { startZoom: cameraRef.current.zoom, focalPoint: resolveViewportPoint(event) };
       const rawScale = clamp(event.scale ?? 1, 0.55, 1.8);
       const dampedScale = Math.pow(rawScale, GESTURE_ZOOM_DAMPING);
-      zoomAroundPoint(startZoom * dampedScale, clientX, clientY);
+      zoomAroundViewportPoint(gesture.startZoom * dampedScale, resolveViewportPoint(event, gesture.focalPoint));
     };
 
     const onGestureEnd = (event: GestureLikeEvent) => {
       event.preventDefault();
       lastNativeGestureAtRef.current = performance.now();
-      gestureStartZoomRef.current = null;
+      gestureStateRef.current = null;
     };
 
     viewport.addEventListener("wheel", onWheel, { passive: false });
@@ -282,10 +297,14 @@ export function App() {
 
   async function runOperation(operation: BoardOperation) {
     if (!project) return;
-    const next = await applyOperation(project.id, operation);
-    setProject(next);
-    setSelectedIds(next.selection);
-    setStatus("Saved");
+    try {
+      const next = await applyOperation(project.id, operation);
+      setProject(next);
+      setSelectedIds(next.selection);
+      setStatus("Saved");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Operation failed");
+    }
   }
 
   async function select(ids: string[], additive = false) {
@@ -307,14 +326,15 @@ export function App() {
 
   function onCanvasPointerMove(event: React.PointerEvent<HTMLDivElement>) {
     if (pan) {
-      const viewport = viewportRef.current;
-      if (!viewport) return;
-      viewport.scrollLeft = pan.scrollLeft - (event.clientX - pan.startX);
-      viewport.scrollTop = pan.scrollTop - (event.clientY - pan.startY);
+      applyCamera({
+        ...cameraRef.current,
+        x: pan.cameraX + event.clientX - pan.startX,
+        y: pan.cameraY + event.clientY - pan.startY
+      });
       return;
     }
     if (!drag || !project) return;
-    const currentZoom = zoomRef.current;
+    const currentZoom = cameraRef.current.zoom;
     const dx = (event.clientX - drag.startX) / currentZoom;
     const dy = (event.clientY - drag.startY) / currentZoom;
     if (drag.mode === "move") {
@@ -366,7 +386,10 @@ export function App() {
   }
 
   async function addComponent(type: BoardElement["type"]) {
-    if (!project || !activeArtboard) return;
+    if (!project || !activeArtboard) {
+      setStatus("Select an artboard before adding a component");
+      return;
+    }
     const element = createElementFromPreset(type, activeArtboard.id, 28 + selectedIds.length * 12, 120 + selectedIds.length * 12);
     element.name = uniqueElementName(project, activeArtboard.id, `${activeArtboard.name} / ${labelFor(type)}`);
     element.zIndex = Math.max(0, ...project.elements.filter((candidate) => candidate.artboardId === activeArtboard.id).map((candidate) => candidate.zIndex)) + 1;
@@ -381,13 +404,21 @@ export function App() {
   async function deleteSelection() {
     if (!project) return;
     const elementIds = selectedIds.filter((id) => project.elements.some((element) => element.id === id));
+    if (!elementIds.length) {
+      setStatus("Select one or more elements to delete");
+      return;
+    }
     for (const elementId of elementIds) {
       await runOperation({ type: "delete_element", elementId });
     }
   }
 
   async function groupSelection() {
-    if (!project || selectedIds.length < 2) return;
+    if (!project) return;
+    if (selectedIds.length < 2) {
+      setStatus("Select at least two elements to group");
+      return;
+    }
     const elements = project.elements.filter((element) => selectedIds.includes(element.id));
     if (!elements.length) return;
     const artboardId = elements[0]!.artboardId;
@@ -412,7 +443,10 @@ export function App() {
     if (!project) return;
     const artboardIds = selectedIds.filter((id) => project.artboards.some((artboard) => artboard.id === id));
     const [from, to] = artboardIds.length >= 2 ? artboardIds : project.artboards.slice(0, 2).map((artboard) => artboard.id);
-    if (!from || !to || from === to) return;
+    if (!from || !to || from === to) {
+      setStatus("Select two artboards to connect");
+      return;
+    }
     await runOperation({
       type: "add_connector",
       connector: {
@@ -448,21 +482,60 @@ export function App() {
   async function exportSelectedPng() {
     if (!project) return;
     const artboardId = selectedArtboard?.id ?? activeArtboard?.id;
-    if (!artboardId) return;
-    const result = await exportPng(project.id, artboardId);
-    setStatus(`PNG exported: ${result.filePath}`);
+    if (!artboardId) {
+      setStatus("Select an artboard or element before exporting PNG");
+      return;
+    }
+    try {
+      const result = await exportPng(project.id, artboardId);
+      setStatus(`PNG exported: ${result.filePath}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "PNG export failed");
+    }
   }
 
   async function exportCode() {
     if (!project) return;
-    const result = await exportReactTailwind(project.id);
-    setStatus(`React + Tailwind exported: ${result.dir}`);
+    try {
+      const result = await exportReactTailwind(project.id);
+      setStatus(`React + Tailwind exported: ${result.dir}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "React export failed");
+    }
   }
 
   async function exportImplementationSpec() {
     if (!project) return;
-    const result = await exportSpec(project.id);
-    setStatus(`Spec exported: ${result.markdownPath}`);
+    try {
+      const result = await exportSpec(project.id);
+      setStatus(`Spec exported: ${result.markdownPath}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Spec export failed");
+    }
+  }
+
+  async function undoBoard() {
+    if (!project) return;
+    try {
+      const next = await undo(project.id);
+      setProject(next);
+      setSelectedIds(next.selection);
+      setStatus("Undo");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Undo failed");
+    }
+  }
+
+  async function redoBoard() {
+    if (!project) return;
+    try {
+      const next = await redo(project.id);
+      setProject(next);
+      setSelectedIds(next.selection);
+      setStatus("Redo");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Redo failed");
+    }
   }
 
   async function updateArtboard(patch: Partial<Artboard>) {
@@ -473,45 +546,72 @@ export function App() {
       metadata: { ...project.metadata, updatedAt: new Date().toISOString() }
     };
     setProject(next);
-    await saveBoard(next);
+    try {
+      await saveBoard(next);
+      setStatus("Saved");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Artboard update failed");
+    }
   }
 
   function zoomAtViewportCenter(nextZoom: number) {
     const viewport = viewportRef.current;
     if (!viewport) {
-      setZoom(clamp(nextZoom, MIN_ZOOM, MAX_ZOOM));
+      applyCamera({ ...cameraRef.current, zoom: clamp(nextZoom, MIN_ZOOM, MAX_ZOOM) });
       return;
     }
     const rect = viewport.getBoundingClientRect();
-    zoomAroundPoint(nextZoom, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    zoomAroundViewportPoint(nextZoom, { x: rect.width / 2, y: rect.height / 2 });
   }
 
-  function zoomAroundPoint(nextZoom: number, clientX: number, clientY: number) {
-    const viewport = viewportRef.current;
-    const clamped = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM);
-    if (!viewport || clamped === zoomRef.current) return;
-    const currentZoom = zoomRef.current;
-    const rect = viewport.getBoundingClientRect();
-    const offsetX = clientX - rect.left;
-    const offsetY = clientY - rect.top;
-    const contentX = (viewport.scrollLeft + offsetX) / currentZoom;
-    const contentY = (viewport.scrollTop + offsetY) / currentZoom;
-    applyVisualZoom(clamped);
-    viewport.scrollLeft = contentX * clamped - offsetX;
-    viewport.scrollTop = contentY * clamped - offsetY;
+  function zoomAroundViewportPoint(nextZoom: number, point: ViewportPoint) {
+    const nextCamera = zoomCameraAroundPoint(cameraRef.current, nextZoom, point, MIN_ZOOM, MAX_ZOOM);
+    if (nextCamera.zoom === cameraRef.current.zoom) return;
+    applyCamera(nextCamera);
   }
 
-  function applyVisualZoom(nextZoom: number) {
-    zoomRef.current = nextZoom;
-    pendingZoomStateRef.current = nextZoom;
+  function applyCamera(nextCamera: Camera) {
+    const camera = {
+      x: normalizeCameraNumber(nextCamera.x),
+      y: normalizeCameraNumber(nextCamera.y),
+      zoom: clamp(nextCamera.zoom, MIN_ZOOM, MAX_ZOOM)
+    };
+    cameraRef.current = camera;
     if (canvasPlaneRef.current) {
-      canvasPlaneRef.current.style.transform = `scale(${nextZoom})`;
+      canvasPlaneRef.current.style.transform = cameraTransform(camera);
     }
     if (zoomStateFrameRef.current !== null) return;
     zoomStateFrameRef.current = window.requestAnimationFrame(() => {
       zoomStateFrameRef.current = null;
-      setZoom(pendingZoomStateRef.current);
+      setZoom(cameraRef.current.zoom);
     });
+  }
+
+  function rememberViewportPointFromReact(event: React.PointerEvent<HTMLElement>) {
+    rememberViewportPoint(event.nativeEvent);
+  }
+
+  function rememberViewportPoint(event: { clientX?: number; clientY?: number }) {
+    const viewport = viewportRef.current;
+    if (!viewport || typeof event.clientX !== "number" || typeof event.clientY !== "number") return;
+    const rect = viewport.getBoundingClientRect();
+    const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    if (point.x < 0 || point.y < 0 || point.x > rect.width || point.y > rect.height) return;
+    lastViewportPointRef.current = point;
+  }
+
+  function resolveViewportPoint(event?: { clientX?: number; clientY?: number }, fallback?: ViewportPoint): ViewportPoint {
+    const viewport = viewportRef.current;
+    if (!viewport) return fallback ?? lastViewportPointRef.current ?? { x: 0, y: 0 };
+    if (event && typeof event.clientX === "number" && typeof event.clientY === "number") {
+      const rect = viewport.getBoundingClientRect();
+      const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      if (point.x >= 0 && point.y >= 0 && point.x <= rect.width && point.y <= rect.height) {
+        return point;
+      }
+    }
+    const rect = viewport.getBoundingClientRect();
+    return fallback ?? lastViewportPointRef.current ?? { x: rect.width / 2, y: rect.height / 2 };
   }
 
   function onCanvasPointerDownCapture(event: React.PointerEvent<HTMLDivElement>) {
@@ -527,8 +627,8 @@ export function App() {
     setPan({
       startX: event.clientX,
       startY: event.clientY,
-      scrollLeft: viewportRef.current.scrollLeft,
-      scrollTop: viewportRef.current.scrollTop
+      cameraX: cameraRef.current.x,
+      cameraY: cameraRef.current.y
     });
   }
 
@@ -553,13 +653,13 @@ export function App() {
         </div>
 
         <div className="toolbar-group" aria-label="Canvas tools">
-          <IconButton label="Select" active>
+          <IconButton label="Select" active onClick={() => setStatus("Select tool active")}>
             <MousePointer2 size={18} />
           </IconButton>
-          <IconButton label="Undo" onClick={() => undo(project.id).then((next) => (setProject(next), setSelectedIds(next.selection)))}>
+          <IconButton label="Undo" onClick={undoBoard}>
             <Undo2 size={18} />
           </IconButton>
-          <IconButton label="Redo" onClick={() => redo(project.id).then((next) => (setProject(next), setSelectedIds(next.selection)))}>
+          <IconButton label="Redo" onClick={redoBoard}>
             <Redo2 size={18} />
           </IconButton>
           <IconButton label="Group" onClick={groupSelection}>
@@ -587,11 +687,11 @@ export function App() {
         <div className="toolbar-spacer" />
 
         <div className="toolbar-group">
-          <IconButton label="Zoom out" onClick={() => zoomAtViewportCenter(zoomRef.current / 1.12)}>
+          <IconButton label="Zoom out" onClick={() => zoomAtViewportCenter(cameraRef.current.zoom / 1.12)}>
             <ZoomOut size={18} />
           </IconButton>
           <span className="zoom-readout">{Math.round(zoom * 100)}%</span>
-          <IconButton label="Zoom in" onClick={() => zoomAtViewportCenter(zoomRef.current * 1.12)}>
+          <IconButton label="Zoom in" onClick={() => zoomAtViewportCenter(cameraRef.current.zoom * 1.12)}>
             <ZoomIn size={18} />
           </IconButton>
         </div>
@@ -671,10 +771,12 @@ export function App() {
         ref={viewportRef}
         className={classNames("canvas-viewport", pan && "panning", spaceDown && "space-pan")}
         onPointerDownCapture={onCanvasPointerDownCapture}
+        onPointerMove={rememberViewportPointFromReact}
         onPointerDown={() => select([])}
       >
-        <div className="canvas-space" style={{ width: CANVAS_WIDTH * MAX_ZOOM, height: CANVAS_HEIGHT * MAX_ZOOM }}>
-          <div ref={canvasPlaneRef} className="canvas-plane" style={{ transform: `scale(${zoomRef.current})`, width: CANVAS_WIDTH, height: CANVAS_HEIGHT }}>
+        <div className="canvas-space">
+          <div ref={canvasPlaneRef} className="canvas-plane" style={{ transform: cameraTransform(cameraRef.current), width: CANVAS_WIDTH, height: CANVAS_HEIGHT }}>
+            <div className="canvas-grid" />
             <ConnectorLayer project={project} selectedIds={selectedIds} />
             {project.artboards
               .filter((artboard) => artboard.visible)
@@ -839,6 +941,7 @@ function ElementView({
         event.stopPropagation();
         onSelect([element.id], event.shiftKey);
         if (!element.locked && !event.shiftKey) {
+          capturePointer(event.currentTarget, event.pointerId);
           onDragStart({ id: element.id, mode: "move", startX: event.clientX, startY: event.clientY, original: element });
         }
       }}
@@ -859,6 +962,7 @@ function ElementView({
           aria-label="Resize"
           onPointerDown={(event) => {
             event.stopPropagation();
+            capturePointer(event.currentTarget, event.pointerId);
             onDragStart({ id: element.id, mode: "resize", startX: event.clientX, startY: event.clientY, original: element });
           }}
         />
@@ -1195,14 +1299,34 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable;
 }
 
-function normalizeWheelDelta(event: WheelEvent): number {
-  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
-    return event.deltaY * 16;
+function normalizeWheelDeltas(event: WheelEvent): { x: number; y: number } {
+  return {
+    x: normalizeWheelDelta(event.deltaX, event.deltaMode),
+    y: normalizeWheelDelta(event.deltaY, event.deltaMode)
+  };
+}
+
+function normalizeWheelDelta(delta: number, deltaMode: number): number {
+  if (deltaMode === WheelEvent.DOM_DELTA_LINE) {
+    return delta * 16;
   }
-  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
-    return event.deltaY * window.innerHeight;
+  if (deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    return delta * window.innerHeight;
   }
-  return event.deltaY;
+  return delta;
+}
+
+function normalizeCameraNumber(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
+function capturePointer(element: Element, pointerId: number) {
+  if (!(element instanceof HTMLElement)) return;
+  try {
+    element.setPointerCapture(pointerId);
+  } catch {
+    // Pointer capture is a best-effort interaction polish.
+  }
 }
 
 function uniqueElementName(project: BoardProject, artboardId: string, baseName: string): string {
