@@ -4,6 +4,8 @@ Paper.Design.Danny is a local, agent-first design canvas for detailed app mockup
 
 V0 runs as a browser app plus a local Node server. Board projects are stored as local JSON files under `boards/`, and Codex or other agents can edit those projects through MCP tools.
 
+See `AGENTS.md` for the active product goal, priorities, and verification checklist.
+
 ## Commands
 
 - `npm install`
