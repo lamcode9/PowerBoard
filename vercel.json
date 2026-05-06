@@ -1,5 +1,5 @@
 {
-  "installCommand": "npm install",
+  "installCommand": "npm install --workspace @board/schema --workspace @board/web",
   "buildCommand": "npm run build --workspace @board/schema && npm run build --workspace @board/web",
   "outputDirectory": "apps/web/dist"
 }
