@@ -3,6 +3,7 @@ import path from "node:path";
 import { applyBoardOperation, BoardOperation, BoardProject, BoardProjectSchema, createDefaultProject, createId, validateBoardProject } from "@board/schema";
 import { renderArtboardSvg, renderReactTailwind, renderSpecMarkdown } from "@board/renderers";
 import sharp from "sharp";
+import { CloudFileRecord, CloudStore, createCloudStoreFromEnv } from "./cloudStore.js";
 import { boardRoot as defaultBoardRoot, ensureInsideRoot, safeSegment } from "./paths.js";
 
 interface BoardSummary {
@@ -23,10 +24,14 @@ export class BoardStore {
   private redoStacks = new Map<string, BoardProject[]>();
   private selections = new Map<string, string[]>();
 
-  constructor(private readonly root = defaultBoardRoot) {}
+  constructor(
+    private readonly root = defaultBoardRoot,
+    private readonly cloud: CloudStore | undefined = createCloudStoreFromEnv()
+  ) {}
 
   async ensureReady(): Promise<void> {
     await fs.mkdir(this.root, { recursive: true });
+    await this.cloud?.ensureReady();
   }
 
   async listBoards(): Promise<BoardSummary[]> {
@@ -48,13 +53,20 @@ export class BoardStore {
         // Ignore folders that are not valid boards.
       }
     }
+    if (this.cloud) {
+      const localIds = new Set(boards.map((board) => board.id));
+      const cloudBoards = await this.cloud.listBoards();
+      for (const board of cloudBoards) {
+        if (!localIds.has(board.id)) boards.push(board);
+      }
+    }
     return boards.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
   async createBoard(name = "Danny's Board"): Promise<BoardProject> {
     await this.ensureReady();
     const project = createDefaultProject(name);
-    const existing = await this.exists(project.id);
+    const existing = (await this.exists(project.id)) || Boolean(await this.cloud?.readBoard(project.id));
     const id = existing ? createId("board") : project.id;
     const finalProject = BoardProjectSchema.parse({ ...project, id, name });
     await this.writeBoard(finalProject);
@@ -63,13 +75,39 @@ export class BoardStore {
 
   async readBoard(boardId: string): Promise<BoardProject> {
     const filePath = this.boardFilePath(boardId);
-    const raw = await fs.readFile(filePath, "utf8");
-    const parsed = JSON.parse(raw) as unknown;
-    return validateBoardProject(parsed);
+    try {
+      const raw = await fs.readFile(filePath, "utf8");
+      const parsed = JSON.parse(raw) as unknown;
+      return validateBoardProject(parsed);
+    } catch (error) {
+      if (!isMissingFile(error) || !this.cloud) {
+        throw error;
+      }
+      const cloudProject = await this.cloud.readBoard(boardId);
+      if (!cloudProject) {
+        throw error;
+      }
+      await this.writeLocalBoard(cloudProject);
+      return cloudProject;
+    }
   }
 
   async writeBoard(project: BoardProject): Promise<BoardProject> {
     const valid = validateBoardProject(project);
+    await this.writeLocalBoard(valid);
+    await this.cloud?.writeBoard(valid);
+    return valid;
+  }
+
+  async readStoredFile(boardId: string, relativePath: string): Promise<CloudFileRecord | undefined> {
+    return this.cloud?.readFile(boardId, relativePath);
+  }
+
+  cloudStatus(): string {
+    return this.cloud?.label ?? "local-files";
+  }
+
+  private async writeLocalBoard(valid: BoardProject): Promise<BoardProject> {
     const dir = this.boardDir(valid.id);
     await fs.mkdir(dir, { recursive: true });
     await fs.mkdir(path.join(dir, "assets"), { recursive: true });
@@ -94,7 +132,7 @@ export class BoardStore {
     if (boardId !== project.id) {
       throw new Error("Board id in URL and body must match.");
     }
-    const current = await this.exists(boardId).then((exists) => (exists ? this.readBoard(boardId) : undefined));
+    const current = await this.readBoard(boardId).catch(() => undefined);
     if (current) this.pushUndo(boardId, current);
     this.redoStacks.set(boardId, []);
     return this.writeBoard(project);
@@ -149,6 +187,15 @@ export class BoardStore {
     await fs.mkdir(dir, { recursive: true });
     const filePath = ensureInsideRoot(dir, path.join(dir, fileName));
     await fs.writeFile(filePath, buffer);
+    await this.cloud?.writeBoard(project);
+    await this.cloud?.writeFile({
+      boardId,
+      path: `assets/${fileName}`,
+      kind: "asset",
+      contentType: mimeType,
+      data: buffer,
+      metadata: { originalName: input.fileName }
+    });
 
     const assetId = createId("asset");
     const asset = {
@@ -170,17 +217,33 @@ export class BoardStore {
 
   async exportSpec(boardId: string): Promise<{ markdownPath: string; jsonPath: string; markdown: string }> {
     const project = await this.readBoard(boardId);
+    await this.cloud?.writeBoard(project);
     const dir = await this.ensureExportDir(boardId);
     const markdown = renderSpecMarkdown(project);
     const markdownPath = path.join(dir, "implementation-spec.md");
     const jsonPath = path.join(dir, "board-summary.json");
     await fs.writeFile(markdownPath, markdown, "utf8");
     await fs.writeFile(jsonPath, `${JSON.stringify(project, null, 2)}\n`, "utf8");
+    await this.cloud?.writeFile({
+      boardId,
+      path: "exports/implementation-spec.md",
+      kind: "export",
+      contentType: "text/markdown; charset=utf-8",
+      data: Buffer.from(markdown, "utf8")
+    });
+    await this.cloud?.writeFile({
+      boardId,
+      path: "exports/board-summary.json",
+      kind: "export",
+      contentType: "application/json; charset=utf-8",
+      data: Buffer.from(`${JSON.stringify(project, null, 2)}\n`, "utf8")
+    });
     return { markdownPath, jsonPath, markdown };
   }
 
   async exportReactTailwind(boardId: string): Promise<{ dir: string; files: { path: string; contents: string }[]; summary: string }> {
     const project = await this.readBoard(boardId);
+    await this.cloud?.writeBoard(project);
     const exportResult = renderReactTailwind(project);
     const dir = path.join(await this.ensureExportDir(boardId), "react-tailwind");
     await fs.rm(dir, { recursive: true, force: true });
@@ -189,12 +252,20 @@ export class BoardStore {
       const target = ensureInsideRoot(dir, path.join(dir, file.path));
       await fs.mkdir(path.dirname(target), { recursive: true });
       await fs.writeFile(target, file.contents, "utf8");
+      await this.cloud?.writeFile({
+        boardId,
+        path: `exports/react-tailwind/${file.path}`,
+        kind: "export",
+        contentType: contentTypeForFile(file.path),
+        data: Buffer.from(file.contents, "utf8")
+      });
     }
     return { dir, files: exportResult.files, summary: exportResult.summary };
   }
 
   async exportArtboardPng(boardId: string, artboardId: string): Promise<{ filePath: string }> {
     const project = await this.readBoard(boardId);
+    await this.cloud?.writeBoard(project);
     const artboard = project.artboards.find((candidate) => candidate.id === artboardId);
     if (!artboard) {
       throw new Error(`Artboard not found: ${artboardId}`);
@@ -202,7 +273,16 @@ export class BoardStore {
     const svg = renderArtboardSvg(project, artboardId);
     const dir = await this.ensureExportDir(boardId);
     const filePath = path.join(dir, `${safeSegment(artboard.name)}.png`);
-    await sharp(Buffer.from(svg)).png().toFile(filePath);
+    const png = await sharp(Buffer.from(svg)).png().toBuffer();
+    await fs.writeFile(filePath, png);
+    await this.cloud?.writeFile({
+      boardId,
+      path: `exports/${path.basename(filePath)}`,
+      kind: "export",
+      contentType: "image/png",
+      data: png,
+      metadata: { artboardId }
+    });
     return { filePath };
   }
 
@@ -265,4 +345,17 @@ function extensionForMime(mimeType: string, fileName: string): string {
 
 function stripExtension(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, "");
+}
+
+function isMissingFile(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
+}
+
+function contentTypeForFile(filePath: string): string {
+  if (filePath.endsWith(".json")) return "application/json; charset=utf-8";
+  if (filePath.endsWith(".tsx")) return "text/typescript; charset=utf-8";
+  if (filePath.endsWith(".ts")) return "text/typescript; charset=utf-8";
+  if (filePath.endsWith(".md")) return "text/markdown; charset=utf-8";
+  if (filePath.endsWith(".css")) return "text/css; charset=utf-8";
+  return "text/plain; charset=utf-8";
 }

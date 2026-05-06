@@ -17,10 +17,28 @@ await store.ensureReady();
 const app = express();
 app.use(cors({ origin: ["http://127.0.0.1:5173", "http://localhost:5173"] }));
 app.use(express.json({ limit: "30mb" }));
-app.use("/boards", express.static(boardRoot, { fallthrough: false }));
+app.use("/boards", express.static(boardRoot));
+
+app.get(/^\/boards\/([^/]+)\/(assets|exports)\/(.+)$/, asyncHandler(async (req, res) => {
+  const boardId = req.params[0];
+  const folder = req.params[1];
+  const filePath = req.params[2];
+  if (!boardId || !folder || !filePath) {
+    res.status(404).json({ error: "File not found." });
+    return;
+  }
+  const record = await store.readStoredFile(boardId, `${folder}/${filePath}`);
+  if (!record) {
+    res.status(404).json({ error: "File not found." });
+    return;
+  }
+  res.setHeader("Content-Type", record.contentType);
+  res.setHeader("Content-Length", String(record.sizeBytes));
+  res.send(record.data);
+}));
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, name: "Paper.Design.Danny", boardRoot });
+  res.json({ ok: true, name: "Paper.Design.Danny", boardRoot, cloudStore: store.cloudStatus() });
 });
 
 app.get("/api/boards", asyncHandler(async (_req, res) => {
@@ -163,6 +181,7 @@ wss.on("connection", (socket, request) => {
 httpServer.listen(port, host, () => {
   console.log(`Paper.Design.Danny server listening at http://${host}:${port}`);
   console.log(`Boards are stored in ${path.relative(process.cwd(), boardRoot) || boardRoot}`);
+  console.log(`Cloud store: ${store.cloudStatus()}`);
 });
 
 function broadcast(boardId: string, message: unknown, except?: WebSocket): void {
