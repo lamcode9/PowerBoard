@@ -13,7 +13,7 @@
 
 body {
   margin: 0;
-  min-width: 1180px;
+  min-width: 1040px;
   min-height: 100vh;
   overflow: hidden;
 }
@@ -51,19 +51,34 @@ button {
 }
 
 .app-shell {
+  --left-panel-width: 244px;
+  --right-panel-width: 276px;
+
   display: grid;
-  grid-template-columns: 292px minmax(0, 1fr) 316px;
+  grid-template-areas:
+    "topbar topbar topbar"
+    "left canvas right"
+    "status status status";
+  grid-template-columns: var(--left-panel-width) minmax(0, 1fr) var(--right-panel-width);
   grid-template-rows: 64px minmax(0, 1fr) 30px;
   width: 100vw;
   height: 100vh;
   background: #dfe7f1;
 }
 
+.app-shell.left-pane-hidden {
+  --left-panel-width: 0px;
+}
+
+.app-shell.right-pane-hidden {
+  --right-panel-width: 0px;
+}
+
 .topbar {
-  grid-column: 1 / 4;
+  grid-area: topbar;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   min-width: 0;
   border-bottom: 1px solid #cbd5e1;
   background: #f8fafc;
@@ -74,8 +89,8 @@ button {
   display: flex;
   align-items: center;
   gap: 11px;
-  width: 268px;
-  min-width: 268px;
+  width: 224px;
+  min-width: 224px;
 }
 
 .brand-block h1 {
@@ -105,6 +120,10 @@ button {
   border-radius: 8px;
   background: #ffffff;
   padding: 4px;
+}
+
+.pane-controls {
+  flex: 0 0 auto;
 }
 
 .toolbar-spacer {
@@ -190,7 +209,12 @@ button {
   background: #f8fafc;
 }
 
+.left-panel {
+  grid-area: left;
+}
+
 .right-panel {
+  grid-area: right;
   border-right: 0;
   border-left: 1px solid #cbd5e1;
 }
@@ -201,7 +225,7 @@ button {
   min-height: 0;
   flex-direction: column;
   border-bottom: 1px solid #dbe3ee;
-  padding: 14px;
+  padding: 12px 10px;
 }
 
 .layers-section {
@@ -432,6 +456,7 @@ button {
 }
 
 .canvas-viewport {
+  grid-area: canvas;
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -1006,7 +1031,7 @@ button {
 }
 
 .statusbar {
-  grid-column: 1 / 4;
+  grid-area: status;
   overflow: hidden;
   border-top: 1px solid #cbd5e1;
   background: #0f172a;

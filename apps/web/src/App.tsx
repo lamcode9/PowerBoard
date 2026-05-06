@@ -21,6 +21,10 @@ import {
   LockOpen,
   Maximize2,
   MousePointer2,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   Redo2,
   Save,
@@ -126,6 +130,8 @@ export function App() {
   const [spaceDown, setSpaceDown] = useState(false);
   const [status, setStatus] = useState("Starting workspace...");
   const [collapsedPanels, setCollapsedPanels] = useState<Record<string, boolean>>({});
+  const [leftPaneOpen, setLeftPaneOpen] = useState(true);
+  const [rightPaneOpen, setRightPaneOpen] = useState(true);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const canvasPlaneRef = useRef<HTMLDivElement | null>(null);
   const cameraRef = useRef<Camera>({ x: 0, y: 0, zoom: INITIAL_ZOOM });
@@ -654,6 +660,20 @@ export function App() {
     setCollapsedPanels((current) => ({ ...current, [panelId]: !current[panelId] }));
   }
 
+  function toggleLeftPane() {
+    setLeftPaneOpen((current) => {
+      setStatus(current ? "Left pane hidden" : "Left pane shown");
+      return !current;
+    });
+  }
+
+  function toggleRightPane() {
+    setRightPaneOpen((current) => {
+      setStatus(current ? "Right pane hidden" : "Right pane shown");
+      return !current;
+    });
+  }
+
   function focusBounds(bounds: Bounds, message: string) {
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -758,7 +778,7 @@ export function App() {
   }
 
   return (
-    <main className="app-shell" onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
+    <main className={classNames("app-shell", !leftPaneOpen && "left-pane-hidden", !rightPaneOpen && "right-pane-hidden")} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
       <header className="topbar">
         <div className="brand-block">
           <div className="brand-mark">PDD</div>
@@ -766,6 +786,15 @@ export function App() {
             <h1>Paper.Design.Danny</h1>
             <p>{project.name}</p>
           </div>
+        </div>
+
+        <div className="toolbar-group pane-controls" aria-label="Pane visibility">
+          <IconButton label={leftPaneOpen ? "Hide left pane" : "Show left pane"} active={leftPaneOpen} onClick={toggleLeftPane}>
+            {leftPaneOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+          </IconButton>
+          <IconButton label={rightPaneOpen ? "Hide right pane" : "Show right pane"} active={rightPaneOpen} onClick={toggleRightPane}>
+            {rightPaneOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+          </IconButton>
         </div>
 
         <div className="toolbar-group" aria-label="Canvas tools">
@@ -834,7 +863,8 @@ export function App() {
         </div>
       </header>
 
-      <aside className="left-panel">
+      {leftPaneOpen ? (
+        <aside className="left-panel">
         <CollapsiblePanel id="app-kit" icon={<Component size={16} />} title="App Kit" collapsed={Boolean(collapsedPanels["app-kit"])} onToggle={togglePanel}>
           <div className="component-grid">
             {componentTypes.map((type) => (
@@ -887,7 +917,8 @@ export function App() {
             ))}
           </div>
         </CollapsiblePanel>
-      </aside>
+        </aside>
+      ) : null}
 
       <section
         ref={viewportRef}
@@ -916,7 +947,8 @@ export function App() {
         </div>
       </section>
 
-      <aside className="right-panel">
+      {rightPaneOpen ? (
+        <aside className="right-panel">
         <CollapsiblePanel id="inspector" icon={<Save size={16} />} title="Inspector" collapsed={Boolean(collapsedPanels.inspector)} onToggle={togglePanel}>
           {selectedIds.length > 1 ? (
             <SelectionInspector project={project} selectedIds={selectedIds} onFocus={focusSelection} onGroup={groupSelection} onDuplicate={duplicateSelection} onDelete={deleteSelection} />
@@ -954,7 +986,8 @@ export function App() {
             )}
           </div>
         </CollapsiblePanel>
-      </aside>
+        </aside>
+      ) : null}
 
       <footer className="statusbar">{status}</footer>
     </main>
