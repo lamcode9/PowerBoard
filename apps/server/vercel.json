@@ -1,6 +1,6 @@
 {
   "framework": "vite",
-  "installCommand": "npm install --workspace @board/schema --workspace @board/web",
-  "buildCommand": "npm run build --workspace @board/schema && npm run build --workspace @board/web && rm -rf dist-web && cp -R ../web/dist dist-web",
+  "installCommand": "npm install --workspace @powerboard/schema --workspace @powerboard/web",
+  "buildCommand": "npm run build --workspace @powerboard/schema && npm run build --workspace @powerboard/web && rm -rf dist-web && cp -R ../web/dist dist-web",
   "outputDirectory": "dist-web"
 }

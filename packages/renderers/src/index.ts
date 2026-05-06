@@ -1,4 +1,4 @@
-import type { Artboard, BoardElement, BoardProject } from "@board/schema";
+import type { Artboard, BoardElement, BoardProject } from "@powerboard/schema";
 
 export interface RenderedFile {
   path: string;

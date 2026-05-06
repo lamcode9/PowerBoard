@@ -1,4 +1,4 @@
-import { applyBoardOperation, createDefaultProject, createId, validateBoardProject, type BoardAsset, type BoardOperation, type BoardProject } from "@board/schema";
+import { applyBoardOperation, createDefaultProject, createId, validateBoardProject, type BoardAsset, type BoardOperation, type BoardProject } from "@powerboard/schema";
 
 const API_BASE = "";
 const LOCAL_STORAGE_KEY = "powerboard.boards.v1";

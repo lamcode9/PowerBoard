@@ -17,7 +17,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@board/schema": path.resolve(here, "../../packages/schema/src/index.ts")
+      "@powerboard/schema": path.resolve(here, "../../packages/schema/src/index.ts")
     }
   }
 });

@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import { ArtboardSchema, BoardElementSchema, BoardOperation, BoardProjectSchema, ConnectorSchema, createElementFromPreset, createId } from "@board/schema";
+import { ArtboardSchema, BoardElementSchema, BoardOperation, BoardProjectSchema, ConnectorSchema, createElementFromPreset, createId } from "@powerboard/schema";
 import { BoardStore } from "./boardService.js";
 
 interface BoardMcpOptions {

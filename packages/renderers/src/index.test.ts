@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createDefaultProject } from "@board/schema";
+import { createDefaultProject } from "@powerboard/schema";
 import { renderArtboardSvg, renderReactTailwind, renderSpecMarkdown } from "./index";
 
 describe("renderers", () => {

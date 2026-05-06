@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { BoardProject, createElementFromPreset } from "@board/schema";
+import { BoardProject, createElementFromPreset } from "@powerboard/schema";
 import { BoardStore } from "./boardService";
 import { CloudBoardSummary, CloudFileRecord, CloudStore } from "./cloudStore";
 

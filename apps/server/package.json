@@ -1,5 +1,5 @@
 {
-  "name": "@board/server",
+  "name": "@powerboard/server",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -11,8 +11,8 @@
     "mcp": "tsx src/mcp.ts"
   },
   "dependencies": {
-    "@board/renderers": "file:../../packages/renderers",
-    "@board/schema": "file:../../packages/schema",
+    "@powerboard/renderers": "file:../../packages/renderers",
+    "@powerboard/schema": "file:../../packages/schema",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",

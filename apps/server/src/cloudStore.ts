@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import { BoardProject, validateBoardProject } from "@board/schema";
+import { BoardProject, validateBoardProject } from "@powerboard/schema";
 
 const SCHEMA_NAME = "powerboard";
 
@@ -36,13 +36,13 @@ export interface CloudStore {
 }
 
 export function createCloudStoreFromEnv(): CloudStore | undefined {
-  if ((process.env.NODE_ENV === "test" || process.env.VITEST) && process.env.BOARD_CLOUD_TEST !== "1") {
+  if ((process.env.NODE_ENV === "test" || process.env.VITEST) && process.env.POWERBOARD_CLOUD_TEST !== "1") {
     return undefined;
   }
-  const driver = process.env.BOARD_CLOUD_DRIVER?.trim().toLowerCase();
+  const driver = process.env.POWERBOARD_CLOUD_DRIVER?.trim().toLowerCase();
   const connectionString = process.env.SUPABASE_DB_URL?.trim();
   if (driver && driver !== "supabase") {
-    throw new Error(`Unsupported BOARD_CLOUD_DRIVER: ${driver}`);
+    throw new Error(`Unsupported POWERBOARD_CLOUD_DRIVER: ${driver}`);
   }
   if (!connectionString) {
     return undefined;

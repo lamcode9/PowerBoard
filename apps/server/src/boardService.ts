@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { applyBoardOperation, BoardOperation, BoardProject, BoardProjectSchema, createDefaultProject, createId, validateBoardProject } from "@board/schema";
-import { renderArtboardSvg, renderReactTailwind, renderSpecMarkdown } from "@board/renderers";
+import { applyBoardOperation, BoardOperation, BoardProject, BoardProjectSchema, createDefaultProject, createId, validateBoardProject } from "@powerboard/schema";
+import { renderArtboardSvg, renderReactTailwind, renderSpecMarkdown } from "@powerboard/renderers";
 import sharp from "sharp";
 import { CloudFileRecord, CloudStore, createCloudStoreFromEnv } from "./cloudStore.js";
 import { boardRoot as defaultBoardRoot, ensureInsideRoot, safeSegment } from "./paths.js";

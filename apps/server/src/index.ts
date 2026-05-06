@@ -4,7 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { BoardOperation, BoardProjectSchema, OperationSchema } from "@board/schema";
+import { BoardOperation, BoardProjectSchema, OperationSchema } from "@powerboard/schema";
 import { BoardStore } from "./boardService.js";
 import { boardRoot } from "./paths.js";
 import { createBoardMcpServer } from "./mcpServer.js";

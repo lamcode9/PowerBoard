@@ -36,8 +36,8 @@ import {
   ZoomIn,
   ZoomOut
 } from "lucide-react";
-import type { Artboard, BoardElement, BoardOperation, BoardProject } from "@board/schema";
-import { createElementFromPreset, createId, DEVICE_PRESETS } from "@board/schema";
+import type { Artboard, BoardElement, BoardOperation, BoardProject } from "@powerboard/schema";
+import { createElementFromPreset, createId, DEVICE_PRESETS } from "@powerboard/schema";
 import {
   applyOperation,
   createBoard,

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const BOARD_SCHEMA_VERSION = 1;
+export const POWERBOARD_SCHEMA_VERSION = 1;
 
 export const artboardTypes = ["mobile", "tablet", "desktop", "web", "custom"] as const;
 export const elementTypes = [
@@ -161,7 +161,7 @@ export type DesignTokens = z.infer<typeof DesignTokensSchema>;
 
 export const BoardProjectSchema = z
   .object({
-    schemaVersion: z.literal(BOARD_SCHEMA_VERSION),
+    schemaVersion: z.literal(POWERBOARD_SCHEMA_VERSION),
     id: z.string().min(1),
     name: z.string().min(1),
     pages: z
@@ -493,7 +493,7 @@ export function createDefaultProject(name = "PowerBoard Starter Board"): BoardPr
   ];
 
   return BoardProjectSchema.parse({
-    schemaVersion: BOARD_SCHEMA_VERSION,
+    schemaVersion: POWERBOARD_SCHEMA_VERSION,
     id: "board_default",
     name,
     pages: [{ id: "page_main", name: "Main", artboardIds: [mobile.id, desktop.id] }],

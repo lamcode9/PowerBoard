@@ -1,5 +1,5 @@
 {
-  "name": "board",
+  "name": "powerboard",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -8,11 +8,11 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n server,web -c cyan,magenta \"npm run dev --workspace @board/server\" \"npm run dev --workspace @board/web\"",
-    "build": "npm run build --workspace @board/schema && npm run build --workspace @board/renderers && npm run build --workspace @board/server && npm run build --workspace @board/web",
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm run dev --workspace @powerboard/server\" \"npm run dev --workspace @powerboard/web\"",
+    "build": "npm run build --workspace @powerboard/schema && npm run build --workspace @powerboard/renderers && npm run build --workspace @powerboard/server && npm run build --workspace @powerboard/web",
     "test": "vitest run",
-    "typecheck": "npm run typecheck --workspace @board/schema && npm run typecheck --workspace @board/renderers && npm run typecheck --workspace @board/server && npm run typecheck --workspace @board/web",
-    "mcp": "npm run mcp --workspace @board/server"
+    "typecheck": "npm run typecheck --workspace @powerboard/schema && npm run typecheck --workspace @powerboard/renderers && npm run typecheck --workspace @powerboard/server && npm run typecheck --workspace @powerboard/web",
+    "mcp": "npm run mcp --workspace @powerboard/server"
   },
   "devDependencies": {
     "@types/node": "^25.0.0",

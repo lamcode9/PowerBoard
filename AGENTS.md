@@ -24,9 +24,32 @@ This app is not trying to be a generic Figma clone. It should become a practical
 ## Local Workspace
 - Web app: `http://127.0.0.1:5173`
 - Local server: `http://127.0.0.1:4318`
+- Live MCP endpoint: `http://127.0.0.1:4318/mcp`
+- Stdio MCP command: `npm run mcp --prefix /Users/km/Developer/Board`
 - Boards live in `boards/<boardId>/board.json`.
 - Uploaded board assets live in `boards/<boardId>/assets/`.
 - Generated exports live in `boards/<boardId>/exports/`.
+
+## PowerBoard MCP Connector Note For Other Projects
+Paste this into another project's `AGENTS.md` or `agent.md` when that project should use PowerBoard for app mockups:
+
+````md
+## PowerBoard Design Board
+Use PowerBoard as the shared design workspace for high-fidelity app mockups, screenshot tracing, hierarchy inspection, and React/Tailwind export.
+
+- Local app: `http://127.0.0.1:5173`
+- Live MCP endpoint: `http://127.0.0.1:4318/mcp`
+- Local workspace: `/Users/km/Developer/Board`
+- Prefer MCP tools over direct JSON edits: `list_boards`, `read_board`, `summarize_board`, `create_artboard`, `add_element`, `update_element`, `move_resize_element`, `set_selection`, `export_react_tailwind`, and `validate_board`.
+- If the browser board should update live, make sure PowerBoard is running with `npm run dev` in `/Users/km/Developer/Board`.
+- For stdio MCP clients, configure:
+
+```toml
+[mcp_servers.powerboard]
+command = "npm"
+args = ["run", "mcp", "--prefix", "/Users/km/Developer/Board"]
+```
+````
 
 ## Collaboration Notes
 - Preserve live board edits unless the user explicitly asks to reset or discard them.

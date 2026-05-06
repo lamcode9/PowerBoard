@@ -11,7 +11,7 @@ See `AGENTS.md` for the active product goal, priorities, and verification checkl
 The local server can mirror board files to Supabase Postgres while keeping local JSON files as the fast source of truth.
 
 1. Copy `.env.example` to `.env.local`.
-2. Set `BOARD_CLOUD_DRIVER=supabase`.
+2. Set `POWERBOARD_CLOUD_DRIVER=supabase`.
 3. Set `SUPABASE_DB_URL` to the private Postgres connection string from Supabase.
 4. Restart `npm run dev`.
 
@@ -27,11 +27,25 @@ When enabled, the server creates a private `powerboard` schema, stores board JSO
 
 The web app runs on `http://127.0.0.1:5173` and the local server runs on `http://127.0.0.1:4318`.
 
+## MCP Connector
+
+For live agent control while the browser board is open, start PowerBoard locally with `npm run dev`, then connect MCP-capable agents to `http://127.0.0.1:4318/mcp` using streamable HTTP.
+
+For stdio-based MCP clients, use:
+
+```toml
+[mcp_servers.powerboard]
+command = "npm"
+args = ["run", "mcp", "--prefix", "/Users/km/Developer/Board"]
+```
+
+Project agent files can include the connector note in `AGENTS.md` or `agent.md` so future agents know to use PowerBoard for mockups and UI iteration.
+
 ## Vercel
 
 Deploy from the repository root, not from `apps/server`. The root `vercel.json` builds the Vite web app with:
 
-- Build command: `npm run build --workspace @board/schema && npm run build --workspace @board/web`
+- Build command: `npm run build --workspace @powerboard/schema && npm run build --workspace @powerboard/web`
 - Output directory: `apps/web/dist`
 
 On Vercel, the static app still falls back to browser-local board storage unless a server-side API is deployed with `SUPABASE_DB_URL`. The local Node/MCP server remains the main V0 path for agent control.
