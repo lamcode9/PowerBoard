@@ -9,3 +9,4 @@ dist/
 boards/*/exports/
 boards/*/assets/
 !boards/.gitkeep
+.vercel
