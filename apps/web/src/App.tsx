@@ -873,7 +873,7 @@ export function App() {
             {project.artboards.map((artboard) => (
               <div key={artboard.id} className="layer-group">
                 <button className={selectedIds.includes(artboard.id) ? "layer-row selected" : "layer-row"} onClick={(event) => select([artboard.id], event.shiftKey)}>
-                  <Frame size={15} />
+                  <Frame size={13} />
                   <span>{artboard.name}</span>
                   <small>{artboard.id}</small>
                 </button>
@@ -979,17 +979,17 @@ function LayerNode({
   const children = project.elements.filter((child) => child.parentId === element.id).sort((a, b) => b.zIndex - a.zIndex);
   return (
     <>
-      <div className={selectedIds.includes(element.id) ? "layer-row selected element-layer" : "layer-row element-layer"} style={{ "--indent": `${depth * 16}px` } as React.CSSProperties}>
+      <div className={selectedIds.includes(element.id) ? "layer-row selected element-layer" : "layer-row element-layer"} style={{ "--indent": `${depth * 12}px` } as React.CSSProperties}>
         <button onClick={(event) => onSelect([element.id], event.shiftKey)} title={`${element.name} · ${element.id}`}>
-          {children.length ? <ChevronDown size={13} /> : <span className="layer-spacer" />}
+          {children.length ? <ChevronDown size={11} /> : <span className="layer-spacer" />}
           <span>{element.name}</span>
           <small>{element.id}</small>
         </button>
         <button title={element.visible ? "Hide" : "Show"} onClick={() => onUpdate(element.id, { visible: !element.visible })}>
-          {element.visible ? <Eye size={13} /> : <EyeOff size={13} />}
+          {element.visible ? <Eye size={12} /> : <EyeOff size={12} />}
         </button>
         <button title={element.locked ? "Unlock" : "Lock"} onClick={() => onUpdate(element.id, { locked: !element.locked })}>
-          {element.locked ? <Lock size={13} /> : <LockOpen size={13} />}
+          {element.locked ? <Lock size={12} /> : <LockOpen size={12} />}
         </button>
       </div>
       {children.map((child) => (
@@ -1013,6 +1013,10 @@ function ArtboardView({
   onDragStart: (state: DragState) => void;
 }) {
   const elements = project.elements.filter((element) => element.artboardId === artboard.id && !element.parentId && element.visible).sort((a, b) => a.zIndex - b.zIndex);
+  const selectedElements = project.elements
+    .filter((element) => selectedIds.includes(element.id) && element.artboardId === artboard.id && element.visible)
+    .map((element) => ({ element, position: elementPositionInArtboard(element, project) }))
+    .filter((item): item is { element: BoardElement; position: { x: number; y: number } } => Boolean(item.position));
   const selected = selectedIds.includes(artboard.id);
   return (
     <div
@@ -1041,6 +1045,16 @@ function ArtboardView({
           <ElementView key={element.id} element={element} project={project} selectedIds={selectedIds} onSelect={onSelect} onDragStart={onDragStart} />
         ))}
       </div>
+      {selectedElements.length ? (
+        <div className="selection-badge-layer" aria-hidden="true">
+          {selectedElements.map(({ element, position }) => (
+            <span key={element.id} className="element-name-badge" style={{ left: position.x - 2, top: position.y - 24 }}>
+              {element.name}
+              <small>{element.id}</small>
+            </span>
+          ))}
+        </div>
+      ) : null}
       {selected && !artboard.locked ? (
         <button
           className="artboard-resize-handle"
@@ -1071,12 +1085,13 @@ function ElementView({
 }) {
   const selected = selectedIds.includes(element.id);
   const children = project.elements.filter((child) => child.parentId === element.id && child.visible).sort((a, b) => a.zIndex - b.zIndex);
+  const selectedAncestor = children.some((child) => selectedIds.includes(child.id) || hasSelectedDescendant(child.id, project, selectedIds));
   const style = elementToStyle(element);
   const asset = typeof element.props.assetId === "string" ? project.assets.find((candidate) => candidate.id === element.props.assetId) : undefined;
 
   return (
     <div
-      className={classNames("board-element", `kind-${element.type}`, selected && "selected", element.locked && "locked")}
+      className={classNames("board-element", `kind-${element.type}`, selected && "selected", selectedAncestor && "selected-ancestor", element.locked && "locked")}
       style={style}
       data-board-element={element.id}
       data-board-name={element.name}
@@ -1090,12 +1105,6 @@ function ElementView({
         }
       }}
     >
-      {selected ? (
-        <span className="element-name-badge">
-          {element.name}
-          <small>{element.id}</small>
-        </span>
-      ) : null}
       <ElementContent element={element} assetSrc={asset?.src} />
       {children.map((child) => (
         <ElementView key={child.id} element={child} project={project} selectedIds={selectedIds} onSelect={onSelect} onDragStart={onDragStart} />
@@ -1456,6 +1465,33 @@ function IconButton({ label, active, disabled, onClick, children }: { label: str
       {children}
     </button>
   );
+}
+
+function hasSelectedDescendant(elementId: string, project: BoardProject, selectedIds: string[], seen = new Set<string>()): boolean {
+  if (seen.has(elementId)) return false;
+  seen.add(elementId);
+  return project.elements.some(
+    (candidate) =>
+      candidate.parentId === elementId &&
+      (selectedIds.includes(candidate.id) || hasSelectedDescendant(candidate.id, project, selectedIds, new Set(seen)))
+  );
+}
+
+function elementPositionInArtboard(element: BoardElement, project: BoardProject): { x: number; y: number } | undefined {
+  let x = element.x;
+  let y = element.y;
+  let parentId = element.parentId;
+  const seen = new Set<string>([element.id]);
+  while (parentId) {
+    if (seen.has(parentId)) return undefined;
+    seen.add(parentId);
+    const parent = project.elements.find((candidate) => candidate.id === parentId);
+    if (!parent) return undefined;
+    x += parent.x;
+    y += parent.y;
+    parentId = parent.parentId;
+  }
+  return { x, y };
 }
 
 function elementToStyle(element: BoardElement): React.CSSProperties {
