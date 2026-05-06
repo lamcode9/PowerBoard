@@ -29,6 +29,7 @@ This app is not trying to be a generic Figma clone. It should become a practical
 - Boards live in `boards/<boardId>/board.json`.
 - Uploaded board assets live in `boards/<boardId>/assets/`.
 - Generated exports live in `boards/<boardId>/exports/`.
+- Cloud-direct mode: set `POWERBOARD_STORAGE_MODE=cloud` with `SUPABASE_DB_URL`; then MCP/API writes go directly to Supabase instead of local board files.
 
 ## PowerBoard MCP Connector Note For Other Projects
 Paste this into another project's `AGENTS.md` or `agent.md` when that project should use PowerBoard for app mockups:
@@ -41,6 +42,7 @@ Use PowerBoard as the shared design workspace for high-fidelity app mockups, scr
 - Live MCP endpoint: `http://127.0.0.1:4318/mcp`
 - Local workspace: `/Users/km/Developer/Board`
 - Prefer MCP tools over direct JSON edits: `list_boards`, `read_board`, `summarize_board`, `create_artboard`, `add_element`, `update_element`, `move_resize_element`, `set_selection`, `export_react_tailwind`, and `validate_board`.
+- For cloud-direct work, the running PowerBoard server must report `cloudStore: "supabase-postgres"` and `storageMode: "cloud"` at `http://127.0.0.1:4318/api/health`; still use MCP/API operations, not raw database writes.
 - If the browser board should update live, make sure PowerBoard is running with `npm run dev` in `/Users/km/Developer/Board`.
 - For stdio MCP clients, configure:
 

@@ -1000,7 +1000,7 @@ export function App() {
       </header>
 
       {homeOpen ? (
-        <HomeView boards={boardSummaries} previews={boardPreviews} activeBoardId={project.id} storageStatus={storageStatus} onOpen={openBoard} onCreate={createNewBoard} />
+        <HomeView boards={boardSummaries} previews={boardPreviews} storageStatus={storageStatus} onOpen={openBoard} onCreate={createNewBoard} />
       ) : (
         <>
       {leftPaneOpen ? (
@@ -1140,14 +1140,12 @@ export function App() {
 function HomeView({
   boards,
   previews,
-  activeBoardId,
   storageStatus,
   onOpen,
   onCreate
 }: {
   boards: BoardSummary[];
   previews: Record<string, BoardProject>;
-  activeBoardId: string;
   storageStatus: ApiHealth | null;
   onOpen: (boardId: string) => void;
   onCreate: () => void;
@@ -1170,7 +1168,7 @@ function HomeView({
               <span>
                 {totalElements} {pluralize(totalElements, "element")}
               </span>
-              <span className={classNames("storage-pill", isCloudBacked(storageStatus?.cloudStore) && "cloud")}>{storageLabel(storageStatus?.cloudStore)}</span>
+              <span className={classNames("storage-pill", isCloudBacked(storageStatus) && "cloud")}>{storageLabel(storageStatus)}</span>
             </div>
           </div>
           <button className="text-button home-create" onClick={() => onCreate()}>
@@ -1183,11 +1181,10 @@ function HomeView({
             {boards.map((board) => {
               const preview = previews[board.id];
               const frames = preview?.artboards ?? [];
-              const current = board.id === activeBoardId;
               return (
                 <article
                   key={board.id}
-                  className={classNames("board-card", current && "current")}
+                  className="board-card"
                   role="button"
                   tabIndex={0}
                   onClick={() => onOpen(board.id)}
@@ -1224,7 +1221,6 @@ function HomeView({
                       {board.elementCount} {pluralize(board.elementCount, "element")}
                     </span>
                   </div>
-                  {current ? <span className="current-badge">Current board</span> : null}
                   <div className="frame-chip-list">
                     {frames.slice(0, 4).map((frame) => (
                       <span key={frame.id} className="frame-chip" title={`${frame.name} · ${frame.id}`}>
@@ -1889,12 +1885,15 @@ function routeHash(route: RouteState): string {
   return route.view === "home" ? "#home" : `#board=${encodeURIComponent(route.boardId)}`;
 }
 
-function isCloudBacked(value: string | undefined): boolean {
+function isCloudBacked(health: ApiHealth | null): boolean {
+  const value = health?.cloudStore;
   return Boolean(value && !["browser-local", "local-files", "local-files (cloud unavailable)"].includes(value));
 }
 
-function storageLabel(value: string | undefined): string {
+function storageLabel(health: ApiHealth | null): string {
+  const value = health?.cloudStore;
   if (!value) return "Checking storage";
+  if (value === "supabase-postgres" && health?.storageMode === "cloud") return "Cloud direct";
   if (value === "supabase-postgres") return "Supabase cloud";
   if (value === "browser-local") return "Browser local";
   if (value === "local-files") return "Local files";

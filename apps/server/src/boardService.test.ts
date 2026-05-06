@@ -3,12 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { BoardProject, createElementFromPreset } from "@powerboard/schema";
-import { BoardStore } from "./boardService";
+import { BoardStore, type StorageMode } from "./boardService";
 import { CloudBoardSummary, CloudFileRecord, CloudStore } from "./cloudStore";
 
-async function tempStore(cloud?: CloudStore) {
+async function tempStore(cloud?: CloudStore, storageMode?: StorageMode) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-store-"));
-  const store = new BoardStore(dir, cloud);
+  const store = new BoardStore(dir, cloud, storageMode);
   await store.ensureReady();
   return { dir, store };
 }
@@ -77,6 +77,39 @@ describe("BoardStore", () => {
 
     await store.exportSpec(board.id);
     expect(await cloud.readFile(board.id, "exports/implementation-spec.md")).toMatchObject({ contentType: "text/markdown; charset=utf-8" });
+  });
+
+  it("can use cloud as the primary store without writing board files locally", async () => {
+    const cloud = new MemoryCloudStore();
+    const { dir, store } = await tempStore(cloud, "cloud");
+    const board = await store.createBoard("Cloud Primary Board");
+    const element = createElementFromPreset("button", board.artboards[0]!.id, 24, 24);
+
+    await expect(fs.stat(path.join(dir, board.id, "board.json"))).rejects.toThrow();
+    expect(await cloud.readBoard(board.id)).toMatchObject({ id: board.id, name: "Cloud Primary Board" });
+
+    const updated = await store.applyOperation(board.id, { type: "add_element", element });
+    expect(updated.elements.some((candidate) => candidate.id === element.id)).toBe(true);
+    await expect(fs.stat(path.join(dir, board.id, "board.json"))).rejects.toThrow();
+    expect(await cloud.readBoard(board.id)).toMatchObject({ elements: expect.arrayContaining([expect.objectContaining({ id: element.id })]) });
+
+    const upload = await store.saveAsset(board.id, {
+      fileName: "overlay.png",
+      dataUrl: "data:image/png;base64,aGVsbG8="
+    });
+    const asset = upload.project.assets.find((candidate) => candidate.id === upload.assetId);
+    expect(asset).toBeDefined();
+    await expect(fs.stat(path.join(dir, board.id, "assets", asset!.fileName))).rejects.toThrow();
+    expect(await cloud.readFile(board.id, `assets/${asset.fileName}`)).toMatchObject({ contentType: "image/png" });
+
+    const spec = await store.exportSpec(board.id);
+    expect(spec.markdownPath).toBe(`cloud://${board.id}/exports/implementation-spec.md`);
+    expect(await cloud.readFile(board.id, "exports/implementation-spec.md")).toMatchObject({ contentType: "text/markdown; charset=utf-8" });
+
+    const png = await store.exportArtboardPng(board.id, board.artboards[0]!.id);
+    expect(png.filePath).toMatch(/^cloud:\/\//);
+    const pngName = png.filePath.split("/exports/")[1]!;
+    expect(await cloud.readFile(board.id, `exports/${pngName}`)).toMatchObject({ contentType: "image/png" });
   });
 
   it("falls back to local files when cloud storage is unreachable", async () => {

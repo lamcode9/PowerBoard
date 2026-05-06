@@ -19,6 +19,8 @@ interface AssetInput {
   dataUrl: string;
 }
 
+export type StorageMode = "local" | "mirror" | "cloud";
+
 export class BoardStore {
   private undoStacks = new Map<string, BoardProject[]>();
   private redoStacks = new Map<string, BoardProject[]>();
@@ -27,19 +29,34 @@ export class BoardStore {
 
   constructor(
     private readonly root = defaultBoardRoot,
-    private cloud: CloudStore | undefined = createCloudStoreFromEnv()
+    private cloud: CloudStore | undefined = createCloudStoreFromEnv(),
+    private readonly storageMode: StorageMode = storageModeFromEnv()
   ) {}
 
   async ensureReady(): Promise<void> {
-    await fs.mkdir(this.root, { recursive: true });
+    if (!this.isCloudPrimary()) {
+      await fs.mkdir(this.root, { recursive: true });
+    }
+    if (this.storageMode === "local") {
+      this.cloud = undefined;
+      return;
+    }
     if (!this.cloud && this.cloudUnavailableStatus) {
       this.cloud = createCloudStoreFromEnv();
     }
-    if (!this.cloud) return;
+    if (!this.cloud) {
+      if (this.isCloudPrimary()) {
+        throw new Error("POWERBOARD_STORAGE_MODE=cloud requires SUPABASE_DB_URL.");
+      }
+      return;
+    }
     try {
       await this.cloud.ensureReady();
       this.cloudUnavailableStatus = undefined;
     } catch (error) {
+      if (this.isCloudPrimary()) {
+        throw new Error(`PowerBoard cloud storage unavailable (${this.cloud.label}): ${error instanceof Error ? error.message : String(error)}`);
+      }
       const label = this.cloud.label;
       this.cloud = undefined;
       this.cloudUnavailableStatus = "local-files (cloud unavailable)";
@@ -49,6 +66,9 @@ export class BoardStore {
 
   async listBoards(): Promise<BoardSummary[]> {
     await this.ensureReady();
+    if (this.isCloudPrimary()) {
+      return this.requiredCloud().listBoards();
+    }
     const entries = await fs.readdir(this.root, { withFileTypes: true });
     const boards: BoardSummary[] = [];
     for (const entry of entries) {
@@ -79,7 +99,7 @@ export class BoardStore {
   async createBoard(name = "PowerBoard Starter Board"): Promise<BoardProject> {
     await this.ensureReady();
     const project = createDefaultProject(name);
-    const existing = (await this.exists(project.id)) || Boolean(await this.cloud?.readBoard(project.id));
+    const existing = (!this.isCloudPrimary() && (await this.exists(project.id))) || Boolean(await this.cloud?.readBoard(project.id));
     const id = existing ? createId("board") : project.id;
     const finalProject = BoardProjectSchema.parse({ ...project, id, name });
     await this.writeBoard(finalProject);
@@ -87,6 +107,15 @@ export class BoardStore {
   }
 
   async readBoard(boardId: string): Promise<BoardProject> {
+    if (this.isCloudPrimary()) {
+      await this.ensureReady();
+      const cloudProject = await this.requiredCloud().readBoard(boardId);
+      if (!cloudProject) {
+        throw new Error(`Board not found: ${boardId}`);
+      }
+      this.selections.set(cloudProject.id, cloudProject.selection);
+      return cloudProject;
+    }
     const filePath = this.boardFilePath(boardId);
     try {
       const raw = await fs.readFile(filePath, "utf8");
@@ -107,8 +136,16 @@ export class BoardStore {
 
   async writeBoard(project: BoardProject): Promise<BoardProject> {
     const valid = validateBoardProject(project);
+    if (this.isCloudPrimary()) {
+      await this.ensureReady();
+      await this.requiredCloud().writeBoard(valid);
+      this.selections.set(valid.id, valid.selection);
+      return valid;
+    }
     await this.writeLocalBoard(valid);
-    await this.cloud?.writeBoard(valid);
+    if (this.shouldMirrorToCloud()) {
+      await this.cloud?.writeBoard(valid);
+    }
     return valid;
   }
 
@@ -118,6 +155,10 @@ export class BoardStore {
 
   cloudStatus(): string {
     return this.cloud?.label ?? this.cloudUnavailableStatus ?? "local-files";
+  }
+
+  storageModeStatus(): StorageMode {
+    return this.storageMode;
   }
 
   private async writeLocalBoard(valid: BoardProject): Promise<BoardProject> {
@@ -196,12 +237,15 @@ export class BoardStore {
     const buffer = Buffer.from(match[2]!, "base64");
     const ext = extensionForMime(mimeType, input.fileName);
     const fileName = `${createId("asset")}-${safeSegment(stripExtension(input.fileName))}.${ext}`;
-    const dir = ensureInsideRoot(this.root, path.join(this.boardDir(boardId), "assets"));
-    await fs.mkdir(dir, { recursive: true });
-    const filePath = ensureInsideRoot(dir, path.join(dir, fileName));
-    await fs.writeFile(filePath, buffer);
-    await this.cloud?.writeBoard(project);
-    await this.cloud?.writeFile({
+    if (!this.isCloudPrimary()) {
+      const dir = ensureInsideRoot(this.root, path.join(this.boardDir(boardId), "assets"));
+      await fs.mkdir(dir, { recursive: true });
+      const filePath = ensureInsideRoot(dir, path.join(dir, fileName));
+      await fs.writeFile(filePath, buffer);
+    }
+    const cloud = this.isCloudPrimary() ? this.requiredCloud() : this.cloud;
+    await cloud?.writeBoard(project);
+    await cloud?.writeFile({
       boardId,
       path: `assets/${fileName}`,
       kind: "asset",
@@ -230,21 +274,23 @@ export class BoardStore {
 
   async exportSpec(boardId: string): Promise<{ markdownPath: string; jsonPath: string; markdown: string }> {
     const project = await this.readBoard(boardId);
-    await this.cloud?.writeBoard(project);
-    const dir = await this.ensureExportDir(boardId);
     const markdown = renderSpecMarkdown(project);
-    const markdownPath = path.join(dir, "implementation-spec.md");
-    const jsonPath = path.join(dir, "board-summary.json");
-    await fs.writeFile(markdownPath, markdown, "utf8");
-    await fs.writeFile(jsonPath, `${JSON.stringify(project, null, 2)}\n`, "utf8");
-    await this.cloud?.writeFile({
+    const markdownPath = this.isCloudPrimary() ? `cloud://${boardId}/exports/implementation-spec.md` : path.join(await this.ensureExportDir(boardId), "implementation-spec.md");
+    const jsonPath = this.isCloudPrimary() ? `cloud://${boardId}/exports/board-summary.json` : path.join(path.dirname(markdownPath), "board-summary.json");
+    if (!this.isCloudPrimary()) {
+      await fs.writeFile(markdownPath, markdown, "utf8");
+      await fs.writeFile(jsonPath, `${JSON.stringify(project, null, 2)}\n`, "utf8");
+    }
+    const cloud = this.isCloudPrimary() ? this.requiredCloud() : this.cloud;
+    await cloud?.writeBoard(project);
+    await cloud?.writeFile({
       boardId,
       path: "exports/implementation-spec.md",
       kind: "export",
       contentType: "text/markdown; charset=utf-8",
       data: Buffer.from(markdown, "utf8")
     });
-    await this.cloud?.writeFile({
+    await cloud?.writeFile({
       boardId,
       path: "exports/board-summary.json",
       kind: "export",
@@ -256,16 +302,21 @@ export class BoardStore {
 
   async exportReactTailwind(boardId: string): Promise<{ dir: string; files: { path: string; contents: string }[]; summary: string }> {
     const project = await this.readBoard(boardId);
-    await this.cloud?.writeBoard(project);
+    const cloud = this.isCloudPrimary() ? this.requiredCloud() : this.cloud;
+    await cloud?.writeBoard(project);
     const exportResult = renderReactTailwind(project);
-    const dir = path.join(await this.ensureExportDir(boardId), "react-tailwind");
-    await fs.rm(dir, { recursive: true, force: true });
-    await fs.mkdir(dir, { recursive: true });
+    const dir = this.isCloudPrimary() ? `cloud://${boardId}/exports/react-tailwind` : path.join(await this.ensureExportDir(boardId), "react-tailwind");
+    if (!this.isCloudPrimary()) {
+      await fs.rm(dir, { recursive: true, force: true });
+      await fs.mkdir(dir, { recursive: true });
+    }
     for (const file of exportResult.files) {
-      const target = ensureInsideRoot(dir, path.join(dir, file.path));
-      await fs.mkdir(path.dirname(target), { recursive: true });
-      await fs.writeFile(target, file.contents, "utf8");
-      await this.cloud?.writeFile({
+      if (!this.isCloudPrimary()) {
+        const target = ensureInsideRoot(dir, path.join(dir, file.path));
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.writeFile(target, file.contents, "utf8");
+      }
+      await cloud?.writeFile({
         boardId,
         path: `exports/react-tailwind/${file.path}`,
         kind: "export",
@@ -278,19 +329,23 @@ export class BoardStore {
 
   async exportArtboardPng(boardId: string, artboardId: string): Promise<{ filePath: string }> {
     const project = await this.readBoard(boardId);
-    await this.cloud?.writeBoard(project);
+    const cloud = this.isCloudPrimary() ? this.requiredCloud() : this.cloud;
+    await cloud?.writeBoard(project);
     const artboard = project.artboards.find((candidate) => candidate.id === artboardId);
     if (!artboard) {
       throw new Error(`Artboard not found: ${artboardId}`);
     }
     const svg = renderArtboardSvg(project, artboardId);
-    const dir = await this.ensureExportDir(boardId);
-    const filePath = path.join(dir, `${safeSegment(artboard.name)}.png`);
+    const fileName = `${safeSegment(artboard.name)}.png`;
+    const dir = this.isCloudPrimary() ? `cloud://${boardId}/exports` : await this.ensureExportDir(boardId);
+    const filePath = this.isCloudPrimary() ? `${dir}/${fileName}` : path.join(dir, fileName);
     const png = await sharp(Buffer.from(svg)).png().toBuffer();
-    await fs.writeFile(filePath, png);
-    await this.cloud?.writeFile({
+    if (!this.isCloudPrimary()) {
+      await fs.writeFile(filePath, png);
+    }
+    await cloud?.writeFile({
       boardId,
-      path: `exports/${path.basename(filePath)}`,
+      path: `exports/${fileName}`,
       kind: "export",
       contentType: "image/png",
       data: png,
@@ -344,6 +399,29 @@ export class BoardStore {
     stack.push(project);
     this.redoStacks.set(boardId, stack.slice(-50));
   }
+
+  private isCloudPrimary(): boolean {
+    return this.storageMode === "cloud";
+  }
+
+  private shouldMirrorToCloud(): boolean {
+    return this.storageMode === "mirror";
+  }
+
+  private requiredCloud(): CloudStore {
+    if (!this.cloud) {
+      throw new Error("PowerBoard cloud storage is not configured.");
+    }
+    return this.cloud;
+  }
+}
+
+function storageModeFromEnv(): StorageMode {
+  const value = process.env.POWERBOARD_STORAGE_MODE?.trim().toLowerCase();
+  if (!value) return "mirror";
+  if (value === "cloud" || value === "cloud-only" || value === "direct") return "cloud";
+  if (value === "mirror" || value === "local") return value;
+  throw new Error(`Unsupported POWERBOARD_STORAGE_MODE: ${value}`);
 }
 
 function extensionForMime(mimeType: string, fileName: string): string {

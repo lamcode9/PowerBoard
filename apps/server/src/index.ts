@@ -39,7 +39,7 @@ app.get(/^\/boards\/([^/]+)\/(assets|exports)\/(.+)$/, asyncHandler(async (req, 
 
 app.get("/api/health", asyncHandler(async (_req, res) => {
   await store.ensureReady();
-  res.json({ ok: true, name: "PowerBoard", boardRoot, cloudStore: store.cloudStatus() });
+  res.json({ ok: true, name: "PowerBoard", boardRoot, cloudStore: store.cloudStatus(), storageMode: store.storageModeStatus() });
 }));
 
 app.get("/api/boards", asyncHandler(async (_req, res) => {
@@ -183,6 +183,7 @@ httpServer.listen(port, host, () => {
   console.log(`PowerBoard server listening at http://${host}:${port}`);
   console.log(`Boards are stored in ${path.relative(process.cwd(), boardRoot) || boardRoot}`);
   console.log(`Cloud store: ${store.cloudStatus()}`);
+  console.log(`Storage mode: ${store.storageModeStatus()}`);
 });
 
 function broadcast(boardId: string, message: unknown, except?: WebSocket): void {

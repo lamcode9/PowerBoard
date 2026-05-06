@@ -20,6 +20,7 @@ export interface ApiHealth {
   name: string;
   boardRoot?: string;
   cloudStore: string;
+  storageMode?: string;
 }
 
 export async function getHealth(): Promise<ApiHealth> {
@@ -27,7 +28,7 @@ export async function getHealth(): Promise<ApiHealth> {
     return await request("/api/health");
   } catch (error) {
     if (!shouldUseLocalFallback(error)) throw error;
-    return { ok: true, name: "PowerBoard", cloudStore: "browser-local" };
+    return { ok: true, name: "PowerBoard", cloudStore: "browser-local", storageMode: "browser-local" };
   }
 }
 
