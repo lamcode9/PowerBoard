@@ -42,11 +42,46 @@ export const DevicePresetSchema = z.object({
 export type DevicePreset = z.infer<typeof DevicePresetSchema>;
 
 export const DEVICE_PRESETS = [
+  { id: "iphone-se", name: "iPhone SE", type: "mobile", width: 375, height: 667, safeAreaTop: 20, safeAreaBottom: 0 },
+  { id: "iphone-13-mini", name: "iPhone 13 Mini", type: "mobile", width: 375, height: 812, safeAreaTop: 50, safeAreaBottom: 34 },
   { id: "iphone-15", name: "iPhone 15", type: "mobile", width: 393, height: 852, safeAreaTop: 54, safeAreaBottom: 34 },
+  { id: "iphone-15-pro", name: "iPhone 15 Pro", type: "mobile", width: 393, height: 852, safeAreaTop: 59, safeAreaBottom: 34 },
+  { id: "iphone-15-plus", name: "iPhone 15 Plus", type: "mobile", width: 430, height: 932, safeAreaTop: 54, safeAreaBottom: 34 },
+  { id: "iphone-15-pro-max", name: "iPhone 15 Pro Max", type: "mobile", width: 430, height: 932, safeAreaTop: 59, safeAreaBottom: 34 },
+  { id: "iphone-16", name: "iPhone 16", type: "mobile", width: 393, height: 852, safeAreaTop: 54, safeAreaBottom: 34 },
+  { id: "iphone-16-pro", name: "iPhone 16 Pro", type: "mobile", width: 402, height: 874, safeAreaTop: 62, safeAreaBottom: 34 },
+  { id: "iphone-16-plus", name: "iPhone 16 Plus", type: "mobile", width: 430, height: 932, safeAreaTop: 54, safeAreaBottom: 34 },
+  { id: "iphone-16-pro-max", name: "iPhone 16 Pro Max", type: "mobile", width: 440, height: 956, safeAreaTop: 62, safeAreaBottom: 34 },
   { id: "pixel-8", name: "Pixel 8", type: "mobile", width: 412, height: 915, safeAreaTop: 28, safeAreaBottom: 24 },
+  { id: "pixel-8-pro", name: "Pixel 8 Pro", type: "mobile", width: 448, height: 998, safeAreaTop: 28, safeAreaBottom: 24 },
+  { id: "pixel-9", name: "Pixel 9", type: "mobile", width: 412, height: 915, safeAreaTop: 28, safeAreaBottom: 24 },
+  { id: "pixel-9-pro-xl", name: "Pixel 9 Pro XL", type: "mobile", width: 448, height: 998, safeAreaTop: 28, safeAreaBottom: 24 },
+  { id: "galaxy-s24", name: "Galaxy S24", type: "mobile", width: 360, height: 780, safeAreaTop: 24, safeAreaBottom: 24 },
+  { id: "galaxy-s24-ultra", name: "Galaxy S24 Ultra", type: "mobile", width: 384, height: 824, safeAreaTop: 24, safeAreaBottom: 24 },
+  { id: "android-compact", name: "Android Compact", type: "mobile", width: 360, height: 800, safeAreaTop: 24, safeAreaBottom: 24 },
+  { id: "android-large", name: "Android Large", type: "mobile", width: 432, height: 936, safeAreaTop: 24, safeAreaBottom: 24 },
   { id: "ipad", name: "iPad", type: "tablet", width: 820, height: 1180, safeAreaTop: 24, safeAreaBottom: 20 },
+  { id: "ipad-mini", name: "iPad Mini", type: "tablet", width: 744, height: 1133, safeAreaTop: 24, safeAreaBottom: 20 },
+  { id: "ipad-air-11", name: "iPad Air 11", type: "tablet", width: 820, height: 1180, safeAreaTop: 24, safeAreaBottom: 20 },
+  { id: "ipad-pro-11", name: "iPad Pro 11", type: "tablet", width: 834, height: 1194, safeAreaTop: 24, safeAreaBottom: 20 },
+  { id: "ipad-pro-13", name: "iPad Pro 13", type: "tablet", width: 1032, height: 1376, safeAreaTop: 24, safeAreaBottom: 20 },
+  { id: "surface-pro", name: "Surface Pro", type: "tablet", width: 912, height: 1368, safeAreaTop: 0, safeAreaBottom: 0 },
+  { id: "tablet-landscape", name: "Tablet Landscape", type: "tablet", width: 1180, height: 820, safeAreaTop: 0, safeAreaBottom: 0 },
+  { id: "macbook-air", name: "MacBook Air 13", type: "desktop", width: 1280, height: 832, safeAreaTop: 0, safeAreaBottom: 0 },
+  { id: "macbook-pro-14", name: "MacBook Pro 14", type: "desktop", width: 1512, height: 982, safeAreaTop: 0, safeAreaBottom: 0 },
+  { id: "desktop-1280", name: "Desktop 1280", type: "desktop", width: 1280, height: 900, safeAreaTop: 0, safeAreaBottom: 0 },
   { id: "desktop-1440", name: "Desktop 1440", type: "desktop", width: 1440, height: 1024, safeAreaTop: 0, safeAreaBottom: 0 },
-  { id: "web-landing", name: "Web 1200", type: "web", width: 1200, height: 800, safeAreaTop: 0, safeAreaBottom: 0 }
+  { id: "desktop-1728", name: "Desktop 1728", type: "desktop", width: 1728, height: 1117, safeAreaTop: 0, safeAreaBottom: 0 },
+  { id: "desktop-1920", name: "Desktop 1920", type: "desktop", width: 1920, height: 1080, safeAreaTop: 0, safeAreaBottom: 0 },
+  { id: "web-mobile", name: "Responsive Web Mobile", type: "web", width: 390, height: 844, safeAreaTop: 0, safeAreaBottom: 0 },
+  { id: "web-tablet", name: "Responsive Web Tablet", type: "web", width: 768, height: 1024, safeAreaTop: 0, safeAreaBottom: 0 },
+  { id: "web-landing", name: "Web 1200", type: "web", width: 1200, height: 800, safeAreaTop: 0, safeAreaBottom: 0 },
+  { id: "web-dashboard", name: "Web Dashboard 1440", type: "web", width: 1440, height: 900, safeAreaTop: 0, safeAreaBottom: 0 },
+  { id: "web-wide", name: "Web Wide 1600", type: "web", width: 1600, height: 1000, safeAreaTop: 0, safeAreaBottom: 0 },
+  { id: "app-store-phone", name: "App Store Phone Shot", type: "custom", width: 1290, height: 2796, safeAreaTop: 0, safeAreaBottom: 0 },
+  { id: "play-store-phone", name: "Play Store Phone Shot", type: "custom", width: 1080, height: 1920, safeAreaTop: 0, safeAreaBottom: 0 },
+  { id: "square-social", name: "Square Social", type: "custom", width: 1080, height: 1080, safeAreaTop: 0, safeAreaBottom: 0 },
+  { id: "story-social", name: "Story Social", type: "custom", width: 1080, height: 1920, safeAreaTop: 0, safeAreaBottom: 0 }
 ] satisfies DevicePreset[];
 
 const Numberish = z.number().finite();

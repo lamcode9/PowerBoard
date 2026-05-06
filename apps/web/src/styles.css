@@ -137,7 +137,8 @@ button {
 }
 
 .artboard-control select {
-  width: 132px;
+  width: 220px;
+  max-width: 24vw;
   border: 0;
   outline: 0;
   background: transparent;

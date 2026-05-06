@@ -417,12 +417,13 @@ export function App() {
   async function addArtboard() {
     if (!project) return;
     const preset = DEVICE_PRESETS.find((candidate) => candidate.id === presetId) ?? DEVICE_PRESETS[0]!;
+    const position = nextArtboardPosition(project, activeArtboard);
     const artboard: Artboard = {
       id: createId("art"),
       name: preset.name,
       type: preset.type,
-      x: 120 + project.artboards.length * 420,
-      y: 96 + (project.artboards.length % 2) * 110,
+      x: position.x,
+      y: position.y,
       width: preset.width,
       height: preset.height,
       background: preset.type === "desktop" || preset.type === "web" ? "#F8FAFC" : "#F5F7FB",
@@ -820,10 +821,10 @@ export function App() {
 
         <div className="toolbar-group artboard-control">
           <Smartphone size={16} />
-          <select value={presetId} onChange={(event) => setPresetId(event.target.value)}>
+          <select aria-label="Frame preset" value={presetId} onChange={(event) => setPresetId(event.target.value)}>
             {DEVICE_PRESETS.map((preset) => (
               <option key={preset.id} value={preset.id}>
-                {preset.name}
+                {preset.name} · {preset.width}x{preset.height}
               </option>
             ))}
           </select>
@@ -1691,6 +1692,15 @@ function elementDescendants(project: BoardProject, elementId: string): BoardElem
 
 function boundsForProject(project: BoardProject): Bounds | null {
   return unionBounds(project.artboards.filter((artboard) => artboard.visible).map(artboardWorldBounds));
+}
+
+function nextArtboardPosition(project: BoardProject, activeArtboard: Artboard | null): { x: number; y: number } {
+  if (project.artboards.length === 0) return { x: 120, y: 96 };
+  const rightEdge = Math.max(...project.artboards.map((artboard) => artboard.x + artboard.width));
+  return {
+    x: rightEdge + 180,
+    y: activeArtboard?.y ?? Math.min(...project.artboards.map((artboard) => artboard.y))
+  };
 }
 
 function boundsForSelection(project: BoardProject, selection: string[]): Bounds | null {

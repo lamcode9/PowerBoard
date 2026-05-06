@@ -1,10 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { applyBoardOperation, BoardProjectSchema, createDefaultProject, createElementFromPreset } from "./index";
+import { applyBoardOperation, BoardProjectSchema, createDefaultProject, createElementFromPreset, DEVICE_PRESETS } from "./index";
 
 describe("Board schema", () => {
   it("validates the default project", () => {
     const project = createDefaultProject();
     expect(BoardProjectSchema.parse(project).id).toBe("board_default");
+  });
+
+  it("ships a broad set of named frame presets", () => {
+    const ids = new Set(DEVICE_PRESETS.map((preset) => preset.id));
+    expect(ids.size).toBe(DEVICE_PRESETS.length);
+    expect(ids.has("iphone-15")).toBe(true);
+    expect(ids.has("iphone-15-pro-max")).toBe(true);
+    expect(ids.has("iphone-16-pro")).toBe(true);
+    expect(ids.has("galaxy-s24-ultra")).toBe(true);
+    expect(ids.has("ipad-pro-13")).toBe(true);
+    expect(ids.has("desktop-1920")).toBe(true);
+    expect(ids.has("web-dashboard")).toBe(true);
+    expect(ids.has("app-store-phone")).toBe(true);
+    expect(DEVICE_PRESETS.length).toBeGreaterThanOrEqual(30);
   });
 
   it("creates named hierarchy frames in the default project", () => {
