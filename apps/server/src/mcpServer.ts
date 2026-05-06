@@ -21,7 +21,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     "list_boards",
     {
       title: "List boards",
-      description: "List local PowerBoard board projects."
+      description: "List PowerBoard board projects from the configured source of truth. In cloud mode, this is Supabase."
     },
     async () => text(await store.listBoards())
   );
@@ -50,7 +50,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     "create_board",
     {
       title: "Create board",
-      description: "Create a new local board project.",
+      description: "Create a new PowerBoard board project in the configured source of truth. In cloud mode, this writes to Supabase.",
       inputSchema: { name: z.string().optional() }
     },
     async ({ name }) => {

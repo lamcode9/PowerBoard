@@ -33,6 +33,7 @@ export interface CloudStore {
     metadata?: Record<string, unknown>;
   }): Promise<void>;
   readFile(boardId: string, path: string): Promise<CloudFileRecord | undefined>;
+  close?(): Promise<void>;
 }
 
 export function createCloudStoreFromEnv(): CloudStore | undefined {
@@ -209,6 +210,10 @@ export class SupabasePostgresStore implements CloudStore {
       sizeBytes: row.size_bytes,
       updatedAt: isoString(row.updated_at)
     };
+  }
+
+  async close(): Promise<void> {
+    await this.pool.end();
   }
 }
 

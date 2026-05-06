@@ -8,5 +8,6 @@ dist/
 .env.*.local
 boards/*/exports/
 boards/*/assets/
+boards/*/board.json
 !boards/.gitkeep
 .vercel

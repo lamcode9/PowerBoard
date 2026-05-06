@@ -12,7 +12,8 @@
     "build": "npm run build --workspace @powerboard/schema && npm run build --workspace @powerboard/renderers && npm run build --workspace @powerboard/server && npm run build --workspace @powerboard/web",
     "test": "vitest run",
     "typecheck": "npm run typecheck --workspace @powerboard/schema && npm run typecheck --workspace @powerboard/renderers && npm run typecheck --workspace @powerboard/server && npm run typecheck --workspace @powerboard/web",
-    "mcp": "npm run mcp --workspace @powerboard/server"
+    "mcp": "npm run mcp --workspace @powerboard/server",
+    "sync:cloud": "npm run sync:cloud --workspace @powerboard/server"
   },
   "devDependencies": {
     "@types/node": "^25.0.0",
