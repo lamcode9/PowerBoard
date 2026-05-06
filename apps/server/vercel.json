@@ -1,6 +1,17 @@
 {
   "framework": "vite",
-  "installCommand": "npm install --workspace @powerboard/schema --workspace @powerboard/web",
-  "buildCommand": "npm run build --workspace @powerboard/schema && npm run build --workspace @powerboard/web && rm -rf dist-web && cp -R ../web/dist dist-web",
-  "outputDirectory": "dist-web"
+  "installCommand": "npm install",
+  "buildCommand": "npm run build --workspace @powerboard/schema && npm run build --workspace @powerboard/renderers && npm run build --workspace @powerboard/server && npm run build --workspace @powerboard/web && rm -rf dist-web && cp -R ../web/dist dist-web",
+  "outputDirectory": "dist-web",
+  "functions": {
+    "api/**/*.ts": {
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/boards/:boardId/:folder/:path*",
+      "destination": "/api/files?boardId=:boardId&folder=:folder&path=:path*"
+    }
+  ]
 }

@@ -1,6 +1,17 @@
 {
   "framework": "vite",
-  "installCommand": "npm install --workspace @powerboard/schema --workspace @powerboard/web",
-  "buildCommand": "npm run build --workspace @powerboard/schema && npm run build --workspace @powerboard/web",
-  "outputDirectory": "apps/web/dist"
+  "installCommand": "npm install",
+  "buildCommand": "npm run build",
+  "outputDirectory": "apps/web/dist",
+  "functions": {
+    "api/**/*.ts": {
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/boards/:boardId/:folder/:path*",
+      "destination": "/api/files?boardId=:boardId&folder=:folder&path=:path*"
+    }
+  ]
 }

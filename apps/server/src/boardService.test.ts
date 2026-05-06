@@ -6,7 +6,7 @@ import { BoardProject, createElementFromPreset } from "@powerboard/schema";
 import { BoardStore, type StorageMode } from "./boardService";
 import { CloudBoardSummary, CloudFileRecord, CloudStore } from "./cloudStore";
 
-async function tempStore(cloud?: CloudStore, storageMode?: StorageMode) {
+async function tempStore(cloud?: CloudStore, storageMode: StorageMode = "mirror") {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-store-"));
   const store = new BoardStore(dir, cloud, storageMode);
   await store.ensureReady();
@@ -114,7 +114,7 @@ describe("BoardStore", () => {
 
   it("falls back to local files when cloud storage is unreachable", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-store-"));
-    const store = new BoardStore(dir, new FailingCloudStore());
+    const store = new BoardStore(dir, new FailingCloudStore(), "mirror");
 
     await store.ensureReady();
 

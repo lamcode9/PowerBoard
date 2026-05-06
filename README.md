@@ -56,7 +56,7 @@ Project agent files can include the connector note in `AGENTS.md` or `agent.md` 
 
 Deploy from the repository root, not from `apps/server`. The root `vercel.json` builds the Vite web app with:
 
-- Build command: `npm run build --workspace @powerboard/schema && npm run build --workspace @powerboard/web`
+- Build command: `npm run build`
 - Output directory: `apps/web/dist`
 
-On Vercel, the static app still falls back to browser-local board storage unless a server-side API is deployed with `SUPABASE_DB_URL`. The local Node/MCP server remains the main V0 path for agent control.
+On Vercel, `api/*` functions provide the same board REST API used by the browser and force cloud-direct Supabase storage. Configure `SUPABASE_DB_URL` in the Vercel project environment. The local Node server remains the V0 path for MCP and WebSocket live agent control.
