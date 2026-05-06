@@ -4,6 +4,7 @@ import {
   BoxSelect,
   BringToFront,
   ChevronDown,
+  ChevronRight,
   Component,
   Copy,
   Download,
@@ -104,11 +105,12 @@ type Bounds = {
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 2;
 const INITIAL_ZOOM = 0.72;
-const WHEEL_ZOOM_SENSITIVITY = 0.0009;
-const MAX_WHEEL_ZOOM_DELTA = 28;
-const GESTURE_ZOOM_DAMPING = 0.32;
+const BUTTON_ZOOM_FACTOR = 1.16;
+const WHEEL_ZOOM_SENSITIVITY = 0.00125;
+const MAX_WHEEL_ZOOM_DELTA = 32;
+const GESTURE_ZOOM_DAMPING = 0.42;
 const GESTURE_WHEEL_SUPPRESSION_MS = 260;
-const MAX_INPUT_ZOOM_FACTOR = 1.028;
+const MAX_INPUT_ZOOM_FACTOR = 1.04;
 const CANVAS_WIDTH = 80000;
 const CANVAS_HEIGHT = 56000;
 const CANVAS_ORIGIN_X = 24000;
@@ -123,6 +125,7 @@ export function App() {
   const [pan, setPan] = useState<PanState | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
   const [status, setStatus] = useState("Starting workspace...");
+  const [collapsedPanels, setCollapsedPanels] = useState<Record<string, boolean>>({});
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const canvasPlaneRef = useRef<HTMLDivElement | null>(null);
   const cameraRef = useRef<Camera>({ x: 0, y: 0, zoom: INITIAL_ZOOM });
@@ -170,11 +173,11 @@ export function App() {
       if (!(event.metaKey || event.ctrlKey)) return;
       if (event.key === "=" || event.key === "+") {
         event.preventDefault();
-        zoomAtViewportCenter(cameraRef.current.zoom * 1.12);
+        zoomAtViewportCenter(cameraRef.current.zoom * BUTTON_ZOOM_FACTOR);
       }
       if (event.key === "-") {
         event.preventDefault();
-        zoomAtViewportCenter(cameraRef.current.zoom / 1.12);
+        zoomAtViewportCenter(cameraRef.current.zoom / BUTTON_ZOOM_FACTOR);
       }
       if (event.key === "0") {
         event.preventDefault();
@@ -647,6 +650,10 @@ export function App() {
     focusBounds(bounds, "Fit visible artboards");
   }
 
+  function togglePanel(panelId: string) {
+    setCollapsedPanels((current) => ({ ...current, [panelId]: !current[panelId] }));
+  }
+
   function focusBounds(bounds: Bounds, message: string) {
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -805,11 +812,11 @@ export function App() {
           <IconButton label="Fit all" onClick={fitAll}>
             <Maximize2 size={18} />
           </IconButton>
-          <IconButton label="Zoom out" onClick={() => zoomAtViewportCenter(cameraRef.current.zoom / 1.12)}>
+          <IconButton label="Zoom out" onClick={() => zoomAtViewportCenter(cameraRef.current.zoom / BUTTON_ZOOM_FACTOR)}>
             <ZoomOut size={18} />
           </IconButton>
           <span className="zoom-readout">{Math.round(zoom * 100)}%</span>
-          <IconButton label="Zoom in" onClick={() => zoomAtViewportCenter(cameraRef.current.zoom * 1.12)}>
+          <IconButton label="Zoom in" onClick={() => zoomAtViewportCenter(cameraRef.current.zoom * BUTTON_ZOOM_FACTOR)}>
             <ZoomIn size={18} />
           </IconButton>
         </div>
@@ -828,8 +835,7 @@ export function App() {
       </header>
 
       <aside className="left-panel">
-        <section className="panel-section">
-          <PanelTitle icon={<Component size={16} />} title="App Kit" />
+        <CollapsiblePanel id="app-kit" icon={<Component size={16} />} title="App Kit" collapsed={Boolean(collapsedPanels["app-kit"])} onToggle={togglePanel}>
           <div className="component-grid">
             {componentTypes.map((type) => (
               <button key={type} onClick={() => addComponent(type)}>
@@ -837,10 +843,9 @@ export function App() {
               </button>
             ))}
           </div>
-        </section>
+        </CollapsiblePanel>
 
-        <section className="panel-section">
-          <PanelTitle icon={<Upload size={16} />} title="Assets" />
+        <CollapsiblePanel id="assets" icon={<Upload size={16} />} title="Assets" collapsed={Boolean(collapsedPanels.assets)} onToggle={togglePanel}>
           <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={(event) => event.target.files?.[0] && uploadImage("image", event.target.files[0])} />
           <input ref={screenshotInputRef} type="file" accept="image/*" hidden onChange={(event) => event.target.files?.[0] && uploadImage("screenshot", event.target.files[0])} />
           <button className="wide-action" onClick={() => fileInputRef.current?.click()}>
@@ -861,10 +866,9 @@ export function App() {
               <p className="muted">No assets yet.</p>
             )}
           </div>
-        </section>
+        </CollapsiblePanel>
 
-        <section className="panel-section layers-section">
-          <PanelTitle icon={<Layers3 size={16} />} title="Layers" />
+        <CollapsiblePanel id="layers" icon={<Layers3 size={16} />} title="Layers" className="layers-section" collapsed={Boolean(collapsedPanels.layers)} onToggle={togglePanel}>
           <div className="layers-list">
             {project.artboards.map((artboard) => (
               <div key={artboard.id} className="layer-group">
@@ -882,7 +886,7 @@ export function App() {
               </div>
             ))}
           </div>
-        </section>
+        </CollapsiblePanel>
       </aside>
 
       <section
@@ -913,8 +917,7 @@ export function App() {
       </section>
 
       <aside className="right-panel">
-        <section className="panel-section">
-          <PanelTitle icon={<Save size={16} />} title="Inspector" />
+        <CollapsiblePanel id="inspector" icon={<Save size={16} />} title="Inspector" collapsed={Boolean(collapsedPanels.inspector)} onToggle={togglePanel}>
           {selectedIds.length > 1 ? (
             <SelectionInspector project={project} selectedIds={selectedIds} onFocus={focusSelection} onGroup={groupSelection} onDuplicate={duplicateSelection} onDelete={deleteSelection} />
           ) : selectedElement ? (
@@ -927,10 +930,9 @@ export function App() {
               <p>Select an artboard or element.</p>
             </div>
           )}
-        </section>
+        </CollapsiblePanel>
 
-        <section className="panel-section">
-          <PanelTitle icon={<Send size={16} />} title="Flows" />
+        <CollapsiblePanel id="flows" icon={<Send size={16} />} title="Flows" collapsed={Boolean(collapsedPanels.flows)} onToggle={togglePanel}>
           <button className="wide-action" onClick={connectArtboards}>
             <ArrowRight size={16} /> Connect screens
           </button>
@@ -951,7 +953,7 @@ export function App() {
               <p className="muted">No flows yet.</p>
             )}
           </div>
-        </section>
+        </CollapsiblePanel>
       </aside>
 
       <footer className="statusbar">{status}</footer>
@@ -1414,12 +1416,37 @@ function NumberField({ label, value, min, max, step = 1, onChange }: { label: st
   );
 }
 
-function PanelTitle({ icon, title }: { icon: React.ReactNode; title: string }) {
+function CollapsiblePanel({
+  id,
+  icon,
+  title,
+  collapsed,
+  className,
+  onToggle,
+  children
+}: {
+  id: string;
+  icon: React.ReactNode;
+  title: string;
+  collapsed: boolean;
+  className?: string;
+  onToggle: (id: string) => void;
+  children: React.ReactNode;
+}) {
+  const contentId = `panel-${id}`;
   return (
-    <div className="panel-title">
-      {icon}
-      <h2>{title}</h2>
-    </div>
+    <section className={classNames("panel-section", className, collapsed && "collapsed")}>
+      <button className="panel-title" type="button" aria-expanded={!collapsed} aria-controls={contentId} onClick={() => onToggle(id)}>
+        {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+        {icon}
+        <span className="panel-heading">{title}</span>
+      </button>
+      {!collapsed ? (
+        <div id={contentId} className="panel-content">
+          {children}
+        </div>
+      ) : null}
+    </section>
   );
 }
 

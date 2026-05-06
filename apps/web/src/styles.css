@@ -181,8 +181,11 @@ button {
 
 .left-panel,
 .right-panel {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border-right: 1px solid #cbd5e1;
   background: #f8fafc;
 }
@@ -193,25 +196,60 @@ button {
 }
 
 .panel-section {
+  display: flex;
+  flex: 0 0 auto;
+  min-height: 0;
+  flex-direction: column;
   border-bottom: 1px solid #dbe3ee;
   padding: 14px;
 }
 
 .layers-section {
-  height: calc(100vh - 420px);
+  flex: 1 1 280px;
   min-height: 240px;
   overflow: hidden;
 }
 
 .panel-title {
   display: flex;
+  width: 100%;
+  min-height: 30px;
   align-items: center;
   gap: 8px;
   margin-bottom: 12px;
+  border-radius: 7px;
+  background: transparent;
   color: #475569;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
 }
 
-.panel-title h2 {
+.panel-title:hover {
+  color: #1d4ed8;
+}
+
+.panel-section.collapsed {
+  flex: 0 0 auto;
+  min-height: auto;
+}
+
+.panel-section.collapsed .panel-title {
+  margin-bottom: 0;
+}
+
+.panel-content {
+  min-height: 0;
+}
+
+.layers-section .panel-content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.panel-heading {
   margin: 0;
   color: #1e293b;
   font-size: 12px;
@@ -263,7 +301,8 @@ button {
 }
 
 .layers-list {
-  height: calc(100% - 28px);
+  flex: 1;
+  min-height: 0;
   padding-right: 2px;
 }
 
@@ -794,10 +833,6 @@ button {
   height: 100%;
   place-content: center;
   text-align: center;
-}
-
-.right-panel {
-  overflow: auto;
 }
 
 .inspector-fields {
