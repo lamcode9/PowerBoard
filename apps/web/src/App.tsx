@@ -15,6 +15,7 @@ import {
   Focus,
   Frame,
   Group,
+  Home,
   Image as ImageIcon,
   Layers3,
   Lock,
@@ -49,7 +50,8 @@ import {
   redo,
   setSelection as postSelection,
   undo,
-  uploadAsset
+  uploadAsset,
+  type BoardSummary
 } from "./api";
 import { cameraTransform, panCamera, zoomCameraAroundPoint, type Camera, type ViewportPoint } from "./canvasCamera";
 
@@ -122,6 +124,9 @@ const CANVAS_ORIGIN_Y = 16000;
 
 export function App() {
   const [project, setProject] = useState<BoardProject | null>(null);
+  const [boardSummaries, setBoardSummaries] = useState<BoardSummary[]>([]);
+  const [boardPreviews, setBoardPreviews] = useState<Record<string, BoardProject>>({});
+  const [homeOpen, setHomeOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [zoom, setZoom] = useState(INITIAL_ZOOM);
   const [presetId, setPresetId] = useState(DEVICE_PRESETS[0]!.id);
@@ -275,6 +280,7 @@ export function App() {
       if (message.type === "board.changed" && message.project) {
         setProject(message.project);
         setSelectedIds(message.project.selection);
+        rememberBoard(message.project);
       }
       if (message.type === "selection.changed" && message.selection) {
         setSelectedIds(message.selection);
@@ -302,12 +308,79 @@ export function App() {
     return project.artboards.find((artboard) => artboard.id === selectedArtboardId) ?? project.artboards[0] ?? null;
   }, [project, selectedArtboard, selectedElement, selectedIds]);
 
+  function rememberBoard(nextProject: BoardProject) {
+    setBoardPreviews((current) => ({ ...current, [nextProject.id]: nextProject }));
+    setBoardSummaries((current) => upsertBoardSummary(current, nextProject));
+  }
+
+  async function refreshBoards(): Promise<BoardSummary[]> {
+    const boards = await listBoards();
+    setBoardSummaries(boards);
+    const previews = await Promise.all(
+      boards.map(async (board) => {
+        try {
+          return [board.id, await readBoard(board.id)] as const;
+        } catch {
+          return null;
+        }
+      })
+    );
+    setBoardPreviews((current) => {
+      const next = { ...current };
+      for (const preview of previews) {
+        if (preview) next[preview[0]] = preview[1];
+      }
+      return next;
+    });
+    return boards;
+  }
+
+  async function openBoard(boardId: string) {
+    try {
+      const next = await readBoard(boardId);
+      initialViewportPositionedRef.current = false;
+      setProject(next);
+      setSelectedIds(next.selection);
+      setHomeOpen(false);
+      rememberBoard(next);
+      setStatus(`Opened ${next.name}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not open board");
+    }
+  }
+
+  async function createNewBoard() {
+    const name = window.prompt("Board name", "Untitled PowerBoard Board");
+    if (name === null) return;
+    try {
+      const next = await createBoard(name.trim() || "Untitled PowerBoard Board");
+      initialViewportPositionedRef.current = false;
+      setProject(next);
+      setSelectedIds(next.selection);
+      setHomeOpen(false);
+      rememberBoard(next);
+      setStatus(`Created ${next.name}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not create board");
+    }
+  }
+
+  async function showHome() {
+    setHomeOpen(true);
+    setSelectedIds([]);
+    setStatus("Boards");
+    await refreshBoards().catch((error) => {
+      setStatus(error instanceof Error ? error.message : "Could not refresh boards");
+    });
+  }
+
   async function boot() {
     try {
-      const boards = await listBoards();
+      const boards = await refreshBoards();
       const first = boards[0] ? await readBoard(boards[0].id) : await createBoard("PowerBoard App Mockups");
       setProject(first);
       setSelectedIds(first.selection);
+      rememberBoard(first);
       setStatus("Ready");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not start workspace");
@@ -320,6 +393,7 @@ export function App() {
       const next = await applyOperation(project.id, operation);
       setProject(next);
       setSelectedIds(next.selection);
+      rememberBoard(next);
       setStatus("Saved");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Operation failed");
@@ -436,7 +510,7 @@ export function App() {
 
   async function addComponent(type: BoardElement["type"]) {
     if (!project || !activeArtboard) {
-      setStatus("Select an artboard before adding a component");
+      setStatus("Select a frame before adding a component");
       return;
     }
     const element = createElementFromPreset(type, activeArtboard.id, 28 + selectedIds.length * 12, 120 + selectedIds.length * 12);
@@ -472,7 +546,7 @@ export function App() {
     if (!elements.length) return;
     const artboardId = elements[0]!.artboardId;
     if (elements.some((element) => element.artboardId !== artboardId)) {
-      setStatus("Group elements from one artboard at a time");
+      setStatus("Group elements from one frame at a time");
       return;
     }
     const minX = Math.min(...elements.map((element) => element.x));
@@ -507,7 +581,7 @@ export function App() {
 
     const rootElements = selectedElementRoots(project, selectedIds);
     if (!rootElements.length) {
-      setStatus("Select elements to duplicate, or one artboard to create a variant");
+      setStatus("Select elements to duplicate, or one frame to create a variant");
       return;
     }
     const sourceElements = rootElements.flatMap((element) => [element, ...elementDescendants(project, element.id)]);
@@ -527,6 +601,7 @@ export function App() {
       nextProject = await applyOperation(nextProject.id, { type: "add_element", element });
     }
     setProject(nextProject);
+    rememberBoard(nextProject);
     const nextSelection = rootElements.map((element) => idMap.get(element.id)!).filter(Boolean);
     setSelectedIds(nextSelection);
     await postSelection(project.id, nextSelection).catch(() => undefined);
@@ -538,7 +613,7 @@ export function App() {
     const artboardIds = selectedIds.filter((id) => project.artboards.some((artboard) => artboard.id === id));
     const [from, to] = artboardIds.length >= 2 ? artboardIds : project.artboards.slice(0, 2).map((artboard) => artboard.id);
     if (!from || !to || from === to) {
-      setStatus("Select two artboards to connect");
+      setStatus("Select two frames to connect");
       return;
     }
     await runOperation({
@@ -569,6 +644,7 @@ export function App() {
     await applyOperation(project.id, { type: "add_element", element }).then((next) => {
       setProject(next);
       setSelectedIds(next.selection);
+      rememberBoard(next);
       setStatus(kind === "screenshot" ? "Screenshot overlay imported" : "Image added");
     });
   }
@@ -577,7 +653,7 @@ export function App() {
     if (!project) return;
     const artboardId = selectedArtboard?.id ?? activeArtboard?.id;
     if (!artboardId) {
-      setStatus("Select an artboard or element before exporting PNG");
+      setStatus("Select a frame or element before exporting PNG");
       return;
     }
     try {
@@ -614,6 +690,7 @@ export function App() {
       const next = await undo(project.id);
       setProject(next);
       setSelectedIds(next.selection);
+      rememberBoard(next);
       setStatus("Undo");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Undo failed");
@@ -626,6 +703,7 @@ export function App() {
       const next = await redo(project.id);
       setProject(next);
       setSelectedIds(next.selection);
+      rememberBoard(next);
       setStatus("Redo");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Redo failed");
@@ -641,7 +719,7 @@ export function App() {
     if (!project) return;
     const bounds = boundsForSelection(project, selectedIds);
     if (!bounds) {
-      setStatus("Select an artboard or element to focus");
+      setStatus("Select a frame or element to focus");
       return;
     }
     focusBounds(bounds, "Focused selection");
@@ -651,10 +729,10 @@ export function App() {
     if (!project) return;
     const bounds = boundsForProject(project);
     if (!bounds) {
-      setStatus("No visible artboards to fit");
+      setStatus("No visible frames to fit");
       return;
     }
-    focusBounds(bounds, "Fit visible artboards");
+    focusBounds(bounds, "Fit visible frames");
   }
 
   function togglePanel(panelId: string) {
@@ -779,7 +857,7 @@ export function App() {
   }
 
   return (
-    <main className={classNames("app-shell", !leftPaneOpen && "left-pane-hidden", !rightPaneOpen && "right-pane-hidden")} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
+    <main className={classNames("app-shell", homeOpen && "home-mode", !leftPaneOpen && "left-pane-hidden", !rightPaneOpen && "right-pane-hidden")} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
       <header className="topbar">
         <div className="brand-block">
           <div className="brand-mark">PB</div>
@@ -789,81 +867,97 @@ export function App() {
           </div>
         </div>
 
-        <div className="toolbar-group pane-controls" aria-label="Pane visibility">
-          <IconButton label={leftPaneOpen ? "Hide left pane" : "Show left pane"} active={leftPaneOpen} onClick={toggleLeftPane}>
-            {leftPaneOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
-          </IconButton>
-          <IconButton label={rightPaneOpen ? "Hide right pane" : "Show right pane"} active={rightPaneOpen} onClick={toggleRightPane}>
-            {rightPaneOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+        <div className="toolbar-group" aria-label="Workspace navigation">
+          <IconButton label="Home" active={homeOpen} onClick={() => void showHome()}>
+            <Home size={18} />
           </IconButton>
         </div>
 
-        <div className="toolbar-group" aria-label="Canvas tools">
-          <IconButton label="Select" active onClick={() => setStatus("Select tool active")}>
-            <MousePointer2 size={18} />
-          </IconButton>
-          <IconButton label="Undo" onClick={undoBoard}>
-            <Undo2 size={18} />
-          </IconButton>
-          <IconButton label="Redo" onClick={redoBoard}>
-            <Redo2 size={18} />
-          </IconButton>
-          <IconButton label="Group" onClick={groupSelection} disabled={selectedIds.length < 2}>
-            <Group size={18} />
-          </IconButton>
-          <IconButton label="Duplicate" onClick={duplicateSelection} disabled={!selectedIds.length}>
-            <Copy size={18} />
-          </IconButton>
-          <IconButton label="Delete" onClick={deleteSelection} disabled={!selectedIds.some((id) => project.elements.some((element) => element.id === id))}>
-            <Trash2 size={18} />
-          </IconButton>
-        </div>
+        {!homeOpen ? (
+          <>
+            <div className="toolbar-group pane-controls" aria-label="Pane visibility">
+              <IconButton label={leftPaneOpen ? "Hide left pane" : "Show left pane"} active={leftPaneOpen} onClick={toggleLeftPane}>
+                {leftPaneOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+              </IconButton>
+              <IconButton label={rightPaneOpen ? "Hide right pane" : "Show right pane"} active={rightPaneOpen} onClick={toggleRightPane}>
+                {rightPaneOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+              </IconButton>
+            </div>
 
-        <div className="toolbar-group artboard-control">
-          <Smartphone size={16} />
-          <select aria-label="Frame preset" value={presetId} onChange={(event) => setPresetId(event.target.value)}>
-            {DEVICE_PRESETS.map((preset) => (
-              <option key={preset.id} value={preset.id}>
-                {preset.name} · {preset.width}x{preset.height}
-              </option>
-            ))}
-          </select>
-          <button className="text-button" onClick={addArtboard}>
-            <Plus size={16} /> Artboard
-          </button>
-        </div>
+            <div className="toolbar-group" aria-label="Canvas tools">
+              <IconButton label="Select" active onClick={() => setStatus("Select tool active")}>
+                <MousePointer2 size={18} />
+              </IconButton>
+              <IconButton label="Undo" onClick={undoBoard}>
+                <Undo2 size={18} />
+              </IconButton>
+              <IconButton label="Redo" onClick={redoBoard}>
+                <Redo2 size={18} />
+              </IconButton>
+              <IconButton label="Group" onClick={groupSelection} disabled={selectedIds.length < 2}>
+                <Group size={18} />
+              </IconButton>
+              <IconButton label="Duplicate" onClick={duplicateSelection} disabled={!selectedIds.length}>
+                <Copy size={18} />
+              </IconButton>
+              <IconButton label="Delete" onClick={deleteSelection} disabled={!selectedIds.some((id) => project.elements.some((element) => element.id === id))}>
+                <Trash2 size={18} />
+              </IconButton>
+            </div>
 
-        <div className="toolbar-spacer" />
+            <div className="toolbar-group artboard-control">
+              <Smartphone size={16} />
+              <select aria-label="Frame preset" value={presetId} onChange={(event) => setPresetId(event.target.value)}>
+                {DEVICE_PRESETS.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.name} · {preset.width}x{preset.height}
+                  </option>
+                ))}
+              </select>
+              <button className="text-button" onClick={addArtboard}>
+                <Plus size={16} /> Frame
+              </button>
+            </div>
 
-        <div className="toolbar-group">
-          <IconButton label="Focus selection" onClick={focusSelection} disabled={!selectedIds.length}>
-            <Focus size={18} />
-          </IconButton>
-          <IconButton label="Fit all" onClick={fitAll}>
-            <Maximize2 size={18} />
-          </IconButton>
-          <IconButton label="Zoom out" onClick={() => zoomAtViewportCenter(cameraRef.current.zoom / BUTTON_ZOOM_FACTOR)}>
-            <ZoomOut size={18} />
-          </IconButton>
-          <span className="zoom-readout">{Math.round(zoom * 100)}%</span>
-          <IconButton label="Zoom in" onClick={() => zoomAtViewportCenter(cameraRef.current.zoom * BUTTON_ZOOM_FACTOR)}>
-            <ZoomIn size={18} />
-          </IconButton>
-        </div>
+            <div className="toolbar-spacer" />
 
-        <div className="toolbar-group">
-          <IconButton label="Export PNG" onClick={exportSelectedPng}>
-            <Download size={18} />
-          </IconButton>
-          <IconButton label="Export spec" onClick={exportImplementationSpec}>
-            <FileText size={18} />
-          </IconButton>
-          <IconButton label="Export React Tailwind" onClick={exportCode}>
-            <FileCode2 size={18} />
-          </IconButton>
-        </div>
+            <div className="toolbar-group">
+              <IconButton label="Focus selection" onClick={focusSelection} disabled={!selectedIds.length}>
+                <Focus size={18} />
+              </IconButton>
+              <IconButton label="Fit all" onClick={fitAll}>
+                <Maximize2 size={18} />
+              </IconButton>
+              <IconButton label="Zoom out" onClick={() => zoomAtViewportCenter(cameraRef.current.zoom / BUTTON_ZOOM_FACTOR)}>
+                <ZoomOut size={18} />
+              </IconButton>
+              <span className="zoom-readout">{Math.round(zoom * 100)}%</span>
+              <IconButton label="Zoom in" onClick={() => zoomAtViewportCenter(cameraRef.current.zoom * BUTTON_ZOOM_FACTOR)}>
+                <ZoomIn size={18} />
+              </IconButton>
+            </div>
+
+            <div className="toolbar-group">
+              <IconButton label="Export PNG" onClick={exportSelectedPng}>
+                <Download size={18} />
+              </IconButton>
+              <IconButton label="Export spec" onClick={exportImplementationSpec}>
+                <FileText size={18} />
+              </IconButton>
+              <IconButton label="Export React Tailwind" onClick={exportCode}>
+                <FileCode2 size={18} />
+              </IconButton>
+            </div>
+          </>
+        ) : (
+          <div className="toolbar-spacer" />
+        )}
       </header>
 
+      {homeOpen ? (
+        <HomeView boards={boardSummaries} previews={boardPreviews} activeBoardId={project.id} onOpen={openBoard} onCreate={createNewBoard} />
+      ) : (
+        <>
       {leftPaneOpen ? (
         <aside className="left-panel">
         <CollapsiblePanel id="app-kit" icon={<Component size={16} />} title="App Kit" collapsed={Boolean(collapsedPanels["app-kit"])} onToggle={togglePanel}>
@@ -960,7 +1054,7 @@ export function App() {
           ) : (
             <div className="empty-inspector">
               <MousePointer2 size={22} />
-              <p>Select an artboard or element.</p>
+              <p>Select a frame or element.</p>
             </div>
           )}
         </CollapsiblePanel>
@@ -990,8 +1084,98 @@ export function App() {
         </aside>
       ) : null}
 
+        </>
+      )}
+
       <footer className="statusbar">{status}</footer>
     </main>
+  );
+}
+
+function HomeView({
+  boards,
+  previews,
+  activeBoardId,
+  onOpen,
+  onCreate
+}: {
+  boards: BoardSummary[];
+  previews: Record<string, BoardProject>;
+  activeBoardId: string;
+  onOpen: (boardId: string) => void;
+  onCreate: () => void;
+}) {
+  const totalFrames = boards.reduce((sum, board) => sum + board.artboardCount, 0);
+  const totalElements = boards.reduce((sum, board) => sum + board.elementCount, 0);
+  return (
+    <section className="home-view">
+      <div className="home-shell">
+        <div className="home-header">
+          <div>
+            <h2>Boards</h2>
+            <p>
+              {boards.length} {pluralize(boards.length, "board")} · {totalFrames} {pluralize(totalFrames, "frame")} · {totalElements} {pluralize(totalElements, "element")}
+            </p>
+          </div>
+          <button className="text-button home-create" onClick={() => onCreate()}>
+            <Plus size={16} /> New board
+          </button>
+        </div>
+
+        {boards.length ? (
+          <div className="board-card-grid">
+            {boards.map((board) => {
+              const preview = previews[board.id];
+              const frames = preview?.artboards ?? [];
+              const current = board.id === activeBoardId;
+              return (
+                <article key={board.id} className={classNames("board-card", current && "current")}>
+                  <div className="board-card-head">
+                    <Frame size={18} />
+                    <div>
+                      <h3>{board.name}</h3>
+                      <p>{formatUpdatedAt(board.updatedAt)}</p>
+                    </div>
+                    {current ? <span className="current-badge">Open</span> : null}
+                  </div>
+                  <div className="board-meta">
+                    <span>
+                      {board.artboardCount} {pluralize(board.artboardCount, "frame")}
+                    </span>
+                    <span>
+                      {board.elementCount} {pluralize(board.elementCount, "element")}
+                    </span>
+                  </div>
+                  <div className="frame-chip-list">
+                    {frames.slice(0, 6).map((frame) => (
+                      <span key={frame.id} className="frame-chip" title={`${frame.name} · ${frame.id}`}>
+                        {frame.name}
+                        <small>
+                          {Math.round(frame.width)}x{Math.round(frame.height)}
+                        </small>
+                      </span>
+                    ))}
+                    {frames.length > 6 ? <span className="frame-chip more">+{frames.length - 6}</span> : null}
+                    {!frames.length ? <span className="frame-chip empty">No frames</span> : null}
+                  </div>
+                  <button className="wide-action board-open-action" onClick={() => onOpen(board.id)}>
+                    Open board
+                  </button>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="home-empty">
+            <Frame size={28} />
+            <h3>No boards yet</h3>
+            <button className="wide-action" onClick={() => onCreate()}>
+              <Plus size={16} /> New board
+            </button>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -1092,7 +1276,7 @@ function ArtboardView({
       {selected && !artboard.locked ? (
         <button
           className="artboard-resize-handle"
-          aria-label="Resize artboard"
+          aria-label="Resize frame"
           onPointerDown={(event) => {
             event.stopPropagation();
             capturePointer(event.currentTarget, event.pointerId);
@@ -1318,7 +1502,7 @@ function SelectionInspector({
     <div className="inspector-fields">
       <ReadOnlyField label="Selection" value={`${selectedIds.length} selected`} />
       <ReadOnlyField label="Elements" value={String(selectedElements.length)} />
-      <ReadOnlyField label="Artboards" value={String(selectedArtboards.length)} />
+      <ReadOnlyField label="Frames" value={String(selectedArtboards.length)} />
       <div className="segmented-row">
         <button onClick={onFocus}>
           <Focus size={15} /> Focus
@@ -1573,6 +1757,36 @@ function classNames(...values: (string | false | null | undefined)[]) {
   return values.filter(Boolean).join(" ");
 }
 
+function boardSummaryFromProject(project: BoardProject): BoardSummary {
+  return {
+    id: project.id,
+    name: project.name,
+    updatedAt: project.metadata.updatedAt,
+    artboardCount: project.artboards.length,
+    elementCount: project.elements.length
+  };
+}
+
+function upsertBoardSummary(summaries: BoardSummary[], project: BoardProject): BoardSummary[] {
+  const summary = boardSummaryFromProject(project);
+  return [summary, ...summaries.filter((candidate) => candidate.id !== project.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+function formatUpdatedAt(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function pluralize(count: number, singular: string): string {
+  return count === 1 ? singular : `${singular}s`;
+}
+
 function readString(value: unknown, fallback: string): string {
   return typeof value === "string" ? value : fallback;
 }
@@ -1646,7 +1860,7 @@ function uniqueElementName(project: BoardProject, artboardId: string, baseName: 
 
 function groupNameForSelection(project: BoardProject, artboardId: string, elements: BoardElement[]): string {
   const artboard = project.artboards.find((candidate) => candidate.id === artboardId);
-  const prefix = artboard?.name ?? "Artboard";
+  const prefix = artboard?.name ?? "Frame";
   const sorted = [...elements].sort((a, b) => a.y - b.y || a.x - b.x);
   const names = sorted.slice(0, 2).map((element) => compactName(element.name));
   const suffix = names.length > 1 ? `${names.join(" + ")} Group` : `${names[0] ?? "Selection"} Group`;
