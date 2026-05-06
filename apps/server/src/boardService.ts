@@ -63,7 +63,7 @@ export class BoardStore {
     return boards.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
-  async createBoard(name = "Danny's Board"): Promise<BoardProject> {
+  async createBoard(name = "PowerBoard Starter Board"): Promise<BoardProject> {
     await this.ensureReady();
     const project = createDefaultProject(name);
     const existing = (await this.exists(project.id)) || Boolean(await this.cloud?.readBoard(project.id));

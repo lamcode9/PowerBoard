@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "board_default",
-  "name": "Danny App Mockups",
+  "name": "PowerBoard App Mockups",
   "pages": [
     {
       "id": "page_main",
@@ -203,7 +203,7 @@
           [
             "Paywall",
             "Draft",
-            "Danny"
+            "Design"
           ],
           [
             "Export",
@@ -388,6 +388,6 @@
   "metadata": {
     "createdAt": "2026-05-05T11:27:08.184Z",
     "updatedAt": "2026-05-05T16:38:55.980Z",
-    "createdBy": "Paper.Design.Danny"
+    "createdBy": "PowerBoard"
   }
 }

@@ -38,7 +38,7 @@ app.get(/^\/boards\/([^/]+)\/(assets|exports)\/(.+)$/, asyncHandler(async (req, 
 }));
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, name: "Paper.Design.Danny", boardRoot, cloudStore: store.cloudStatus() });
+  res.json({ ok: true, name: "PowerBoard", boardRoot, cloudStore: store.cloudStatus() });
 });
 
 app.get("/api/boards", asyncHandler(async (_req, res) => {
@@ -179,7 +179,7 @@ wss.on("connection", (socket, request) => {
 });
 
 httpServer.listen(port, host, () => {
-  console.log(`Paper.Design.Danny server listening at http://${host}:${port}`);
+  console.log(`PowerBoard server listening at http://${host}:${port}`);
   console.log(`Boards are stored in ${path.relative(process.cwd(), boardRoot) || boardRoot}`);
   console.log(`Cloud store: ${store.cloudStatus()}`);
 });

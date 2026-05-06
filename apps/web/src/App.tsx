@@ -305,7 +305,7 @@ export function App() {
   async function boot() {
     try {
       const boards = await listBoards();
-      const first = boards[0] ? await readBoard(boards[0].id) : await createBoard("Danny's App Mockups");
+      const first = boards[0] ? await readBoard(boards[0].id) : await createBoard("PowerBoard App Mockups");
       setProject(first);
       setSelectedIds(first.selection);
       setStatus("Ready");
@@ -771,7 +771,7 @@ export function App() {
   if (!project) {
     return (
       <main className="loading-shell">
-        <div className="loading-mark">PDD</div>
+        <div className="loading-mark">PB</div>
         <p>{status}</p>
       </main>
     );
@@ -781,10 +781,10 @@ export function App() {
     <main className={classNames("app-shell", !leftPaneOpen && "left-pane-hidden", !rightPaneOpen && "right-pane-hidden")} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
       <header className="topbar">
         <div className="brand-block">
-          <div className="brand-mark">PDD</div>
+          <div className="brand-mark">PB</div>
           <div>
-            <h1>Paper.Design.Danny</h1>
-            <p>{project.name}</p>
+            <h1>PowerBoard</h1>
+            <p>the agent-native design board</p>
           </div>
         </div>
 

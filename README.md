@@ -1,6 +1,6 @@
-# Paper.Design.Danny
+# PowerBoard
 
-Paper.Design.Danny is a local, agent-first design canvas for detailed app mockups.
+PowerBoard is the agent-native design board: a local-first canvas for detailed app mockups that designers and Codex can shape together.
 
 V0 runs as a browser app plus a local Node server. Board projects are stored as local JSON files under `boards/`, and Codex or other agents can edit those projects through MCP tools.
 
@@ -15,7 +15,7 @@ The local server can mirror board files to Supabase Postgres while keeping local
 3. Set `SUPABASE_DB_URL` to the private Postgres connection string from Supabase.
 4. Restart `npm run dev`.
 
-When enabled, the server creates a private `paper_design_danny` schema, stores board JSON in `board_projects`, and stores uploaded assets/exports in `board_files`. Row-level security is enabled and no public browser policies are added, so the publishable key is not enough to mutate boards directly from the browser.
+When enabled, the server creates a private `powerboard` schema, stores board JSON in `board_projects`, and stores uploaded assets/exports in `board_files`. Row-level security is enabled and no public browser policies are added, so the publishable key is not enough to mutate boards directly from the browser.
 
 ## Commands
 

@@ -1,7 +1,8 @@
 import { applyBoardOperation, createDefaultProject, createId, validateBoardProject, type BoardAsset, type BoardOperation, type BoardProject } from "@board/schema";
 
 const API_BASE = "";
-const LOCAL_STORAGE_KEY = "paper-design-danny.boards.v1";
+const LOCAL_STORAGE_KEY = "powerboard.boards.v1";
+const LEGACY_LOCAL_STORAGE_KEYS = ["paper-design-danny.boards.v1"];
 const localUndoStacks = new Map<string, BoardProject[]>();
 const localRedoStacks = new Map<string, BoardProject[]>();
 let apiUnavailable = false;
@@ -155,7 +156,7 @@ function localListBoards(): BoardSummary[] {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-function localCreateBoard(name = "Danny's Board"): BoardProject {
+function localCreateBoard(name = "PowerBoard Starter Board"): BoardProject {
   const projects = localProjects();
   const base = createDefaultProject(name);
   const project = validateBoardProject({ ...base, id: projects.some((candidate) => candidate.id === base.id) ? createId("board") : base.id, name });
@@ -251,13 +252,33 @@ function localExportReactTailwind(boardId: string): { dir: string; summary: stri
 }
 
 function localProjects(): BoardProject[] {
-  if (!hasLocalStorage()) return [createDefaultProject("Danny App Mockups")];
+  if (!hasLocalStorage()) return [createDefaultProject("PowerBoard App Mockups")];
   const raw = window.localStorage.getItem(LOCAL_STORAGE_KEY);
   if (!raw) {
-    const project = createDefaultProject("Danny App Mockups");
+    const legacyProjects = readLegacyLocalProjects();
+    if (legacyProjects.length > 0) {
+      writeLocalProjects(legacyProjects);
+      return legacyProjects;
+    }
+    const project = createDefaultProject("PowerBoard App Mockups");
     writeLocalProjects([project]);
     return [project];
   }
+  return parseLocalProjects(raw);
+}
+
+function readLegacyLocalProjects(): BoardProject[] {
+  if (!hasLocalStorage()) return [];
+  for (const key of LEGACY_LOCAL_STORAGE_KEYS) {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) continue;
+    const projects = parseLocalProjects(raw);
+    if (projects.length > 0) return projects;
+  }
+  return [];
+}
+
+function parseLocalProjects(raw: string): BoardProject[] {
   const parsed = JSON.parse(raw) as unknown;
   if (!Array.isArray(parsed)) return [];
   return parsed.map((project) => validateBoardProject(project));

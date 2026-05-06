@@ -183,7 +183,7 @@ export const BoardProjectSchema = z
       .object({
         createdAt: z.string(),
         updatedAt: z.string(),
-        createdBy: z.string().default("Paper.Design.Danny")
+        createdBy: z.string().default("PowerBoard")
       })
       .passthrough()
   })
@@ -272,7 +272,7 @@ export function nowIso(): string {
   return new Date().toISOString();
 }
 
-export function createDefaultProject(name = "Danny's First Board"): BoardProject {
+export function createDefaultProject(name = "PowerBoard Starter Board"): BoardProject {
   const createdAt = nowIso();
   const mobile: Artboard = {
     id: "art_home_mobile",
@@ -485,7 +485,7 @@ export function createDefaultProject(name = "Danny's First Board"): BoardProject
         columns: ["Screen", "Status", "Owner"],
         rows: [
           ["Mobile Home", "Ready", "Codex"],
-          ["Paywall", "Draft", "Danny"],
+          ["Paywall", "Draft", "Design"],
           ["Export", "Ready", "Codex"]
         ]
       }
@@ -515,7 +515,7 @@ export function createDefaultProject(name = "Danny's First Board"): BoardProject
       spacing: { xs: 4, sm: 8, md: 16, lg: 24 }
     },
     selection: [],
-    metadata: { createdAt, updatedAt: createdAt, createdBy: "Paper.Design.Danny" }
+    metadata: { createdAt, updatedAt: createdAt, createdBy: "PowerBoard" }
   });
 }
 

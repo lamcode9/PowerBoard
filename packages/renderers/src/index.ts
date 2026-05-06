@@ -101,7 +101,7 @@ ${elementRows || "| - | - | - | - | - |"}`;
 
   return `# ${project.name} Implementation Spec
 
-Generated from Paper.Design.Danny.
+Generated from PowerBoard.
 
 ## Tokens
 

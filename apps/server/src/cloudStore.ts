@@ -1,7 +1,7 @@
 import { Pool } from "pg";
 import { BoardProject, validateBoardProject } from "@board/schema";
 
-const SCHEMA_NAME = "paper_design_danny";
+const SCHEMA_NAME = "powerboard";
 
 export interface CloudBoardSummary {
   id: string;

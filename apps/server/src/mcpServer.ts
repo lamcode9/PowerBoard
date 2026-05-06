@@ -9,7 +9,7 @@ interface BoardMcpOptions {
 
 export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions = {}): McpServer {
   const server = new McpServer({
-    name: "paper-design-danny",
+    name: "powerboard",
     version: "0.1.0"
   });
 
@@ -21,7 +21,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     "list_boards",
     {
       title: "List boards",
-      description: "List local Paper.Design.Danny board projects."
+      description: "List local PowerBoard board projects."
     },
     async () => text(await store.listBoards())
   );
