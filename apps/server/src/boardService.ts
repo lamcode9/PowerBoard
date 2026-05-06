@@ -32,9 +32,13 @@ export class BoardStore {
 
   async ensureReady(): Promise<void> {
     await fs.mkdir(this.root, { recursive: true });
+    if (!this.cloud && this.cloudUnavailableStatus) {
+      this.cloud = createCloudStoreFromEnv();
+    }
     if (!this.cloud) return;
     try {
       await this.cloud.ensureReady();
+      this.cloudUnavailableStatus = undefined;
     } catch (error) {
       const label = this.cloud.label;
       this.cloud = undefined;

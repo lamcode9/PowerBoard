@@ -15,6 +15,22 @@ export interface BoardSummary {
   elementCount: number;
 }
 
+export interface ApiHealth {
+  ok: boolean;
+  name: string;
+  boardRoot?: string;
+  cloudStore: string;
+}
+
+export async function getHealth(): Promise<ApiHealth> {
+  try {
+    return await request("/api/health");
+  } catch (error) {
+    if (!shouldUseLocalFallback(error)) throw error;
+    return { ok: true, name: "PowerBoard", cloudStore: "browser-local" };
+  }
+}
+
 export async function listBoards(): Promise<BoardSummary[]> {
   return withLocalFallback(() => request("/api/boards"), () => localListBoards());
 }

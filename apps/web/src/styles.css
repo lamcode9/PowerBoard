@@ -127,6 +127,10 @@ button {
   padding: 4px;
 }
 
+.workspace-nav {
+  flex: 0 0 auto;
+}
+
 .pane-controls {
   flex: 0 0 auto;
 }
@@ -174,9 +178,27 @@ button {
   font-weight: 760;
 }
 
+.nav-button {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 7px;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 780;
+  padding: 0 10px;
+  text-decoration: none;
+}
+
 .icon-button:hover,
 .text-button:hover,
-.icon-button.active {
+.nav-button:hover,
+.icon-button.active,
+.nav-button.active {
   background: #eef2ff;
   color: #1d4ed8;
 }
@@ -209,15 +231,15 @@ button {
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  border-left: 1px solid #cbd5e1;
-  border-right: 1px solid #cbd5e1;
-  background: #edf3fa;
+  border-left: 1px solid #dbe3ee;
+  border-right: 1px solid #dbe3ee;
+  background: #f4f7fb;
 }
 
 .home-shell {
-  max-width: 1180px;
+  max-width: 1040px;
   margin: 0 auto;
-  padding: 22px;
+  padding: 28px 24px 44px;
 }
 
 .home-header {
@@ -225,7 +247,7 @@ button {
   align-items: flex-end;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 14px;
+  margin-bottom: 18px;
 }
 
 .home-header h2,
@@ -237,16 +259,39 @@ button {
 }
 
 .home-header h2 {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 850;
 }
 
-.home-header p,
 .board-card-head p {
   margin: 4px 0 0;
   color: #64748b;
   font-size: 12px;
   font-weight: 650;
+}
+
+.home-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.home-meta span,
+.storage-pill {
+  border: 1px solid #dbe3ee;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 780;
+  padding: 5px 8px;
+}
+
+.storage-pill.cloud {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
 }
 
 .home-create {
@@ -256,30 +301,41 @@ button {
 
 .board-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(292px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 10px;
 }
 
 .board-card {
   display: flex;
   min-width: 0;
-  min-height: 218px;
+  min-height: 168px;
   flex-direction: column;
   border: 1px solid #d7dee8;
   border-radius: 8px;
   background: #ffffff;
-  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.06);
-  padding: 14px;
+  cursor: pointer;
+  padding: 13px;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
 }
 
 .board-card.current {
+  border-color: #9cc4ff;
+}
+
+.board-card:hover,
+.board-card:focus-visible {
   border-color: #93c5fd;
-  box-shadow: 0 16px 44px rgba(37, 99, 235, 0.12);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+  outline: 0;
+  transform: translateY(-1px);
 }
 
 .board-card-head {
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) auto;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
   align-items: start;
   gap: 8px;
 }
@@ -298,10 +354,33 @@ button {
   white-space: nowrap;
 }
 
-.current-badge {
-  border-radius: 999px;
-  background: #dbeafe;
+.card-open-button {
+  display: inline-flex;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d7dee8;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 820;
+  padding: 0 10px;
+  text-decoration: none;
+}
+
+.card-open-button:hover {
+  border-color: #93c5fd;
   color: #1d4ed8;
+}
+
+.current-badge {
+  align-self: flex-start;
+  margin-top: 2px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #2563eb;
   font-size: 10px;
   font-weight: 850;
   padding: 4px 8px;
@@ -310,7 +389,7 @@ button {
 .board-meta {
   display: flex;
   gap: 6px;
-  margin: 14px 0 10px;
+  margin: 13px 0 8px;
 }
 
 .board-meta span {
@@ -324,7 +403,7 @@ button {
 
 .frame-chip-list {
   display: flex;
-  min-height: 86px;
+  min-height: 54px;
   flex-wrap: wrap;
   align-content: flex-start;
   gap: 6px;
@@ -333,7 +412,7 @@ button {
 .frame-chip {
   display: inline-flex;
   max-width: 100%;
-  min-height: 28px;
+  min-height: 26px;
   align-items: center;
   gap: 7px;
   border: 1px solid #dbe3ee;
@@ -354,11 +433,6 @@ button {
 .frame-chip.more,
 .frame-chip.empty {
   color: #64748b;
-}
-
-.board-open-action {
-  margin-top: auto;
-  margin-bottom: 0;
 }
 
 .home-empty {

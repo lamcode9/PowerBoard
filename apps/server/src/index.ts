@@ -37,9 +37,10 @@ app.get(/^\/boards\/([^/]+)\/(assets|exports)\/(.+)$/, asyncHandler(async (req, 
   res.send(record.data);
 }));
 
-app.get("/api/health", (_req, res) => {
+app.get("/api/health", asyncHandler(async (_req, res) => {
+  await store.ensureReady();
   res.json({ ok: true, name: "PowerBoard", boardRoot, cloudStore: store.cloudStatus() });
-});
+}));
 
 app.get("/api/boards", asyncHandler(async (_req, res) => {
   res.json(await store.listBoards());

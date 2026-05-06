@@ -45,11 +45,13 @@ import {
   exportPng,
   exportReactTailwind,
   exportSpec,
+  getHealth,
   listBoards,
   readBoard,
   redo,
   setSelection as postSelection,
   undo,
+  type ApiHealth,
   uploadAsset,
   type BoardSummary
 } from "./api";
@@ -122,11 +124,15 @@ const CANVAS_HEIGHT = 56000;
 const CANVAS_ORIGIN_X = 24000;
 const CANVAS_ORIGIN_Y = 16000;
 
+type RouteState = { view: "home" } | { view: "board"; boardId: string };
+type RouteMode = "push" | "replace" | "none";
+
 export function App() {
   const [project, setProject] = useState<BoardProject | null>(null);
   const [boardSummaries, setBoardSummaries] = useState<BoardSummary[]>([]);
   const [boardPreviews, setBoardPreviews] = useState<Record<string, BoardProject>>({});
   const [homeOpen, setHomeOpen] = useState(false);
+  const [storageStatus, setStorageStatus] = useState<ApiHealth | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [zoom, setZoom] = useState(INITIAL_ZOOM);
   const [presetId, setPresetId] = useState(DEVICE_PRESETS[0]!.id);
@@ -158,6 +164,23 @@ export function App() {
 
   useEffect(() => {
     void boot();
+  }, []);
+
+  useEffect(() => {
+    const onRouteChange = () => {
+      const route = readRoute();
+      if (route?.view === "board") {
+        void openBoard(route.boardId, "none");
+        return;
+      }
+      void showHome("none");
+    };
+    window.addEventListener("popstate", onRouteChange);
+    window.addEventListener("hashchange", onRouteChange);
+    return () => {
+      window.removeEventListener("popstate", onRouteChange);
+      window.removeEventListener("hashchange", onRouteChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -335,14 +358,23 @@ export function App() {
     return boards;
   }
 
-  async function openBoard(boardId: string) {
+  async function refreshStorageStatus() {
+    const health = await getHealth();
+    setStorageStatus(health);
+    return health;
+  }
+
+  async function openBoard(boardId: string, routeMode: RouteMode = "push") {
     try {
       const next = await readBoard(boardId);
       initialViewportPositionedRef.current = false;
+      setDrag(null);
+      setPan(null);
       setProject(next);
       setSelectedIds(next.selection);
       setHomeOpen(false);
       rememberBoard(next);
+      writeRoute({ view: "board", boardId }, routeMode);
       setStatus(`Opened ${next.name}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not open board");
@@ -359,29 +391,42 @@ export function App() {
       setSelectedIds(next.selection);
       setHomeOpen(false);
       rememberBoard(next);
+      writeRoute({ view: "board", boardId: next.id }, "push");
       setStatus(`Created ${next.name}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not create board");
     }
   }
 
-  async function showHome() {
+  async function showHome(routeMode: RouteMode = "push") {
+    setDrag(null);
+    setPan(null);
     setHomeOpen(true);
     setSelectedIds([]);
+    writeRoute({ view: "home" }, routeMode);
     setStatus("Boards");
-    await refreshBoards().catch((error) => {
+    await Promise.all([refreshBoards(), refreshStorageStatus()]).catch((error) => {
       setStatus(error instanceof Error ? error.message : "Could not refresh boards");
     });
   }
 
   async function boot() {
     try {
-      const boards = await refreshBoards();
-      const first = boards[0] ? await readBoard(boards[0].id) : await createBoard("PowerBoard App Mockups");
+      const route = readRoute();
+      const [boards] = await Promise.all([refreshBoards(), refreshStorageStatus()]);
+      const routeBoard = route?.view === "board" ? await readBoard(route.boardId).catch(() => null) : null;
+      const first = routeBoard ?? (boards[0] ? await readBoard(boards[0].id) : await createBoard("PowerBoard App Mockups"));
       setProject(first);
       setSelectedIds(first.selection);
       rememberBoard(first);
-      setStatus("Ready");
+      if (route?.view === "board" && routeBoard) {
+        setHomeOpen(false);
+        setStatus(`Opened ${first.name}`);
+      } else {
+        setHomeOpen(true);
+        writeRoute({ view: "home" }, "replace");
+        setStatus("Boards");
+      }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not start workspace");
     }
@@ -867,10 +912,10 @@ export function App() {
           </div>
         </div>
 
-        <div className="toolbar-group" aria-label="Workspace navigation">
-          <IconButton label="Home" active={homeOpen} onClick={() => void showHome()}>
-            <Home size={18} />
-          </IconButton>
+        <div className="toolbar-group workspace-nav" aria-label="Workspace navigation">
+          <a className={classNames("nav-button", homeOpen && "active")} href={routeHash({ view: "home" })} aria-current={homeOpen ? "page" : undefined}>
+            <Home size={16} /> Boards
+          </a>
         </div>
 
         {!homeOpen ? (
@@ -955,7 +1000,7 @@ export function App() {
       </header>
 
       {homeOpen ? (
-        <HomeView boards={boardSummaries} previews={boardPreviews} activeBoardId={project.id} onOpen={openBoard} onCreate={createNewBoard} />
+        <HomeView boards={boardSummaries} previews={boardPreviews} activeBoardId={project.id} storageStatus={storageStatus} onOpen={openBoard} onCreate={createNewBoard} />
       ) : (
         <>
       {leftPaneOpen ? (
@@ -1096,12 +1141,14 @@ function HomeView({
   boards,
   previews,
   activeBoardId,
+  storageStatus,
   onOpen,
   onCreate
 }: {
   boards: BoardSummary[];
   previews: Record<string, BoardProject>;
   activeBoardId: string;
+  storageStatus: ApiHealth | null;
   onOpen: (boardId: string) => void;
   onCreate: () => void;
 }) {
@@ -1113,9 +1160,18 @@ function HomeView({
         <div className="home-header">
           <div>
             <h2>Boards</h2>
-            <p>
-              {boards.length} {pluralize(boards.length, "board")} · {totalFrames} {pluralize(totalFrames, "frame")} · {totalElements} {pluralize(totalElements, "element")}
-            </p>
+            <div className="home-meta">
+              <span>
+                {boards.length} {pluralize(boards.length, "board")}
+              </span>
+              <span>
+                {totalFrames} {pluralize(totalFrames, "frame")}
+              </span>
+              <span>
+                {totalElements} {pluralize(totalElements, "element")}
+              </span>
+              <span className={classNames("storage-pill", isCloudBacked(storageStatus?.cloudStore) && "cloud")}>{storageLabel(storageStatus?.cloudStore)}</span>
+            </div>
           </div>
           <button className="text-button home-create" onClick={() => onCreate()}>
             <Plus size={16} /> New board
@@ -1129,14 +1185,36 @@ function HomeView({
               const frames = preview?.artboards ?? [];
               const current = board.id === activeBoardId;
               return (
-                <article key={board.id} className={classNames("board-card", current && "current")}>
+                <article
+                  key={board.id}
+                  className={classNames("board-card", current && "current")}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onOpen(board.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onOpen(board.id);
+                    }
+                  }}
+                >
                   <div className="board-card-head">
                     <Frame size={18} />
                     <div>
                       <h3>{board.name}</h3>
                       <p>{formatUpdatedAt(board.updatedAt)}</p>
                     </div>
-                    {current ? <span className="current-badge">Open</span> : null}
+                    <a
+                      className="card-open-button"
+                      href={routeHash({ view: "board", boardId: board.id })}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        event.preventDefault();
+                        onOpen(board.id);
+                      }}
+                    >
+                      Open
+                    </a>
                   </div>
                   <div className="board-meta">
                     <span>
@@ -1146,8 +1224,9 @@ function HomeView({
                       {board.elementCount} {pluralize(board.elementCount, "element")}
                     </span>
                   </div>
+                  {current ? <span className="current-badge">Current board</span> : null}
                   <div className="frame-chip-list">
-                    {frames.slice(0, 6).map((frame) => (
+                    {frames.slice(0, 4).map((frame) => (
                       <span key={frame.id} className="frame-chip" title={`${frame.name} · ${frame.id}`}>
                         {frame.name}
                         <small>
@@ -1155,12 +1234,9 @@ function HomeView({
                         </small>
                       </span>
                     ))}
-                    {frames.length > 6 ? <span className="frame-chip more">+{frames.length - 6}</span> : null}
+                    {frames.length > 4 ? <span className="frame-chip more">+{frames.length - 4}</span> : null}
                     {!frames.length ? <span className="frame-chip empty">No frames</span> : null}
                   </div>
-                  <button className="wide-action board-open-action" onClick={() => onOpen(board.id)}>
-                    Open board
-                  </button>
                 </article>
               );
             })}
@@ -1785,6 +1861,44 @@ function formatUpdatedAt(value: string): string {
 
 function pluralize(count: number, singular: string): string {
   return count === 1 ? singular : `${singular}s`;
+}
+
+function readRoute(): RouteState | null {
+  const hash = window.location.hash.replace(/^#/, "");
+  if (hash === "home") return { view: "home" };
+  if (hash.startsWith("board=")) {
+    const boardId = decodeURIComponent(hash.slice("board=".length));
+    return boardId ? { view: "board", boardId } : null;
+  }
+  return null;
+}
+
+function writeRoute(route: RouteState, mode: RouteMode): void {
+  if (mode === "none") return;
+  const hash = routeHash(route);
+  const nextUrl = `${window.location.pathname}${window.location.search}${hash}`;
+  if (`${window.location.pathname}${window.location.search}${window.location.hash}` === nextUrl) return;
+  if (mode === "replace") {
+    window.history.replaceState(null, "", nextUrl);
+    return;
+  }
+  window.history.pushState(null, "", nextUrl);
+}
+
+function routeHash(route: RouteState): string {
+  return route.view === "home" ? "#home" : `#board=${encodeURIComponent(route.boardId)}`;
+}
+
+function isCloudBacked(value: string | undefined): boolean {
+  return Boolean(value && !["browser-local", "local-files", "local-files (cloud unavailable)"].includes(value));
+}
+
+function storageLabel(value: string | undefined): string {
+  if (!value) return "Checking storage";
+  if (value === "supabase-postgres") return "Supabase cloud";
+  if (value === "browser-local") return "Browser local";
+  if (value === "local-files") return "Local files";
+  return value;
 }
 
 function readString(value: unknown, fallback: string): string {
