@@ -78,6 +78,18 @@ describe("BoardStore", () => {
     await store.exportSpec(board.id);
     expect(await cloud.readFile(board.id, "exports/implementation-spec.md")).toMatchObject({ contentType: "text/markdown; charset=utf-8" });
   });
+
+  it("falls back to local files when cloud storage is unreachable", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "board-store-"));
+    const store = new BoardStore(dir, new FailingCloudStore());
+
+    await store.ensureReady();
+
+    expect(store.cloudStatus()).toBe("local-files (cloud unavailable)");
+    const board = await store.createBoard("Fallback Board");
+    expect(board.name).toBe("Fallback Board");
+    expect(await fs.stat(path.join(dir, board.id, "board.json"))).toBeDefined();
+  });
 });
 
 class MemoryCloudStore implements CloudStore {
@@ -122,5 +134,13 @@ class MemoryCloudStore implements CloudStore {
 
   async readFile(boardId: string, filePath: string): Promise<CloudFileRecord | undefined> {
     return this.files.get(`${boardId}/${filePath}`);
+  }
+}
+
+class FailingCloudStore extends MemoryCloudStore {
+  override readonly label = "failing-cloud";
+
+  override async ensureReady(): Promise<void> {
+    throw new Error("network unreachable");
   }
 }

@@ -23,15 +23,24 @@ export class BoardStore {
   private undoStacks = new Map<string, BoardProject[]>();
   private redoStacks = new Map<string, BoardProject[]>();
   private selections = new Map<string, string[]>();
+  private cloudUnavailableStatus: string | undefined;
 
   constructor(
     private readonly root = defaultBoardRoot,
-    private readonly cloud: CloudStore | undefined = createCloudStoreFromEnv()
+    private cloud: CloudStore | undefined = createCloudStoreFromEnv()
   ) {}
 
   async ensureReady(): Promise<void> {
     await fs.mkdir(this.root, { recursive: true });
-    await this.cloud?.ensureReady();
+    if (!this.cloud) return;
+    try {
+      await this.cloud.ensureReady();
+    } catch (error) {
+      const label = this.cloud.label;
+      this.cloud = undefined;
+      this.cloudUnavailableStatus = "local-files (cloud unavailable)";
+      console.warn(`PowerBoard cloud store disabled (${label}): ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   async listBoards(): Promise<BoardSummary[]> {
@@ -104,7 +113,7 @@ export class BoardStore {
   }
 
   cloudStatus(): string {
-    return this.cloud?.label ?? "local-files";
+    return this.cloud?.label ?? this.cloudUnavailableStatus ?? "local-files";
   }
 
   private async writeLocalBoard(valid: BoardProject): Promise<BoardProject> {
