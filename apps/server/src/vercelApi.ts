@@ -5,6 +5,7 @@ import { createCloudStoreFromEnv } from "./cloudStore.js";
 
 type RequestLike = {
   method?: string;
+  url?: string;
   query: Record<string, string | string[] | undefined>;
   body?: unknown;
 };
@@ -38,7 +39,7 @@ export async function handlePowerBoardApi(req: RequestLike, res: JsonResponseLik
   }
 
   try {
-    const segments = pathSegments(req.query.path);
+    const segments = routeSegments(req);
     const method = req.method ?? "GET";
 
     if (method === "GET" && isRoute(segments, ["health"])) {
@@ -178,6 +179,13 @@ export async function handlePowerBoardFile(req: RequestLike, res: FileResponseLi
 function pathSegments(value: string | string[] | undefined): string[] {
   const raw = Array.isArray(value) ? value.join("/") : value ?? "";
   return raw.split("/").map((segment) => segment.trim()).filter(Boolean);
+}
+
+function routeSegments(req: RequestLike): string[] {
+  const fromQuery = pathSegments(req.query.path);
+  if (fromQuery.length) return fromQuery;
+  const pathname = new URL(req.url ?? "/", "https://powerboard.local").pathname;
+  return pathname.replace(/^\/api\/?/, "").split("/").map((segment) => segment.trim()).filter(Boolean);
 }
 
 function isRoute(actual: string[], expected: string[]): boolean {
