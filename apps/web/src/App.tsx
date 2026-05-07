@@ -83,6 +83,7 @@ type DragState = {
   startX: number;
   startY: number;
   original: Pick<BoardElement | Artboard, "x" | "y" | "width" | "height">;
+  latest: Pick<BoardElement | Artboard, "x" | "y" | "width" | "height">;
 };
 
 type PanState = {
@@ -101,6 +102,20 @@ type GestureLikeEvent = Event & {
 type GestureState = {
   startZoom: number;
   focalPoint: ViewportPoint;
+};
+
+type AgentActivity = {
+  source: "agent";
+  kind: "operation" | "selection";
+  ids: string[];
+  operationType?: string;
+  at: string;
+};
+
+type DragPreview = {
+  id: string;
+  target: DragState["target"];
+  patch: Pick<BoardElement | Artboard, "x" | "y" | "width" | "height">;
 };
 
 type Bounds = {
@@ -144,7 +159,8 @@ export function App() {
   const [project, setProject] = useState<BoardProject | null>(null);
   const [boardSummaries, setBoardSummaries] = useState<BoardSummary[]>([]);
   const [boardPreviews, setBoardPreviews] = useState<Record<string, BoardProject>>({});
-  const [homeOpen, setHomeOpen] = useState(false);
+  const [boardsLoading, setBoardsLoading] = useState(true);
+  const [homeOpen, setHomeOpen] = useState(() => readRoute()?.view !== "board");
   const [storageStatus, setStorageStatus] = useState<ApiHealth | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [zoom, setZoom] = useState(INITIAL_ZOOM);
@@ -153,6 +169,7 @@ export function App() {
   const [pan, setPan] = useState<PanState | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
   const [status, setStatus] = useState("Starting workspace...");
+  const [agentActiveUntilById, setAgentActiveUntilById] = useState<Record<string, number>>({});
   const [collapsedPanels, setCollapsedPanels] = useState<Record<string, boolean>>({});
   const [leftPaneOpen, setLeftPaneOpen] = useState(true);
   const [rightPaneOpen, setRightPaneOpen] = useState(true);
@@ -166,16 +183,39 @@ export function App() {
   const lastViewportPointRef = useRef<ViewportPoint | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const screenshotInputRef = useRef<HTMLInputElement | null>(null);
+  const agentActivityTimersRef = useRef<number[]>([]);
+  const projectRef = useRef<BoardProject | null>(null);
+  const selectedIdsRef = useRef<string[]>([]);
+  const dragRef = useRef<DragState | null>(null);
+  const pendingDragPreviewRef = useRef<DragPreview | null>(null);
+  const dragPreviewFrameRef = useRef<number | null>(null);
+  const operationQueueRef = useRef<Promise<BoardProject | null>>(Promise.resolve(null));
+  const previewSeqRef = useRef(0);
+  const selectionSeqRef = useRef(0);
   const navigationSeqRef = useRef(0);
-  const routeViewRef = useRef<{ homeOpen: boolean; projectId: string | null }>({ homeOpen: false, projectId: null });
+  const routeViewRef = useRef<{ homeOpen: boolean; projectId: string | null }>({ homeOpen: readRoute()?.view !== "board", projectId: null });
 
   useEffect(() => {
     return () => {
       if (zoomStateFrameRef.current !== null) {
         window.cancelAnimationFrame(zoomStateFrameRef.current);
       }
+      if (dragPreviewFrameRef.current !== null) {
+        window.cancelAnimationFrame(dragPreviewFrameRef.current);
+      }
+      for (const timer of agentActivityTimersRef.current) {
+        window.clearTimeout(timer);
+      }
     };
   }, []);
+
+  useEffect(() => {
+    projectRef.current = project;
+  }, [project]);
+
+  useEffect(() => {
+    selectedIdsRef.current = selectedIds;
+  }, [selectedIds]);
 
   useEffect(() => {
     void boot();
@@ -318,23 +358,38 @@ export function App() {
   }, [project?.id, homeOpen]);
 
   useEffect(() => {
-    if (!project || homeOpen) return;
-    const ws = new WebSocket(`ws://127.0.0.1:4318/ws?boardId=${project.id}`);
+    const boardId = project?.id;
+    const socketUrl = boardId && !homeOpen && shouldConnectLiveSocket(storageStatus) ? liveSocketUrl(boardId) : null;
+    if (!socketUrl) return;
+    const ws = new WebSocket(socketUrl);
     ws.onmessage = (event) => {
-      const message = JSON.parse(String(event.data)) as { type?: string; project?: BoardProject; selection?: string[] };
+      const message = JSON.parse(String(event.data)) as { type?: string; project?: BoardProject; selection?: string[]; agentActivity?: unknown };
       if (message.type === "board.changed" && message.project) {
+        projectRef.current = message.project;
         setProject(message.project);
+        selectedIdsRef.current = message.project.selection;
         setSelectedIds(message.project.selection);
         rememberBoard(message.project);
+        if (isAgentActivity(message.agentActivity)) {
+          flashAgentActivity(message.agentActivity);
+        }
       }
       if (message.type === "selection.changed" && message.selection) {
+        selectedIdsRef.current = message.selection;
         setSelectedIds(message.selection);
       }
     };
+    ws.onerror = () => {
+      if (projectRef.current?.id === boardId) {
+        setStatus("Live sync unavailable; cloud saves still work");
+      }
+    };
     return () => ws.close();
-  }, [project?.id, homeOpen]);
+  }, [project?.id, homeOpen, storageStatus?.cloudStore, storageStatus?.storageMode]);
 
   const elementIndexes = useMemo(() => (project ? buildElementIndexes(project) : EMPTY_ELEMENT_INDEXES), [project]);
+  const agentActiveIds = useMemo(() => new Set(Object.keys(agentActiveUntilById)), [agentActiveUntilById]);
+  const lastAgentEditedAtIso = useMemo(() => (project ? readLastAgentEditedAt(project) : null), [project]);
 
   const selectedElement = useMemo(() => {
     if (!project || selectedIds.length !== 1) return null;
@@ -355,31 +410,61 @@ export function App() {
     return project.artboards.find((artboard) => artboard.id === selectedArtboardId) ?? project.artboards[0] ?? null;
   }, [project, selectedArtboard, selectedElement, selectedIds]);
 
+  function flashAgentActivity(activity: AgentActivity) {
+    const ids = uniqueStrings(activity.ids);
+    if (!ids.length) return;
+    const expiresAt = Date.now() + 2600;
+    setAgentActiveUntilById((current) => {
+      const next = { ...current };
+      for (const id of ids) next[id] = expiresAt;
+      return next;
+    });
+    const timer = window.setTimeout(() => {
+      const now = Date.now();
+      setAgentActiveUntilById((current) => {
+        let changed = false;
+        const next = { ...current };
+        for (const [id, expiry] of Object.entries(current)) {
+          if (expiry <= now) {
+            delete next[id];
+            changed = true;
+          }
+        }
+        return changed ? next : current;
+      });
+    }, 2700);
+    agentActivityTimersRef.current.push(timer);
+    setStatus(agentActivityStatus(activity));
+  }
+
   function rememberBoard(nextProject: BoardProject) {
     setBoardPreviews((current) => ({ ...current, [nextProject.id]: nextProject }));
     setBoardSummaries((current) => upsertBoardSummary(current, nextProject));
   }
 
   async function refreshBoards(): Promise<BoardSummary[]> {
-    const boards = await listBoards();
-    setBoardSummaries(boards);
-    const previews = await Promise.all(
-      boards.map(async (board) => {
-        try {
-          return [board.id, await readBoard(board.id)] as const;
-        } catch {
-          return null;
-        }
-      })
-    );
-    setBoardPreviews((current) => {
-      const next = { ...current };
-      for (const preview of previews) {
-        if (preview) next[preview[0]] = preview[1];
+    setBoardsLoading(true);
+    try {
+      const boards = await listBoards();
+      setBoardSummaries(boards);
+      const previewSeq = ++previewSeqRef.current;
+      void loadBoardPreviews(boards, previewSeq);
+      return boards;
+    } finally {
+      setBoardsLoading(false);
+    }
+  }
+
+  async function loadBoardPreviews(boards: BoardSummary[], previewSeq: number) {
+    for (const board of boards) {
+      try {
+        const preview = await readBoard(board.id);
+        if (previewSeq !== previewSeqRef.current) return;
+        setBoardPreviews((current) => ({ ...current, [board.id]: preview }));
+      } catch {
+        // Board cards can still open from summaries if one preview is temporarily unavailable.
       }
-      return next;
-    });
-    return boards;
+    }
   }
 
   async function refreshStorageStatus() {
@@ -394,9 +479,11 @@ export function App() {
       const next = await readBoard(boardId);
       if (!isCurrentNavigation(seq)) return;
       initialViewportPositionedRef.current = false;
-      setDrag(null);
+      clearDrag();
       setPan(null);
+      projectRef.current = next;
       setProject(next);
+      selectedIdsRef.current = next.selection;
       setSelectedIds(next.selection);
       setHomeOpen(false);
       rememberBoard(next);
@@ -416,7 +503,9 @@ export function App() {
       const next = await createBoard(name.trim() || "Untitled PowerBoard Board");
       if (!isCurrentNavigation(seq)) return;
       initialViewportPositionedRef.current = false;
+      projectRef.current = next;
       setProject(next);
+      selectedIdsRef.current = next.selection;
       setSelectedIds(next.selection);
       setHomeOpen(false);
       rememberBoard(next);
@@ -430,9 +519,10 @@ export function App() {
 
   async function showHome(routeMode: RouteMode = "push") {
     const seq = beginNavigation();
-    setDrag(null);
+    clearDrag();
     setPan(null);
     setHomeOpen(true);
+    selectedIdsRef.current = [];
     setSelectedIds([]);
     writeRoute({ view: "home" }, routeMode);
     setStatus("Boards");
@@ -448,18 +538,28 @@ export function App() {
       const route = readRoute();
       const [boards] = await Promise.all([refreshBoards(), refreshStorageStatus()]);
       const routeBoard = route?.view === "board" ? await readBoard(route.boardId).catch(() => null) : null;
-      const first = routeBoard ?? (boards[0] ? await readBoard(boards[0].id) : await createBoard("PowerBoard App Mockups"));
       if (!isCurrentNavigation(seq)) return;
-      setProject(first);
-      setSelectedIds(first.selection);
-      rememberBoard(first);
       if (route?.view === "board" && routeBoard) {
+        projectRef.current = routeBoard;
+        setProject(routeBoard);
+        selectedIdsRef.current = routeBoard.selection;
+        setSelectedIds(routeBoard.selection);
+        rememberBoard(routeBoard);
         setHomeOpen(false);
-        setStatus(`Opened ${first.name}`);
+        setStatus(`Opened ${routeBoard.name}`);
       } else {
+        if (route?.view === "board" && !routeBoard) {
+          setStatus(`Board not found: ${route.boardId}`);
+        } else {
+          setStatus("Boards");
+        }
+        if (!projectRef.current && boards.length === 0) {
+          setProject(null);
+        }
+        selectedIdsRef.current = [];
+        setSelectedIds([]);
         setHomeOpen(true);
         writeRoute({ view: "home" }, "replace");
-        setStatus("Boards");
       }
     } catch (error) {
       if (!isCurrentNavigation(seq)) return;
@@ -477,42 +577,98 @@ export function App() {
   }
 
   async function runOperation(operation: BoardOperation) {
-    if (!project) return;
+    const boardId = projectRef.current?.id;
+    if (!boardId) return;
     try {
-      const next = await applyOperation(project.id, operation);
-      setProject(next);
-      setSelectedIds(next.selection);
-      rememberBoard(next);
-      setStatus("Saved");
+      setStatus("Saving...");
+      const next = await queueOperation(boardId, operation);
+      if (next && projectRef.current?.id === boardId) {
+        setStatus("Saved");
+      }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Operation failed");
     }
   }
 
+  async function queueOperation(boardId: string, operation: BoardOperation): Promise<BoardProject | null> {
+    const queued = operationQueueRef.current
+      .catch(() => null)
+      .then(async () => {
+        const next = await applyOperation(boardId, operation);
+        if (projectRef.current?.id === boardId) {
+          projectRef.current = next;
+          setProject(next);
+          selectedIdsRef.current = next.selection;
+          setSelectedIds(next.selection);
+          rememberBoard(next);
+        }
+        return next;
+      });
+    operationQueueRef.current = queued.catch(() => null);
+    return queued;
+  }
+
   async function select(ids: string[], additive = false) {
-    if (!project) return;
-    const nextSelection = additive ? toggleSelection(selectedIds, ids[0]!) : ids;
+    const boardId = projectRef.current?.id;
+    if (!boardId) return;
+    const nextSelection = additive ? toggleSelection(selectedIdsRef.current, ids[0]!) : ids;
+    selectedIdsRef.current = nextSelection;
     setSelectedIds(nextSelection);
-    await postSelection(project.id, nextSelection).catch(() => undefined);
+    const seq = ++selectionSeqRef.current;
+    await postSelection(boardId, nextSelection).catch((error) => {
+      if (seq === selectionSeqRef.current) {
+        setStatus(error instanceof Error ? error.message : "Selection sync failed");
+      }
+    });
   }
 
   function updateLocalElement(id: string, patch: Partial<BoardElement>) {
     setProject((current) => {
       if (!current) return current;
-      return {
+      const next = {
         ...current,
         elements: current.elements.map((element) => (element.id === id ? { ...element, ...patch } : element))
       };
+      projectRef.current = next;
+      return next;
     });
   }
 
   function updateLocalArtboard(id: string, patch: Partial<Artboard>) {
     setProject((current) => {
       if (!current) return current;
-      return {
+      const next = {
         ...current,
         artboards: current.artboards.map((artboard) => (artboard.id === id ? { ...artboard, ...patch } : artboard))
       };
+      projectRef.current = next;
+      return next;
+    });
+  }
+
+  function beginDrag(state: DragState) {
+    dragRef.current = state;
+    setDrag(state);
+  }
+
+  function clearDrag() {
+    dragRef.current = null;
+    pendingDragPreviewRef.current = null;
+    setDrag(null);
+  }
+
+  function scheduleDragPreview(preview: DragPreview) {
+    pendingDragPreviewRef.current = preview;
+    if (dragPreviewFrameRef.current !== null) return;
+    dragPreviewFrameRef.current = window.requestAnimationFrame(() => {
+      dragPreviewFrameRef.current = null;
+      const pending = pendingDragPreviewRef.current;
+      if (!pending) return;
+      if (pending.target === "artboard") {
+        updateLocalArtboard(pending.id, pending.patch);
+        return;
+      }
+      updateLocalElement(pending.id, pending.patch);
     });
   }
 
@@ -525,27 +681,22 @@ export function App() {
       });
       return;
     }
-    if (!drag || !project) return;
+    const activeDrag = dragRef.current;
+    if (!activeDrag || !projectRef.current) return;
     const currentZoom = cameraRef.current.zoom;
-    const dx = (event.clientX - drag.startX) / currentZoom;
-    const dy = (event.clientY - drag.startY) / currentZoom;
-    const minSize = drag.target === "artboard" ? 120 : 24;
+    const dx = (event.clientX - activeDrag.startX) / currentZoom;
+    const dy = (event.clientY - activeDrag.startY) / currentZoom;
+    const minSize = activeDrag.target === "artboard" ? 120 : 24;
     const patch =
-      drag.mode === "move"
-        ? { x: Math.round(drag.original.x + dx), y: Math.round(drag.original.y + dy) }
+      activeDrag.mode === "move"
+        ? { x: Math.round(activeDrag.original.x + dx), y: Math.round(activeDrag.original.y + dy) }
         : {
-            width: Math.max(minSize, Math.round(drag.original.width + dx)),
-            height: Math.max(minSize, Math.round(drag.original.height + dy))
+            width: Math.max(minSize, Math.round(activeDrag.original.width + dx)),
+            height: Math.max(minSize, Math.round(activeDrag.original.height + dy))
           };
-    if (drag.target === "artboard") {
-      updateLocalArtboard(drag.id, patch);
-      return;
-    }
-    if (drag.mode === "move") {
-      updateLocalElement(drag.id, patch);
-    } else {
-      updateLocalElement(drag.id, patch);
-    }
+    const latest = { ...activeDrag.latest, ...patch };
+    dragRef.current = { ...activeDrag, latest };
+    scheduleDragPreview({ id: activeDrag.id, target: activeDrag.target, patch: latest });
   }
 
   async function onCanvasPointerUp() {
@@ -553,28 +704,26 @@ export function App() {
       setPan(null);
       return;
     }
-    if (!drag || !project) return;
-    const element = drag.target === "element" ? project.elements.find((candidate) => candidate.id === drag.id) : undefined;
-    const artboard = drag.target === "artboard" ? project.artboards.find((candidate) => candidate.id === drag.id) : undefined;
-    setDrag(null);
-    if (element) {
+    const activeDrag = dragRef.current;
+    if (!activeDrag || !projectRef.current) return;
+    clearDrag();
+    if (boundsEqual(activeDrag.original, activeDrag.latest)) return;
+    if (activeDrag.target === "element") {
       await runOperation({
         type: "move_resize_element",
-        elementId: element.id,
-        x: element.x,
-        y: element.y,
-        width: element.width,
-        height: element.height
+        elementId: activeDrag.id,
+        x: activeDrag.latest.x,
+        y: activeDrag.latest.y,
+        width: activeDrag.latest.width,
+        height: activeDrag.latest.height
       });
       return;
     }
-    if (artboard) {
-      await runOperation({
-        type: "update_artboard",
-        artboardId: artboard.id,
-        patch: { x: artboard.x, y: artboard.y, width: artboard.width, height: artboard.height }
-      });
-    }
+    await runOperation({
+      type: "update_artboard",
+      artboardId: activeDrag.id,
+      patch: { x: activeDrag.latest.x, y: activeDrag.latest.y, width: activeDrag.latest.width, height: activeDrag.latest.height }
+    });
   }
 
   async function addArtboard() {
@@ -685,13 +834,15 @@ export function App() {
       zIndex: element.zIndex + 1
     }));
 
-    let nextProject = project;
+    let nextProject: BoardProject | null = project;
+    setStatus("Duplicating...");
     for (const element of clonedElements) {
-      nextProject = await applyOperation(nextProject.id, { type: "add_element", element });
+      nextProject = await queueOperation(nextProject.id, { type: "add_element", element });
+      if (!nextProject) return;
     }
-    setProject(nextProject);
     rememberBoard(nextProject);
     const nextSelection = rootElements.map((element) => idMap.get(element.id)!).filter(Boolean);
+    selectedIdsRef.current = nextSelection;
     setSelectedIds(nextSelection);
     await postSelection(project.id, nextSelection).catch(() => undefined);
     setStatus(`Duplicated ${rootElements.length} ${rootElements.length === 1 ? "element" : "elements"}`);
@@ -719,7 +870,10 @@ export function App() {
 
   async function uploadImage(kind: "image" | "screenshot", file: File) {
     if (!project || !activeArtboard) return;
+    setStatus(kind === "screenshot" ? "Importing screenshot..." : "Uploading image...");
+    await operationQueueRef.current.catch(() => null);
     const result = await uploadAsset(project.id, file);
+    projectRef.current = result.project;
     setProject(result.project);
     const element = createElementFromPreset(kind === "screenshot" ? "screenshotOverlay" : "image", activeArtboard.id, kind === "screenshot" ? 0 : 32, kind === "screenshot" ? 0 : 132);
     element.props.assetId = result.assetId;
@@ -730,10 +884,8 @@ export function App() {
       element.height = activeArtboard.height;
       element.zIndex = 0;
     }
-    await applyOperation(project.id, { type: "add_element", element }).then((next) => {
-      setProject(next);
-      setSelectedIds(next.selection);
-      rememberBoard(next);
+    await queueOperation(project.id, { type: "add_element", element }).then((next) => {
+      if (!next) return;
       setStatus(kind === "screenshot" ? "Screenshot overlay imported" : "Image added");
     });
   }
@@ -746,6 +898,7 @@ export function App() {
       return;
     }
     try {
+      await operationQueueRef.current.catch(() => null);
       const result = await exportPng(project.id, artboardId);
       setStatus(`PNG exported: ${result.filePath}`);
     } catch (error) {
@@ -756,6 +909,7 @@ export function App() {
   async function exportCode() {
     if (!project) return;
     try {
+      await operationQueueRef.current.catch(() => null);
       const result = await exportReactTailwind(project.id);
       setStatus(`React + Tailwind exported: ${result.dir}`);
     } catch (error) {
@@ -766,6 +920,7 @@ export function App() {
   async function exportImplementationSpec() {
     if (!project) return;
     try {
+      await operationQueueRef.current.catch(() => null);
       const result = await exportSpec(project.id);
       setStatus(`Spec exported: ${result.markdownPath}`);
     } catch (error) {
@@ -776,8 +931,11 @@ export function App() {
   async function undoBoard() {
     if (!project) return;
     try {
+      await operationQueueRef.current.catch(() => null);
       const next = await undo(project.id);
+      projectRef.current = next;
       setProject(next);
+      selectedIdsRef.current = next.selection;
       setSelectedIds(next.selection);
       rememberBoard(next);
       setStatus("Undo");
@@ -789,8 +947,11 @@ export function App() {
   async function redoBoard() {
     if (!project) return;
     try {
+      await operationQueueRef.current.catch(() => null);
       const next = await redo(project.id);
+      projectRef.current = next;
       setProject(next);
+      selectedIdsRef.current = next.selection;
       setSelectedIds(next.selection);
       rememberBoard(next);
       setStatus("Redo");
@@ -936,7 +1097,7 @@ export function App() {
     });
   }
 
-  if (!project) {
+  if (!project && !homeOpen) {
     return (
       <main className="loading-shell">
         <div className="loading-mark">PB</div>
@@ -944,6 +1105,8 @@ export function App() {
       </main>
     );
   }
+
+  const canDeleteSelection = Boolean(project && selectedIds.some((id) => project.elements.some((element) => element.id === id)));
 
   return (
     <main className={classNames("app-shell", homeOpen && "home-mode", !leftPaneOpen && "left-pane-hidden", !rightPaneOpen && "right-pane-hidden")} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
@@ -989,7 +1152,7 @@ export function App() {
               <IconButton label="Duplicate" onClick={duplicateSelection} disabled={!selectedIds.length}>
                 <Copy size={18} />
               </IconButton>
-              <IconButton label="Delete" onClick={deleteSelection} disabled={!selectedIds.some((id) => project.elements.some((element) => element.id === id))}>
+              <IconButton label="Delete" onClick={deleteSelection} disabled={!canDeleteSelection}>
                 <Trash2 size={18} />
               </IconButton>
             </div>
@@ -1044,8 +1207,8 @@ export function App() {
       </header>
 
       {homeOpen ? (
-        <HomeView boards={boardSummaries} previews={boardPreviews} storageStatus={storageStatus} onOpen={openBoard} onCreate={createNewBoard} />
-      ) : (
+        <HomeView boards={boardSummaries} previews={boardPreviews} storageStatus={storageStatus} loading={boardsLoading} onOpen={openBoard} onCreate={createNewBoard} />
+      ) : project ? (
         <>
       {leftPaneOpen ? (
         <aside className="left-panel">
@@ -1120,7 +1283,7 @@ export function App() {
         <div className="canvas-space">
           <div ref={canvasPlaneRef} className="canvas-plane" style={{ transform: cameraTransform(cameraRef.current), width: CANVAS_WIDTH, height: CANVAS_HEIGHT }}>
             <div className="canvas-grid" />
-            <ConnectorLayer project={project} selectedIds={selectedIds} />
+            <ConnectorLayer project={project} selectedIds={selectedIds} agentActiveIds={agentActiveIds} />
             {project.artboards
               .filter((artboard) => artboard.visible)
               .map((artboard) => (
@@ -1130,8 +1293,9 @@ export function App() {
                   project={project}
                   indexes={elementIndexes}
                   selectedIds={selectedIds}
+                  agentActiveIds={agentActiveIds}
                   onSelect={(ids, additive) => select(ids, additive)}
-                  onDragStart={(state) => setDrag(state)}
+                  onDragStart={beginDrag}
                 />
               ))}
           </div>
@@ -1181,9 +1345,16 @@ export function App() {
       ) : null}
 
         </>
-      )}
+      ) : null}
 
-      <footer className="statusbar">{status}</footer>
+      <footer className="statusbar">
+        <span className="status-message">{status}</span>
+        {lastAgentEditedAtIso ? (
+          <time className="agent-edit-stamp" dateTime={lastAgentEditedAtIso} title={`Last AI edit: ${formatAgentEditedAt(lastAgentEditedAtIso, true)}`}>
+            AI edited {formatAgentEditedAt(lastAgentEditedAtIso)}
+          </time>
+        ) : null}
+      </footer>
     </main>
   );
 }
@@ -1192,12 +1363,14 @@ function HomeView({
   boards,
   previews,
   storageStatus,
+  loading,
   onOpen,
   onCreate
 }: {
   boards: BoardSummary[];
   previews: Record<string, BoardProject>;
   storageStatus: ApiHealth | null;
+  loading: boolean;
   onOpen: (boardId: string) => void;
   onCreate: () => void;
 }) {
@@ -1232,6 +1405,7 @@ function HomeView({
             {boards.map((board) => {
               const preview = previews[board.id];
               const frames = preview?.artboards ?? [];
+              const previewPending = !preview && board.artboardCount > 0;
               return (
                 <article
                   key={board.id}
@@ -1282,11 +1456,17 @@ function HomeView({
                       </span>
                     ))}
                     {frames.length > 4 ? <span className="frame-chip more">+{frames.length - 4}</span> : null}
-                    {!frames.length ? <span className="frame-chip empty">No frames</span> : null}
+                    {previewPending ? <span className="frame-chip empty">Loading preview</span> : null}
+                    {!previewPending && !frames.length ? <span className="frame-chip empty">No frames</span> : null}
                   </div>
                 </article>
               );
             })}
+          </div>
+        ) : loading ? (
+          <div className="home-empty">
+            <Frame size={28} />
+            <h3>Loading boards</h3>
           </div>
         ) : (
           <div className="home-empty">
@@ -1347,6 +1527,7 @@ function ArtboardView({
   project,
   indexes,
   selectedIds,
+  agentActiveIds,
   onSelect,
   onDragStart
 }: {
@@ -1354,6 +1535,7 @@ function ArtboardView({
   project: BoardProject;
   indexes: ElementIndexes;
   selectedIds: string[];
+  agentActiveIds: Set<string>;
   onSelect: (ids: string[], additive?: boolean) => void;
   onDragStart: (state: DragState) => void;
 }) {
@@ -1362,11 +1544,16 @@ function ArtboardView({
     .filter((element) => selectedIds.includes(element.id) && element.artboardId === artboard.id && element.visible)
     .map((element) => ({ element, position: elementPositionInArtboard(element, project) }))
     .filter((item): item is { element: BoardElement; position: { x: number; y: number } } => Boolean(item.position));
+  const activeElements = project.elements
+    .filter((element) => agentActiveIds.has(element.id) && element.artboardId === artboard.id && element.visible)
+    .map((element) => ({ element, position: elementPositionInArtboard(element, project) }))
+    .filter((item): item is { element: BoardElement; position: { x: number; y: number } } => Boolean(item.position));
   const selected = selectedIds.includes(artboard.id);
+  const agentActive = agentActiveIds.has(artboard.id);
   const bitmapOnly = isBitmapOnlyArtboard(artboard, elements);
   return (
     <div
-      className={selected ? "artboard-frame selected" : "artboard-frame"}
+      className={classNames("artboard-frame", selected && "selected", agentActive && "agent-active")}
       style={{ left: CANVAS_ORIGIN_X + artboard.x, top: CANVAS_ORIGIN_Y + artboard.y, width: artboard.width, height: artboard.height }}
       data-board-artboard={artboard.id}
       data-board-name={artboard.name}
@@ -1379,7 +1566,7 @@ function ArtboardView({
           onSelect([artboard.id], event.shiftKey);
           if (!artboard.locked && !event.shiftKey) {
             capturePointer(event.currentTarget, event.pointerId);
-            onDragStart({ id: artboard.id, target: "artboard", mode: "move", startX: event.clientX, startY: event.clientY, original: artboard });
+            onDragStart({ id: artboard.id, target: "artboard", mode: "move", startX: event.clientX, startY: event.clientY, original: artboard, latest: artboard });
           }
         }}
       >
@@ -1389,9 +1576,26 @@ function ArtboardView({
       </button>
       <div className="artboard-surface" style={{ background: artboard.background, borderRadius: artboard.type === "mobile" ? 42 : artboard.type === "tablet" ? 30 : 18 }} onPointerDown={(event) => (event.stopPropagation(), onSelect([artboard.id], event.shiftKey))}>
         {elements.map((element) => (
-          <ElementView key={element.id} element={element} project={project} indexes={indexes} selectedIds={selectedIds} onSelect={onSelect} onDragStart={onDragStart} />
+          <ElementView key={element.id} element={element} project={project} indexes={indexes} selectedIds={selectedIds} agentActiveIds={agentActiveIds} onSelect={onSelect} onDragStart={onDragStart} />
         ))}
       </div>
+      {activeElements.length ? (
+        <div className="agent-pulse-layer" aria-hidden="true">
+          {activeElements.map(({ element, position }) => (
+            <span
+              key={element.id}
+              className="agent-pulse-outline"
+              style={{
+                left: position.x,
+                top: position.y,
+                width: element.width,
+                height: element.height,
+                borderRadius: element.style.radius ?? 10
+              }}
+            />
+          ))}
+        </div>
+      ) : null}
       {selectedElements.length ? (
         <div className="selection-badge-layer" aria-hidden="true">
           {selectedElements.map(({ element, position }) => (
@@ -1409,7 +1613,7 @@ function ArtboardView({
           onPointerDown={(event) => {
             event.stopPropagation();
             capturePointer(event.currentTarget, event.pointerId);
-            onDragStart({ id: artboard.id, target: "artboard", mode: "resize", startX: event.clientX, startY: event.clientY, original: artboard });
+            onDragStart({ id: artboard.id, target: "artboard", mode: "resize", startX: event.clientX, startY: event.clientY, original: artboard, latest: artboard });
           }}
         />
       ) : null}
@@ -1422,6 +1626,7 @@ function ElementView({
   project,
   indexes,
   selectedIds,
+  agentActiveIds,
   onSelect,
   onDragStart
 }: {
@@ -1429,10 +1634,12 @@ function ElementView({
   project: BoardProject;
   indexes: ElementIndexes;
   selectedIds: string[];
+  agentActiveIds: Set<string>;
   onSelect: (ids: string[], additive?: boolean) => void;
   onDragStart: (state: DragState) => void;
 }) {
   const selected = selectedIds.includes(element.id);
+  const agentActive = agentActiveIds.has(element.id);
   const children = indexes.canvasChildrenByParent.get(element.id) ?? [];
   const selectedAncestor = children.some((child) => selectedIds.includes(child.id) || hasSelectedDescendant(child.id, project, selectedIds));
   const style = elementToStyle(element);
@@ -1440,7 +1647,7 @@ function ElementView({
 
   return (
     <div
-      className={classNames("board-element", `kind-${element.type}`, selected && "selected", selectedAncestor && "selected-ancestor", element.locked && "locked")}
+      className={classNames("board-element", `kind-${element.type}`, selected && "selected", selectedAncestor && "selected-ancestor", agentActive && "agent-active", element.locked && "locked")}
       style={style}
       data-board-element={element.id}
       data-board-name={element.name}
@@ -1450,13 +1657,13 @@ function ElementView({
         onSelect([element.id], event.shiftKey);
         if (!element.locked && !event.shiftKey) {
           capturePointer(event.currentTarget, event.pointerId);
-          onDragStart({ id: element.id, target: "element", mode: "move", startX: event.clientX, startY: event.clientY, original: element });
+          onDragStart({ id: element.id, target: "element", mode: "move", startX: event.clientX, startY: event.clientY, original: element, latest: element });
         }
       }}
     >
       <ElementContent element={element} assetSrc={asset?.src} />
       {children.map((child) => (
-        <ElementView key={child.id} element={child} project={project} indexes={indexes} selectedIds={selectedIds} onSelect={onSelect} onDragStart={onDragStart} />
+        <ElementView key={child.id} element={child} project={project} indexes={indexes} selectedIds={selectedIds} agentActiveIds={agentActiveIds} onSelect={onSelect} onDragStart={onDragStart} />
       ))}
       {selected && !element.locked ? (
         <button
@@ -1465,7 +1672,7 @@ function ElementView({
           onPointerDown={(event) => {
             event.stopPropagation();
             capturePointer(event.currentTarget, event.pointerId);
-            onDragStart({ id: element.id, target: "element", mode: "resize", startX: event.clientX, startY: event.clientY, original: element });
+            onDragStart({ id: element.id, target: "element", mode: "resize", startX: event.clientX, startY: event.clientY, original: element, latest: element });
           }}
         />
       ) : null}
@@ -1579,7 +1786,7 @@ function MockTable({ element }: { element: BoardElement }) {
   );
 }
 
-function ConnectorLayer({ project, selectedIds }: { project: BoardProject; selectedIds: string[] }) {
+function ConnectorLayer({ project, selectedIds, agentActiveIds }: { project: BoardProject; selectedIds: string[]; agentActiveIds: Set<string> }) {
   return (
     <svg className="connector-layer" width={CANVAS_WIDTH} height={CANVAS_HEIGHT} viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}>
       <defs>
@@ -1597,8 +1804,9 @@ function ConnectorLayer({ project, selectedIds }: { project: BoardProject; selec
         const y2 = CANVAS_ORIGIN_Y + to.y + to.height / 2;
         const mid = x1 + Math.max(80, (x2 - x1) / 2);
         const selected = selectedIds.includes(connector.id);
+        const agentActive = agentActiveIds.has(connector.id);
         return (
-          <g key={connector.id} className={selected ? "connector selected" : "connector"}>
+          <g key={connector.id} className={classNames("connector", selected && "selected", agentActive && "agent-active")}>
             <path d={`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`} stroke={String(connector.style.stroke ?? "#2563EB")} strokeWidth={selected ? 4 : 2.5} fill="none" markerEnd="url(#arrow-head)" />
             {connector.label ? (
               <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 10} textAnchor="middle">
@@ -1962,6 +2170,65 @@ function formatUpdatedAt(value: string): string {
   }).format(date);
 }
 
+function formatAgentEditedAt(value: string, includeSeconds = false): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    ...(includeSeconds ? { second: "2-digit" } : {})
+  }).format(date);
+}
+
+function readLastAgentEditedAt(project: BoardProject): string | null {
+  const value = (project.metadata as Record<string, unknown>).lastAgentEditedAt;
+  if (typeof value !== "string") return null;
+  return Number.isNaN(new Date(value).getTime()) ? null : value;
+}
+
+function isAgentActivity(value: unknown): value is AgentActivity {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return record.source === "agent" && (record.kind === "operation" || record.kind === "selection") && Array.isArray(record.ids) && typeof record.at === "string";
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter((value) => value.length > 0)));
+}
+
+function agentActivityStatus(activity: AgentActivity): string {
+  if (activity.kind === "selection") return `AI selected ${activity.ids.length || 0} ${pluralize(activity.ids.length || 0, "item")}`;
+  return `AI ${agentOperationVerb(activity.operationType)}`;
+}
+
+function agentOperationVerb(operationType?: string): string {
+  switch (operationType) {
+    case "create_artboard":
+      return "added a frame";
+    case "update_artboard":
+      return "edited a frame";
+    case "create_variant":
+      return "created a variant";
+    case "add_element":
+      return "added an element";
+    case "update_element":
+      return "edited an element";
+    case "delete_element":
+      return "deleted an element";
+    case "move_resize_element":
+      return "moved or resized an element";
+    case "group_elements":
+      return "grouped elements";
+    case "add_connector":
+      return "connected frames";
+    default:
+      return "edited the board";
+  }
+}
+
 function pluralize(count: number, singular: string): string {
   return count === 1 ? singular : `${singular}s`;
 }
@@ -1990,6 +2257,25 @@ function writeRoute(route: RouteState, mode: RouteMode): void {
 
 function routeHash(route: RouteState): string {
   return route.view === "home" ? "#home" : `#board=${encodeURIComponent(route.boardId)}`;
+}
+
+function shouldConnectLiveSocket(health: ApiHealth | null): boolean {
+  if (!health || health.cloudStore === "browser-local") return false;
+  return isLocalBrowserHost() || Boolean(import.meta.env.VITE_POWERBOARD_WS_URL);
+}
+
+function liveSocketUrl(boardId: string): string | null {
+  const explicit = import.meta.env.VITE_POWERBOARD_WS_URL?.trim();
+  if (explicit) {
+    const base = explicit.endsWith("/ws") ? explicit : `${explicit.replace(/\/$/, "")}/ws`;
+    return `${base}?boardId=${encodeURIComponent(boardId)}`;
+  }
+  if (!isLocalBrowserHost()) return null;
+  return `ws://127.0.0.1:4318/ws?boardId=${encodeURIComponent(boardId)}`;
+}
+
+function isLocalBrowserHost(): boolean {
+  return ["127.0.0.1", "localhost", "::1"].includes(window.location.hostname);
 }
 
 function isCloudBacked(health: ApiHealth | null): boolean {
@@ -2033,6 +2319,10 @@ function toggleSelection(selection: string[], id: string): string[] {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function boundsEqual(a: Pick<BoardElement | Artboard, "x" | "y" | "width" | "height">, b: Pick<BoardElement | Artboard, "x" | "y" | "width" | "height">): boolean {
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {

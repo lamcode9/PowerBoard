@@ -78,8 +78,10 @@ export async function handlePowerBoardApi(req: RequestLike, res: JsonResponseLik
     }
 
     if (method === "POST" && action === "operations") {
-      const operation = OperationSchema.parse(readObjectBody(req).operation) as BoardOperation;
-      res.json(await store.applyOperation(boardId, operation));
+      const body = readObjectBody(req);
+      const operation = OperationSchema.parse(body.operation) as BoardOperation;
+      const agentEdit = readAgentEdit(body);
+      res.json(await store.applyOperation(boardId, operation, agentEdit ? { source: "agent", actor: agentEdit.actor } : {}));
       return;
     }
 
@@ -201,6 +203,11 @@ function readObjectBody(req: RequestLike): Record<string, unknown> {
     return req.body as Record<string, unknown>;
   }
   return {};
+}
+
+function readAgentEdit(body: Record<string, unknown>): { actor?: string } | undefined {
+  if (body.source !== "agent") return undefined;
+  return { actor: typeof body.actor === "string" && body.actor.trim() ? body.actor : undefined };
 }
 
 function readQuery(value: string | string[] | undefined): string | undefined {

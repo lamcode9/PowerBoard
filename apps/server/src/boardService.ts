@@ -20,6 +20,20 @@ interface AssetInput {
 }
 
 export type StorageMode = "local" | "mirror" | "cloud";
+export type BoardEditSource = "user" | "agent";
+
+export interface ApplyOperationOptions {
+  actor?: string;
+  source?: BoardEditSource;
+}
+
+export interface AgentBoardActivity {
+  source: "agent";
+  kind: "operation" | "selection";
+  ids: string[];
+  operationType?: string;
+  at: string;
+}
 
 export class BoardStore {
   private undoStacks = new Map<string, BoardProject[]>();
@@ -176,9 +190,12 @@ export class BoardStore {
     return valid;
   }
 
-  async applyOperation(boardId: string, operation: BoardOperation): Promise<BoardProject> {
+  async applyOperation(boardId: string, operation: BoardOperation, options: ApplyOperationOptions = {}): Promise<BoardProject> {
     const current = await this.readBoard(boardId);
-    const next = applyBoardOperation(current, operation);
+    let next = applyBoardOperation(current, operation);
+    if (options.source === "agent") {
+      next = markAgentEdited(next, operation, options.actor);
+    }
     this.pushUndo(boardId, current);
     this.redoStacks.set(boardId, []);
     return this.writeBoard(next);
@@ -416,6 +433,75 @@ export class BoardStore {
     }
     return this.cloud;
   }
+}
+
+export function agentActivityForOperation(project: BoardProject, operation: BoardOperation): AgentBoardActivity {
+  const metadata = project.metadata as Record<string, unknown>;
+  return {
+    source: "agent",
+    kind: "operation",
+    ids: readStringArrayMetadata(metadata.lastAgentEditedIds) ?? targetIdsForOperation(operation, project),
+    operationType: operation.type,
+    at: readStringMetadata(metadata.lastAgentEditedAt) ?? project.metadata.updatedAt
+  };
+}
+
+export function agentActivityForSelection(project: BoardProject): AgentBoardActivity {
+  return {
+    source: "agent",
+    kind: "selection",
+    ids: project.selection,
+    at: new Date().toISOString()
+  };
+}
+
+export function targetIdsForOperation(operation: BoardOperation, projectAfter?: BoardProject): string[] {
+  switch (operation.type) {
+    case "create_artboard":
+      return [operation.artboard.id];
+    case "update_artboard":
+      return [operation.artboardId];
+    case "create_variant":
+      return operation.artboardId ? [operation.artboardId] : projectAfter?.selection ?? [operation.sourceArtboardId];
+    case "add_element":
+      return [operation.element.id];
+    case "update_element":
+    case "delete_element":
+    case "move_resize_element":
+      return [operation.elementId];
+    case "group_elements":
+      return [operation.group.id, ...operation.elementIds];
+    case "add_connector":
+      return [operation.connector.id];
+    case "set_selection":
+      return operation.selection;
+    default:
+      return [];
+  }
+}
+
+function markAgentEdited(project: BoardProject, operation: BoardOperation, actor = "PowerBoard MCP"): BoardProject {
+  const ids = targetIdsForOperation(operation, project);
+  return BoardProjectSchema.parse({
+    ...project,
+    metadata: {
+      ...project.metadata,
+      lastAgentEditedAt: project.metadata.updatedAt,
+      lastAgentEditedBy: actor,
+      lastAgentEditedOperation: operation.type,
+      lastAgentEditedIds: ids
+    }
+  });
+}
+
+function readStringMetadata(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function readStringArrayMetadata(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const strings = value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  return strings.length ? strings : undefined;
 }
 
 function storageModeFromEnv(): StorageMode {

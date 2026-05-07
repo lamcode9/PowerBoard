@@ -1,10 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { ArtboardSchema, BoardElementSchema, BoardOperation, BoardProjectSchema, ConnectorSchema, createElementFromPreset, createId } from "@powerboard/schema";
-import { BoardStore } from "./boardService.js";
+import { agentActivityForOperation, agentActivityForSelection, AgentBoardActivity, BoardStore } from "./boardService.js";
 
 interface BoardMcpOptions {
-  onBoardChanged?: (boardId: string) => Promise<void> | void;
+  onBoardChanged?: (boardId: string, activity?: AgentBoardActivity) => Promise<void> | void;
 }
 
 export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions = {}): McpServer {
@@ -13,8 +13,14 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     version: "0.1.0"
   });
 
-  const changed = async (boardId: string) => {
-    await options.onBoardChanged?.(boardId);
+  const changed = async (boardId: string, activity?: AgentBoardActivity) => {
+    await options.onBoardChanged?.(boardId, activity);
+  };
+
+  const applyAgentOperation = async (boardId: string, operation: BoardOperation) => {
+    const project = await store.applyOperation(boardId, operation, { source: "agent" });
+    await changed(boardId, agentActivityForOperation(project, operation));
+    return project;
   };
 
   server.registerTool(
@@ -72,8 +78,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     },
     async ({ boardId, artboard }) => {
       const parsed = ArtboardSchema.parse(artboard);
-      const project = await store.applyOperation(boardId, { type: "create_artboard", artboard: parsed });
-      await changed(boardId);
+      const project = await applyAgentOperation(boardId, { type: "create_artboard", artboard: parsed });
       return text(project);
     }
   );
@@ -90,8 +95,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
       }
     },
     async ({ boardId, artboardId, patch }) => {
-      const project = await store.applyOperation(boardId, { type: "update_artboard", artboardId, patch });
-      await changed(boardId);
+      const project = await applyAgentOperation(boardId, { type: "update_artboard", artboardId, patch });
       return text(project);
     }
   );
@@ -109,8 +113,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
       }
     },
     async ({ boardId, sourceArtboardId, name, offsetX }) => {
-      const project = await store.applyOperation(boardId, { type: "create_variant", sourceArtboardId, name, offsetX: offsetX ?? 460 });
-      await changed(boardId);
+      const project = await applyAgentOperation(boardId, { type: "create_variant", sourceArtboardId, name, offsetX: offsetX ?? 460 });
       return text(project);
     }
   );
@@ -133,8 +136,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
       const parsed = element
         ? BoardElementSchema.parse(element)
         : createElementFromPreset(BoardElementSchema.shape.type.parse(presetType), required(artboardId, "artboardId"), x ?? 24, y ?? 24);
-      const project = await store.applyOperation(boardId, { type: "add_element", element: parsed });
-      await changed(boardId);
+      const project = await applyAgentOperation(boardId, { type: "add_element", element: parsed });
       return text(project);
     }
   );
@@ -151,8 +153,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
       }
     },
     async ({ boardId, elementId, patch }) => {
-      const project = await store.applyOperation(boardId, { type: "update_element", elementId, patch });
-      await changed(boardId);
+      const project = await applyAgentOperation(boardId, { type: "update_element", elementId, patch });
       return text(project);
     }
   );
@@ -165,8 +166,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
       inputSchema: { boardId: z.string(), elementId: z.string() }
     },
     async ({ boardId, elementId }) => {
-      const project = await store.applyOperation(boardId, { type: "delete_element", elementId });
-      await changed(boardId);
+      const project = await applyAgentOperation(boardId, { type: "delete_element", elementId });
       return text(project);
     }
   );
@@ -186,8 +186,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
       }
     },
     async ({ boardId, elementId, x, y, width, height }) => {
-      const project = await store.applyOperation(boardId, { type: "move_resize_element", elementId, x, y, width, height });
-      await changed(boardId);
+      const project = await applyAgentOperation(boardId, { type: "move_resize_element", elementId, x, y, width, height });
       return text(project);
     }
   );
@@ -214,7 +213,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     },
     async ({ boardId, selection }) => {
       const project = await store.setSelection(boardId, selection);
-      await changed(boardId);
+      await changed(boardId, agentActivityForSelection(project));
       return text(project.selection);
     }
   );
@@ -254,8 +253,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     },
     async ({ boardId, connector }) => {
       const parsed = ConnectorSchema.parse(connector);
-      const project = await store.applyOperation(boardId, { type: "add_connector", connector: parsed });
-      await changed(boardId);
+      const project = await applyAgentOperation(boardId, { type: "add_connector", connector: parsed });
       return text(project);
     }
   );
@@ -308,8 +306,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
         layout: { mode: "absolute" },
         props: { assetId: finalAssetId, alt: "Imported screenshot overlay" }
       });
-      const project = await store.applyOperation(boardId, { type: "add_element", element });
-      await changed(boardId);
+      const project = await applyAgentOperation(boardId, { type: "add_element", element });
       return text(project);
     }
   );

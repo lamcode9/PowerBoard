@@ -5,7 +5,7 @@ import path from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { BoardOperation, BoardProjectSchema, OperationSchema } from "@powerboard/schema";
-import { BoardStore } from "./boardService.js";
+import { agentActivityForOperation, BoardStore } from "./boardService.js";
 import { boardRoot } from "./paths.js";
 import { createBoardMcpServer } from "./mcpServer.js";
 
@@ -65,8 +65,10 @@ app.put("/api/boards/:boardId", asyncHandler(async (req, res) => {
 
 app.post("/api/boards/:boardId/operations", asyncHandler(async (req, res) => {
   const operation = OperationSchema.parse(req.body.operation) as BoardOperation;
-  const next = await store.applyOperation(param(req, "boardId"), operation);
-  broadcast(next.id, { type: "board.changed", boardId: next.id, project: next, operation });
+  const agentEdit = readAgentEdit(req.body);
+  const next = await store.applyOperation(param(req, "boardId"), operation, agentEdit ? { source: "agent", actor: agentEdit.actor } : {});
+  const agentActivity = agentEdit ? agentActivityForOperation(next, operation) : undefined;
+  broadcast(next.id, { type: "board.changed", boardId: next.id, project: next, operation, agentActivity });
   res.json(next);
 }));
 
@@ -119,9 +121,9 @@ app.post("/api/boards/:boardId/export/react-tailwind", asyncHandler(async (req, 
 
 app.post("/mcp", async (req, res) => {
   const server = createBoardMcpServer(store, {
-    onBoardChanged: async (boardId) => {
+    onBoardChanged: async (boardId, agentActivity) => {
       const project = await store.readBoard(boardId);
-      broadcast(boardId, { type: "board.changed", boardId, project });
+      broadcast(boardId, { type: "board.changed", boardId, project, agentActivity });
     }
   });
 
@@ -207,4 +209,11 @@ function param(req: Request, name: string): string {
     throw new Error(`Missing route parameter: ${name}`);
   }
   return value;
+}
+
+function readAgentEdit(body: unknown): { actor?: string } | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const record = body as Record<string, unknown>;
+  if (record.source !== "agent") return undefined;
+  return { actor: typeof record.actor === "string" && record.actor.trim() ? record.actor : undefined };
 }

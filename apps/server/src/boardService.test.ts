@@ -52,6 +52,20 @@ describe("BoardStore", () => {
     expect(undone.artboards.find((candidate) => candidate.id === artboardId)?.name).toBe(board.artboards[0]!.name);
   });
 
+  it("records agent edit metadata for agent operations", async () => {
+    const { store } = await tempStore();
+    const board = await store.createBoard("Agent Activity Board");
+    const element = createElementFromPreset("button", board.artboards[0]!.id, 24, 24);
+
+    const updated = await store.applyOperation(board.id, { type: "add_element", element }, { source: "agent", actor: "test-agent" });
+    const metadata = updated.metadata as Record<string, unknown>;
+
+    expect(metadata.lastAgentEditedAt).toBe(updated.metadata.updatedAt);
+    expect(metadata.lastAgentEditedBy).toBe("test-agent");
+    expect(metadata.lastAgentEditedOperation).toBe("add_element");
+    expect(metadata.lastAgentEditedIds).toEqual([element.id]);
+  });
+
   it("exports spec, React/Tailwind files, and PNG", async () => {
     const { store } = await tempStore();
     const board = await store.createBoard("Export Board");
