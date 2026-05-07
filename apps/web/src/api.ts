@@ -3,6 +3,7 @@ import { applyBoardOperation, createDefaultProject, createId, validateBoardProje
 const API_BASE = "";
 const LOCAL_STORAGE_KEY = "powerboard.boards.v1";
 const LEGACY_LOCAL_STORAGE_KEYS = ["paper-design-danny.boards.v1"];
+const ENABLE_BROWSER_LOCAL_FALLBACK = import.meta.env.VITE_POWERBOARD_BROWSER_LOCAL === "1";
 const localUndoStacks = new Map<string, BoardProject[]>();
 const localRedoStacks = new Map<string, BoardProject[]>();
 
@@ -155,7 +156,7 @@ class ApiRequestError extends Error {
 }
 
 function shouldUseLocalFallback(error: unknown): boolean {
-  return error instanceof ApiRequestError && error.canUseLocalFallback;
+  return ENABLE_BROWSER_LOCAL_FALLBACK && error instanceof ApiRequestError && error.canUseLocalFallback;
 }
 
 function localListBoards(): BoardSummary[] {
