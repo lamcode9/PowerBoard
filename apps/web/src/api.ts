@@ -5,7 +5,6 @@ const LOCAL_STORAGE_KEY = "powerboard.boards.v1";
 const LEGACY_LOCAL_STORAGE_KEYS = ["paper-design-danny.boards.v1"];
 const localUndoStacks = new Map<string, BoardProject[]>();
 const localRedoStacks = new Map<string, BoardProject[]>();
-let apiUnavailable = false;
 
 export interface BoardSummary {
   id: string;
@@ -113,12 +112,10 @@ export async function exportReactTailwind(boardId: string): Promise<{ dir: strin
 }
 
 async function withLocalFallback<T>(remote: () => Promise<T>, local: () => Promise<T> | T): Promise<T> {
-  if (apiUnavailable) return local();
   try {
     return await remote();
   } catch (error) {
     if (!shouldUseLocalFallback(error)) throw error;
-    apiUnavailable = true;
     return local();
   }
 }

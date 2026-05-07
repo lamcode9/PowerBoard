@@ -126,6 +126,19 @@ const CANVAS_ORIGIN_Y = 16000;
 
 type RouteState = { view: "home" } | { view: "board"; boardId: string };
 type RouteMode = "push" | "replace" | "none";
+type ElementIndexes = {
+  canvasRootsByArtboard: Map<string, BoardElement[]>;
+  canvasChildrenByParent: Map<string, BoardElement[]>;
+  layerRootsByArtboard: Map<string, BoardElement[]>;
+  layerChildrenByParent: Map<string, BoardElement[]>;
+};
+
+const EMPTY_ELEMENT_INDEXES: ElementIndexes = {
+  canvasRootsByArtboard: new Map(),
+  canvasChildrenByParent: new Map(),
+  layerRootsByArtboard: new Map(),
+  layerChildrenByParent: new Map()
+};
 
 export function App() {
   const [project, setProject] = useState<BoardProject | null>(null);
@@ -153,6 +166,8 @@ export function App() {
   const lastViewportPointRef = useRef<ViewportPoint | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const screenshotInputRef = useRef<HTMLInputElement | null>(null);
+  const navigationSeqRef = useRef(0);
+  const routeViewRef = useRef<{ homeOpen: boolean; projectId: string | null }>({ homeOpen: false, projectId: null });
 
   useEffect(() => {
     return () => {
@@ -167,12 +182,19 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    routeViewRef.current = { homeOpen, projectId: project?.id ?? null };
+  }, [homeOpen, project?.id]);
+
+  useEffect(() => {
     const onRouteChange = () => {
       const route = readRoute();
+      const current = routeViewRef.current;
       if (route?.view === "board") {
+        if (!current.homeOpen && current.projectId === route.boardId) return;
         void openBoard(route.boardId, "none");
         return;
       }
+      if (current.homeOpen) return;
       void showHome("none");
     };
     window.addEventListener("popstate", onRouteChange);
@@ -184,7 +206,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!project || initialViewportPositionedRef.current) return;
+    if (!project || homeOpen || initialViewportPositionedRef.current) return;
     const viewport = viewportRef.current;
     if (!viewport) return;
     initialViewportPositionedRef.current = true;
@@ -195,7 +217,7 @@ export function App() {
         zoom: cameraRef.current.zoom
       });
     });
-  }, [project?.id]);
+  }, [project?.id, homeOpen]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -233,7 +255,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!project) return;
+    if (!project || homeOpen) return;
     const viewport = viewportRef.current;
     if (!viewport) return;
 
@@ -293,10 +315,10 @@ export function App() {
       viewport.removeEventListener("gesturechange", onGestureChange as EventListener);
       viewport.removeEventListener("gestureend", onGestureEnd as EventListener);
     };
-  }, [project?.id]);
+  }, [project?.id, homeOpen]);
 
   useEffect(() => {
-    if (!project) return;
+    if (!project || homeOpen) return;
     const ws = new WebSocket(`ws://127.0.0.1:4318/ws?boardId=${project.id}`);
     ws.onmessage = (event) => {
       const message = JSON.parse(String(event.data)) as { type?: string; project?: BoardProject; selection?: string[] };
@@ -310,7 +332,9 @@ export function App() {
       }
     };
     return () => ws.close();
-  }, [project?.id]);
+  }, [project?.id, homeOpen]);
+
+  const elementIndexes = useMemo(() => (project ? buildElementIndexes(project) : EMPTY_ELEMENT_INDEXES), [project]);
 
   const selectedElement = useMemo(() => {
     if (!project || selectedIds.length !== 1) return null;
@@ -365,8 +389,10 @@ export function App() {
   }
 
   async function openBoard(boardId: string, routeMode: RouteMode = "push") {
+    const seq = beginNavigation();
     try {
       const next = await readBoard(boardId);
+      if (!isCurrentNavigation(seq)) return;
       initialViewportPositionedRef.current = false;
       setDrag(null);
       setPan(null);
@@ -377,6 +403,7 @@ export function App() {
       writeRoute({ view: "board", boardId }, routeMode);
       setStatus(`Opened ${next.name}`);
     } catch (error) {
+      if (!isCurrentNavigation(seq)) return;
       setStatus(error instanceof Error ? error.message : "Could not open board");
     }
   }
@@ -384,8 +411,10 @@ export function App() {
   async function createNewBoard() {
     const name = window.prompt("Board name", "Untitled PowerBoard Board");
     if (name === null) return;
+    const seq = beginNavigation();
     try {
       const next = await createBoard(name.trim() || "Untitled PowerBoard Board");
+      if (!isCurrentNavigation(seq)) return;
       initialViewportPositionedRef.current = false;
       setProject(next);
       setSelectedIds(next.selection);
@@ -394,11 +423,13 @@ export function App() {
       writeRoute({ view: "board", boardId: next.id }, "push");
       setStatus(`Created ${next.name}`);
     } catch (error) {
+      if (!isCurrentNavigation(seq)) return;
       setStatus(error instanceof Error ? error.message : "Could not create board");
     }
   }
 
   async function showHome(routeMode: RouteMode = "push") {
+    const seq = beginNavigation();
     setDrag(null);
     setPan(null);
     setHomeOpen(true);
@@ -406,16 +437,19 @@ export function App() {
     writeRoute({ view: "home" }, routeMode);
     setStatus("Boards");
     await Promise.all([refreshBoards(), refreshStorageStatus()]).catch((error) => {
+      if (!isCurrentNavigation(seq)) return;
       setStatus(error instanceof Error ? error.message : "Could not refresh boards");
     });
   }
 
   async function boot() {
+    const seq = beginNavigation();
     try {
       const route = readRoute();
       const [boards] = await Promise.all([refreshBoards(), refreshStorageStatus()]);
       const routeBoard = route?.view === "board" ? await readBoard(route.boardId).catch(() => null) : null;
       const first = routeBoard ?? (boards[0] ? await readBoard(boards[0].id) : await createBoard("PowerBoard App Mockups"));
+      if (!isCurrentNavigation(seq)) return;
       setProject(first);
       setSelectedIds(first.selection);
       rememberBoard(first);
@@ -428,8 +462,18 @@ export function App() {
         setStatus("Boards");
       }
     } catch (error) {
+      if (!isCurrentNavigation(seq)) return;
       setStatus(error instanceof Error ? error.message : "Could not start workspace");
     }
+  }
+
+  function beginNavigation(): number {
+    navigationSeqRef.current += 1;
+    return navigationSeqRef.current;
+  }
+
+  function isCurrentNavigation(seq: number): boolean {
+    return seq === navigationSeqRef.current;
   }
 
   async function runOperation(operation: BoardOperation) {
@@ -1047,12 +1091,18 @@ export function App() {
                   <span>{artboard.name}</span>
                   <small>{artboard.id}</small>
                 </button>
-                {project.elements
-                  .filter((element) => element.artboardId === artboard.id && !element.parentId)
-                  .sort((a, b) => b.zIndex - a.zIndex)
-                  .map((element) => (
-                    <LayerNode key={element.id} element={element} project={project} depth={0} selectedIds={selectedIds} onSelect={select} onUpdate={(elementId, patch) => runOperation({ type: "update_element", elementId, patch })} />
-                  ))}
+                {(elementIndexes.layerRootsByArtboard.get(artboard.id) ?? []).map((element) => (
+                  <LayerNode
+                    key={element.id}
+                    element={element}
+                    project={project}
+                    indexes={elementIndexes}
+                    depth={0}
+                    selectedIds={selectedIds}
+                    onSelect={select}
+                    onUpdate={(elementId, patch) => runOperation({ type: "update_element", elementId, patch })}
+                  />
+                ))}
               </div>
             ))}
           </div>
@@ -1078,6 +1128,7 @@ export function App() {
                   key={artboard.id}
                   artboard={artboard}
                   project={project}
+                  indexes={elementIndexes}
                   selectedIds={selectedIds}
                   onSelect={(ids, additive) => select(ids, additive)}
                   onDragStart={(state) => setDrag(state)}
@@ -1254,6 +1305,7 @@ function HomeView({
 function LayerNode({
   element,
   project,
+  indexes,
   depth,
   selectedIds,
   onSelect,
@@ -1261,12 +1313,13 @@ function LayerNode({
 }: {
   element: BoardElement;
   project: BoardProject;
+  indexes: ElementIndexes;
   depth: number;
   selectedIds: string[];
   onSelect: (ids: string[], additive?: boolean) => void;
   onUpdate: (elementId: string, patch: Record<string, unknown>) => void;
 }) {
-  const children = project.elements.filter((child) => child.parentId === element.id).sort((a, b) => b.zIndex - a.zIndex);
+  const children = indexes.layerChildrenByParent.get(element.id) ?? [];
   return (
     <>
       <div className={selectedIds.includes(element.id) ? "layer-row selected element-layer" : "layer-row element-layer"} style={{ "--indent": `${depth * 12}px` } as React.CSSProperties}>
@@ -1283,7 +1336,7 @@ function LayerNode({
         </button>
       </div>
       {children.map((child) => (
-        <LayerNode key={child.id} element={child} project={project} depth={depth + 1} selectedIds={selectedIds} onSelect={onSelect} onUpdate={onUpdate} />
+        <LayerNode key={child.id} element={child} project={project} indexes={indexes} depth={depth + 1} selectedIds={selectedIds} onSelect={onSelect} onUpdate={onUpdate} />
       ))}
     </>
   );
@@ -1292,17 +1345,19 @@ function LayerNode({
 function ArtboardView({
   artboard,
   project,
+  indexes,
   selectedIds,
   onSelect,
   onDragStart
 }: {
   artboard: Artboard;
   project: BoardProject;
+  indexes: ElementIndexes;
   selectedIds: string[];
   onSelect: (ids: string[], additive?: boolean) => void;
   onDragStart: (state: DragState) => void;
 }) {
-  const elements = project.elements.filter((element) => element.artboardId === artboard.id && !element.parentId && element.visible).sort((a, b) => a.zIndex - b.zIndex);
+  const elements = indexes.canvasRootsByArtboard.get(artboard.id) ?? [];
   const selectedElements = project.elements
     .filter((element) => selectedIds.includes(element.id) && element.artboardId === artboard.id && element.visible)
     .map((element) => ({ element, position: elementPositionInArtboard(element, project) }))
@@ -1332,7 +1387,7 @@ function ArtboardView({
       </button>
       <div className="artboard-surface" style={{ background: artboard.background, borderRadius: artboard.type === "mobile" ? 42 : artboard.type === "tablet" ? 30 : 18 }} onPointerDown={(event) => (event.stopPropagation(), onSelect([artboard.id], event.shiftKey))}>
         {elements.map((element) => (
-          <ElementView key={element.id} element={element} project={project} selectedIds={selectedIds} onSelect={onSelect} onDragStart={onDragStart} />
+          <ElementView key={element.id} element={element} project={project} indexes={indexes} selectedIds={selectedIds} onSelect={onSelect} onDragStart={onDragStart} />
         ))}
       </div>
       {selectedElements.length ? (
@@ -1363,18 +1418,20 @@ function ArtboardView({
 function ElementView({
   element,
   project,
+  indexes,
   selectedIds,
   onSelect,
   onDragStart
 }: {
   element: BoardElement;
   project: BoardProject;
+  indexes: ElementIndexes;
   selectedIds: string[];
   onSelect: (ids: string[], additive?: boolean) => void;
   onDragStart: (state: DragState) => void;
 }) {
   const selected = selectedIds.includes(element.id);
-  const children = project.elements.filter((child) => child.parentId === element.id && child.visible).sort((a, b) => a.zIndex - b.zIndex);
+  const children = indexes.canvasChildrenByParent.get(element.id) ?? [];
   const selectedAncestor = children.some((child) => selectedIds.includes(child.id) || hasSelectedDescendant(child.id, project, selectedIds));
   const style = elementToStyle(element);
   const asset = typeof element.props.assetId === "string" ? project.assets.find((candidate) => candidate.id === element.props.assetId) : undefined;
@@ -1397,7 +1454,7 @@ function ElementView({
     >
       <ElementContent element={element} assetSrc={asset?.src} />
       {children.map((child) => (
-        <ElementView key={child.id} element={child} project={project} selectedIds={selectedIds} onSelect={onSelect} onDragStart={onDragStart} />
+        <ElementView key={child.id} element={child} project={project} indexes={indexes} selectedIds={selectedIds} onSelect={onSelect} onDragStart={onDragStart} />
       ))}
       {selected && !element.locked ? (
         <button
@@ -1827,6 +1884,45 @@ function cssJustify(value?: string) {
 
 function classNames(...values: (string | false | null | undefined)[]) {
   return values.filter(Boolean).join(" ");
+}
+
+function buildElementIndexes(project: BoardProject): ElementIndexes {
+  const canvasRootsByArtboard = new Map<string, BoardElement[]>();
+  const canvasChildrenByParent = new Map<string, BoardElement[]>();
+  const layerRootsByArtboard = new Map<string, BoardElement[]>();
+  const layerChildrenByParent = new Map<string, BoardElement[]>();
+
+  for (const element of project.elements) {
+    if (element.parentId) {
+      pushMapValue(layerChildrenByParent, element.parentId, element);
+      if (element.visible) pushMapValue(canvasChildrenByParent, element.parentId, element);
+      continue;
+    }
+    pushMapValue(layerRootsByArtboard, element.artboardId, element);
+    if (element.visible) pushMapValue(canvasRootsByArtboard, element.artboardId, element);
+  }
+
+  sortMapValues(canvasRootsByArtboard, (a, b) => a.zIndex - b.zIndex);
+  sortMapValues(canvasChildrenByParent, (a, b) => a.zIndex - b.zIndex);
+  sortMapValues(layerRootsByArtboard, (a, b) => b.zIndex - a.zIndex);
+  sortMapValues(layerChildrenByParent, (a, b) => b.zIndex - a.zIndex);
+
+  return { canvasRootsByArtboard, canvasChildrenByParent, layerRootsByArtboard, layerChildrenByParent };
+}
+
+function pushMapValue(map: Map<string, BoardElement[]>, key: string, value: BoardElement): void {
+  const values = map.get(key);
+  if (values) {
+    values.push(value);
+    return;
+  }
+  map.set(key, [value]);
+}
+
+function sortMapValues(map: Map<string, BoardElement[]>, compare: (a: BoardElement, b: BoardElement) => number): void {
+  for (const values of map.values()) {
+    values.sort(compare);
+  }
 }
 
 function boardSummaryFromProject(project: BoardProject): BoardSummary {

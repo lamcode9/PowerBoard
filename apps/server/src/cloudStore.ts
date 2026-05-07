@@ -54,6 +54,7 @@ export function createCloudStoreFromEnv(): CloudStore | undefined {
 export class SupabasePostgresStore implements CloudStore {
   readonly label = "supabase-postgres";
   private readonly pool: Pool;
+  private readyPromise: Promise<void> | undefined;
 
   constructor(connectionString: string) {
     const ssl = shouldUseSsl(connectionString) ? { rejectUnauthorized: false } : undefined;
@@ -61,6 +62,14 @@ export class SupabasePostgresStore implements CloudStore {
   }
 
   async ensureReady(): Promise<void> {
+    this.readyPromise ??= this.initialize().catch((error: unknown) => {
+      this.readyPromise = undefined;
+      throw error;
+    });
+    return this.readyPromise;
+  }
+
+  private async initialize(): Promise<void> {
     await this.pool.query(`
       create schema if not exists ${SCHEMA_NAME};
 
