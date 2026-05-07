@@ -665,14 +665,33 @@ export function applyBoardOperation(project: BoardProject, rawOperation: BoardOp
       next.selection = [operation.connector.id];
       break;
     case "set_selection":
-      next.selection = operation.selection;
+      next.selection = filterValidSelection(next, operation.selection);
       break;
     default:
       assertNever(operation);
   }
 
   next.metadata.updatedAt = nowIso();
-  return BoardProjectSchema.parse(next);
+  return sanitizeProjectSelection(BoardProjectSchema.parse(next));
+}
+
+export function sanitizeProjectSelection(project: BoardProject): BoardProject {
+  const selection = filterValidSelection(project, project.selection);
+  return selection.length === project.selection.length && selection.every((id, index) => id === project.selection[index]) ? project : { ...project, selection };
+}
+
+export function filterValidSelection(project: BoardProject, selection: string[]): string[] {
+  const validIds = new Set([
+    ...project.artboards.map((artboard) => artboard.id),
+    ...project.elements.map((element) => element.id),
+    ...project.connectors.map((connector) => connector.id)
+  ]);
+  const seen = new Set<string>();
+  return selection.filter((id) => {
+    if (!validIds.has(id) || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
 }
 
 function ensureMainPage(project: BoardProject): BoardProject["pages"][number] {

@@ -1363,6 +1363,7 @@ function ArtboardView({
     .map((element) => ({ element, position: elementPositionInArtboard(element, project) }))
     .filter((item): item is { element: BoardElement; position: { x: number; y: number } } => Boolean(item.position));
   const selected = selectedIds.includes(artboard.id);
+  const bitmapOnly = isBitmapOnlyArtboard(artboard, elements);
   return (
     <div
       className={selected ? "artboard-frame selected" : "artboard-frame"}
@@ -1384,6 +1385,7 @@ function ArtboardView({
       >
         <span>{artboard.name}</span>
         <small>{artboard.id}</small>
+        {bitmapOnly ? <em>Image-only</em> : null}
       </button>
       <div className="artboard-surface" style={{ background: artboard.background, borderRadius: artboard.type === "mobile" ? 42 : artboard.type === "tablet" ? 30 : 18 }} onPointerDown={(event) => (event.stopPropagation(), onSelect([artboard.id], event.shiftKey))}>
         {elements.map((element) => (
@@ -1884,6 +1886,15 @@ function cssJustify(value?: string) {
 
 function classNames(...values: (string | false | null | undefined)[]) {
   return values.filter(Boolean).join(" ");
+}
+
+function isBitmapOnlyArtboard(artboard: Artboard, elements: BoardElement[]): boolean {
+  if (elements.length !== 1) return false;
+  const [element] = elements;
+  if (!element || !element.locked || element.parentId) return false;
+  if (element.type !== "screenshotOverlay" && element.type !== "image") return false;
+  const coversFrame = element.x <= 0 && element.y <= 0 && element.width >= artboard.width && element.height >= artboard.height;
+  return coversFrame;
 }
 
 function buildElementIndexes(project: BoardProject): ElementIndexes {

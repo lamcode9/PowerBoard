@@ -84,4 +84,17 @@ describe("Board operations", () => {
     expect(artboard?.background).toBe("#FFFFFF");
     expect(next.selection).toEqual([artboardId]);
   });
+
+  it("filters invalid and duplicate selection ids", () => {
+    const project = createDefaultProject();
+    const artboardId = project.artboards[0]!.id;
+    const elementId = project.elements[0]!.id;
+
+    const next = applyBoardOperation(project, {
+      type: "set_selection",
+      selection: ["missing", artboardId, elementId, artboardId]
+    });
+
+    expect(next.selection).toEqual([artboardId, elementId]);
+  });
 });

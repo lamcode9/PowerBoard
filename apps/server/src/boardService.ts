@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { applyBoardOperation, BoardOperation, BoardProject, BoardProjectSchema, createDefaultProject, createId, validateBoardProject } from "@powerboard/schema";
+import { applyBoardOperation, BoardOperation, BoardProject, BoardProjectSchema, createDefaultProject, createId, filterValidSelection, sanitizeProjectSelection, validateBoardProject } from "@powerboard/schema";
 import { renderArtboardSvg, renderReactTailwind, renderSpecMarkdown } from "@powerboard/renderers";
 import sharp from "sharp";
 import { CloudFileRecord, CloudStore, createCloudStoreFromEnv } from "./cloudStore.js";
@@ -113,8 +113,9 @@ export class BoardStore {
       if (!cloudProject) {
         throw new Error(`Board not found: ${boardId}`);
       }
-      this.selections.set(cloudProject.id, cloudProject.selection);
-      return cloudProject;
+      const project = sanitizeProjectSelection(cloudProject);
+      this.selections.set(project.id, project.selection);
+      return project;
     }
     const filePath = this.boardFilePath(boardId);
     try {
@@ -129,13 +130,14 @@ export class BoardStore {
       if (!cloudProject) {
         throw error;
       }
-      await this.writeLocalBoard(cloudProject);
-      return cloudProject;
+      const project = sanitizeProjectSelection(cloudProject);
+      await this.writeLocalBoard(project);
+      return project;
     }
   }
 
   async writeBoard(project: BoardProject): Promise<BoardProject> {
-    const valid = validateBoardProject(project);
+    const valid = sanitizeProjectSelection(validateBoardProject(project));
     if (this.isCloudPrimary()) {
       await this.ensureReady();
       await this.requiredCloud().writeBoard(valid);
@@ -222,7 +224,7 @@ export class BoardStore {
 
   async setSelection(boardId: string, selection: string[]): Promise<BoardProject> {
     const project = await this.readBoard(boardId);
-    const next = BoardProjectSchema.parse({ ...project, selection, metadata: { ...project.metadata, updatedAt: new Date().toISOString() } });
+    const next = BoardProjectSchema.parse({ ...project, selection: filterValidSelection(project, selection), metadata: { ...project.metadata, updatedAt: new Date().toISOString() } });
     await this.writeBoard(next);
     return next;
   }

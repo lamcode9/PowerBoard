@@ -29,6 +29,17 @@ describe("BoardStore", () => {
     expect(redone.elements.some((candidate) => candidate.id === element.id)).toBe(true);
   });
 
+  it("does not persist stale selection ids", async () => {
+    const { store } = await tempStore();
+    const board = await store.createBoard("Selection Board");
+    const element = board.elements[0]!;
+
+    const selected = await store.setSelection(board.id, ["missing", element.id, element.id]);
+
+    expect(selected.selection).toEqual([element.id]);
+    expect(store.getSelection(board.id)).toEqual([element.id]);
+  });
+
   it("applies artboard edits through undoable operations", async () => {
     const { store } = await tempStore();
     const board = await store.createBoard("Artboard Ops");
