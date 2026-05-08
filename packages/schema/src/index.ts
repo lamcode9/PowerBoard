@@ -284,6 +284,58 @@ export const BoardProjectSchema = z
 
 export type BoardProject = z.infer<typeof BoardProjectSchema>;
 
+export type BoardValidationSeverity = "error" | "warning";
+
+export interface BoardValidationIssue {
+  severity: BoardValidationSeverity;
+  code: string;
+  message: string;
+  artboardId?: string;
+  elementId?: string;
+  parentId?: string;
+}
+
+export interface BoardHierarchyNode {
+  id: string;
+  name: string;
+  type: BoardElement["type"];
+  semanticRole?: string;
+  path: string;
+  depth: number;
+  artboardId: string;
+  parentId: string | null;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  zIndex: number;
+  locked: boolean;
+  visible: boolean;
+  children: BoardHierarchyNode[];
+}
+
+export interface BoardHierarchyArtboard {
+  id: string;
+  name: string;
+  type: Artboard["type"];
+  path: string;
+  width: number;
+  height: number;
+  locked: boolean;
+  visible: boolean;
+  children: BoardHierarchyNode[];
+}
+
+export interface BoardValidationReport {
+  valid: boolean;
+  summary: {
+    errors: number;
+    warnings: number;
+  };
+  issues: BoardValidationIssue[];
+  hierarchy: BoardHierarchyArtboard[];
+}
+
 export const OperationSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("create_artboard"), artboard: ArtboardSchema }),
   z.object({ type: z.literal("update_artboard"), artboardId: z.string(), patch: z.record(z.string(), z.unknown()) }),
@@ -560,6 +612,160 @@ export function validateBoardProject(input: unknown): BoardProject {
   return BoardProjectSchema.parse(input);
 }
 
+export function validateBoardStructure(input: BoardProject): BoardValidationReport {
+  const project = BoardProjectSchema.parse(input);
+  const issues: BoardValidationIssue[] = [];
+  const artboardIds = new Set(project.artboards.map((artboard) => artboard.id));
+  const elementById = new Map(project.elements.map((element) => [element.id, element]));
+  const pagedArtboardIds = new Set(project.pages.flatMap((page) => page.artboardIds));
+  const seenPageArtboardIds = new Set<string>();
+
+  for (const page of project.pages) {
+    for (const artboardId of page.artboardIds) {
+      if (seenPageArtboardIds.has(artboardId)) {
+        issues.push({
+          severity: "warning",
+          code: "artboard-on-multiple-pages",
+          message: `Artboard appears more than once in pages: ${artboardId}`,
+          artboardId
+        });
+      }
+      seenPageArtboardIds.add(artboardId);
+    }
+  }
+
+  for (const artboard of project.artboards) {
+    if (!pagedArtboardIds.has(artboard.id)) {
+      issues.push({
+        severity: "warning",
+        code: "artboard-not-on-page",
+        message: `Artboard is valid but not reachable from any page: ${artboard.name}`,
+        artboardId: artboard.id
+      });
+    }
+  }
+
+  for (const element of project.elements) {
+    if (!artboardIds.has(element.artboardId)) continue;
+    if (!readNonEmptyString(element.semanticRole)) {
+      issues.push({
+        severity: "warning",
+        code: "missing-semantic-role",
+        message: `Element has no semantic role: ${element.name}`,
+        artboardId: element.artboardId,
+        elementId: element.id
+      });
+    }
+
+    if (element.parentId) {
+      const parent = elementById.get(element.parentId);
+      if (parent && parent.artboardId !== element.artboardId) {
+        issues.push({
+          severity: "error",
+          code: "parent-on-different-artboard",
+          message: `Element parent is on a different artboard: ${element.name}`,
+          artboardId: element.artboardId,
+          elementId: element.id,
+          parentId: parent.id
+        });
+      }
+      if (hasParentCycle(element, elementById)) {
+        issues.push({
+          severity: "error",
+          code: "cyclic-parent-chain",
+          message: `Element parent chain contains a cycle: ${element.name}`,
+          artboardId: element.artboardId,
+          elementId: element.id,
+          parentId: element.parentId
+        });
+      }
+    }
+
+    if (element.type === "icon" && !readNonEmptyString(element.props.materialIcon ?? element.props.icon)) {
+      issues.push({
+        severity: "warning",
+        code: "icon-missing-material-name",
+        message: `Icon is missing props.materialIcon: ${element.name}`,
+        artboardId: element.artboardId,
+        elementId: element.id
+      });
+    }
+
+    if (element.type === "line") {
+      const direction = readNonEmptyString(element.props.direction) ?? "horizontal";
+      if (!["horizontal", "vertical", "diagonal-up", "diagonal-down"].includes(direction)) {
+        issues.push({
+          severity: "warning",
+          code: "line-unknown-direction",
+          message: `Line direction is not recognized: ${direction}`,
+          artboardId: element.artboardId,
+          elementId: element.id
+        });
+      }
+    }
+
+    if (element.type === "sparkline" && readNumberArray(element.props.values).length < 2) {
+      issues.push({
+        severity: "warning",
+        code: "sparkline-needs-values",
+        message: `Sparkline needs at least two numeric values: ${element.name}`,
+        artboardId: element.artboardId,
+        elementId: element.id
+      });
+    }
+  }
+
+  const errors = issues.filter((issue) => issue.severity === "error").length;
+  const warnings = issues.length - errors;
+  return {
+    valid: errors === 0,
+    summary: { errors, warnings },
+    issues,
+    hierarchy: inspectBoardHierarchy(project)
+  };
+}
+
+export function inspectBoardHierarchy(input: BoardProject): BoardHierarchyArtboard[] {
+  const project = BoardProjectSchema.parse(input);
+  const elementById = new Map(project.elements.map((element) => [element.id, element]));
+  const childrenByParentId = new Map<string, BoardElement[]>();
+  for (const element of project.elements) {
+    if (!element.parentId) continue;
+    const list = childrenByParentId.get(element.parentId) ?? [];
+    list.push(element);
+    childrenByParentId.set(element.parentId, list);
+  }
+
+  return project.artboards.map((artboard) => {
+    const visited = new Set<string>();
+    const rootElements = project.elements
+      .filter((element) => {
+        if (element.artboardId !== artboard.id) return false;
+        if (!element.parentId) return true;
+        const parent = elementById.get(element.parentId);
+        return !parent || parent.artboardId !== artboard.id;
+      })
+      .sort(byLayerOrder);
+    const children = rootElements.map((element) => buildHierarchyNode(element, artboard.name, 1, childrenByParentId, visited, new Set()));
+    const detached = project.elements
+      .filter((element) => element.artboardId === artboard.id && !visited.has(element.id))
+      .sort(byLayerOrder)
+      .map((element) => buildHierarchyNode(element, `${artboard.name} / Detached`, 1, childrenByParentId, visited, new Set()));
+
+    return {
+      id: artboard.id,
+      name: artboard.name,
+      type: artboard.type,
+      path: artboard.name,
+      width: artboard.width,
+      height: artboard.height,
+      locked: artboard.locked,
+      visible: artboard.visible,
+      children: [...children, ...detached]
+    };
+  });
+}
+
 export function applyBoardOperation(project: BoardProject, rawOperation: BoardOperation): BoardProject {
   const operation = OperationSchema.parse(rawOperation);
   const next: BoardProject = structuredClone(project);
@@ -724,6 +930,93 @@ function collectDescendantIds(elements: BoardElement[], parentId: string): strin
 
 function assertNever(value: never): never {
   throw new Error(`Unhandled operation: ${JSON.stringify(value)}`);
+}
+
+function buildHierarchyNode(
+  element: BoardElement,
+  parentPath: string,
+  depth: number,
+  childrenByParentId: Map<string, BoardElement[]>,
+  visited: Set<string>,
+  ancestors: Set<string>
+): BoardHierarchyNode {
+  const path = appendHierarchyPath(parentPath, element.name);
+  if (ancestors.has(element.id)) {
+    visited.add(element.id);
+    return hierarchyNode(element, path, depth, []);
+  }
+
+  visited.add(element.id);
+  const nextAncestors = new Set(ancestors);
+  nextAncestors.add(element.id);
+  const children = (childrenByParentId.get(element.id) ?? [])
+    .filter((child) => child.artboardId === element.artboardId)
+    .sort(byLayerOrder)
+    .map((child) => buildHierarchyNode(child, path, depth + 1, childrenByParentId, visited, nextAncestors));
+
+  return hierarchyNode(element, path, depth, children);
+}
+
+function hierarchyNode(element: BoardElement, path: string, depth: number, children: BoardHierarchyNode[]): BoardHierarchyNode {
+  return {
+    id: element.id,
+    name: element.name,
+    type: element.type,
+    semanticRole: element.semanticRole,
+    path,
+    depth,
+    artboardId: element.artboardId,
+    parentId: element.parentId,
+    x: element.x,
+    y: element.y,
+    width: element.width,
+    height: element.height,
+    zIndex: element.zIndex,
+    locked: element.locked,
+    visible: element.visible,
+    children
+  };
+}
+
+function appendHierarchyPath(parentPath: string, childName: string): string {
+  const parentSegments = splitHierarchyPath(parentPath);
+  const childSegments = splitHierarchyPath(childName);
+  let common = 0;
+  while (common < parentSegments.length && common < childSegments.length && parentSegments[common] === childSegments[common]) {
+    common += 1;
+  }
+  const uniqueChildSegments = childSegments.slice(common);
+  return [...parentSegments, ...(uniqueChildSegments.length ? uniqueChildSegments : [childName])].join(" / ");
+}
+
+function splitHierarchyPath(value: string): string[] {
+  return value
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function hasParentCycle(element: BoardElement, elementById: Map<string, BoardElement>): boolean {
+  const seen = new Set<string>([element.id]);
+  let current: BoardElement | undefined = element;
+  while (current?.parentId) {
+    if (seen.has(current.parentId)) return true;
+    seen.add(current.parentId);
+    current = elementById.get(current.parentId);
+  }
+  return false;
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function readNumberArray(value: unknown): number[] {
+  return Array.isArray(value) ? value.filter((item): item is number => typeof item === "number" && Number.isFinite(item)) : [];
+}
+
+function byLayerOrder(a: BoardElement, b: BoardElement): number {
+  return a.zIndex - b.zIndex || a.y - b.y || a.x - b.x || a.name.localeCompare(b.name);
 }
 
 export function createElementFromPreset(type: BoardElement["type"], artboardId: string, x: number, y: number): BoardElement {

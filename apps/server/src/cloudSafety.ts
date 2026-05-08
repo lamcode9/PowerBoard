@@ -1,4 +1,16 @@
-import { BoardProject, BoardProjectSchema, createDefaultProject, createId, nowIso, validateBoardProject } from "@powerboard/schema";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  BoardProject,
+  BoardProjectSchema,
+  BoardValidationReport,
+  createDefaultProject,
+  createElementFromPreset,
+  createId,
+  nowIso,
+  validateBoardProject,
+  validateBoardStructure
+} from "@powerboard/schema";
 import { BoardStore } from "./boardService.js";
 import { CloudStore, createCloudStoreFromEnv } from "./cloudStore.js";
 
@@ -9,6 +21,8 @@ interface SafetyArgs {
   boardId?: string;
   name?: string;
   write: boolean;
+  verifyExports: boolean;
+  includePrimitives: boolean;
 }
 
 const PRODUCTION_API = process.env.POWERBOARD_PRODUCTION_API?.replace(/\/+$/, "") ?? "https://lamper-server.vercel.app/api";
@@ -26,12 +40,16 @@ async function main(): Promise<void> {
 }
 
 async function prepareCanary(args: SafetyArgs) {
-  const candidate = createCanaryProject(args.name);
+  const candidate = createCanaryProject(args.name, { includePrimitives: args.includePrimitives });
+  const validation = validateBoardStructure(candidate);
   if (!args.write) {
     return {
       action: "dry-run-canary",
-      note: "No cloud board was created. Re-run with --write to create this canary board.",
-      candidate: summarizeProject(candidate)
+      note: args.verifyExports
+        ? "No cloud board was created. Re-run with --write --verify-exports to create, read back, validate, and export-check this canary board."
+        : "No cloud board was created. Re-run with --write to create this canary board.",
+      candidate: summarizeProject(candidate),
+      validation: summarizeValidation(validation)
     };
   }
 
@@ -39,7 +57,7 @@ async function prepareCanary(args: SafetyArgs) {
   try {
     await store.writeBoard(candidate);
     const verified = await store.readBoard(candidate.id);
-    return { action: "created-canary", candidate: summarizeProject(verified) };
+    return { action: "created-canary", candidate: summarizeProject(verified), verification: await verifyStoredProject(store, verified, { verifyExports: args.verifyExports }) };
   } finally {
     await cloud.close?.();
   }
@@ -52,12 +70,14 @@ async function prepareBackup(args: SafetyArgs) {
 
   const source = args.write ? await readCloudBoard(args.boardId) : await readProductionBoard(args.boardId);
   const candidate = createBackupProject(source, args.name);
+  const validation = validateBoardStructure(candidate);
   if (!args.write) {
     return {
       action: "dry-run-backup",
       note: "No cloud board was created. Re-run with --write to create this backup duplicate.",
       source: summarizeProject(source),
-      candidate: summarizeProject(candidate)
+      candidate: summarizeProject(candidate),
+      validation: summarizeValidation(validation)
     };
   }
 
@@ -66,15 +86,21 @@ async function prepareBackup(args: SafetyArgs) {
     await store.writeBoard(candidate);
     const copiedAssets = await copyAssets(cloud, source, candidate);
     const verified = await store.readBoard(candidate.id);
-    return { action: "created-backup", source: summarizeProject(source), candidate: summarizeProject(verified), copiedAssets };
+    return {
+      action: "created-backup",
+      source: summarizeProject(source),
+      candidate: summarizeProject(verified),
+      copiedAssets,
+      verification: await verifyStoredProject(store, verified, { verifyExports: args.verifyExports })
+    };
   } finally {
     await cloud.close?.();
   }
 }
 
-function createCanaryProject(name?: string): BoardProject {
+export function createCanaryProject(name?: string, options: { includePrimitives?: boolean } = {}): BoardProject {
   const now = nowIso();
-  return BoardProjectSchema.parse({
+  const project = BoardProjectSchema.parse({
     ...createDefaultProject(name ?? `PowerBoard Canary - ${timestampLabel(now)}`),
     id: createId("canary_board"),
     selection: [],
@@ -86,9 +112,10 @@ function createCanaryProject(name?: string): BoardProject {
       safetyCreatedAt: now
     }
   });
+  return options.includePrimitives ? addPrimitiveCanaryFixture(project) : project;
 }
 
-function createBackupProject(source: BoardProject, name?: string): BoardProject {
+export function createBackupProject(source: BoardProject, name?: string): BoardProject {
   const now = nowIso();
   const id = createId("backup_board");
   return BoardProjectSchema.parse({
@@ -109,6 +136,17 @@ function createBackupProject(source: BoardProject, name?: string): BoardProject 
       backupOfUpdatedAt: source.metadata.updatedAt
     }
   });
+}
+
+export async function verifyStoredProject(store: BoardStore, project: BoardProject, options: { verifyExports?: boolean } = {}) {
+  const readBack = await store.readBoard(project.id);
+  const validation = validateBoardStructure(readBack);
+  const exportCheck = options.verifyExports ? await verifyExports(store, readBack) : undefined;
+  return {
+    readBack: summarizeProject(readBack),
+    validation: summarizeValidation(validation),
+    exports: exportCheck
+  };
 }
 
 async function readCloudBoard(boardId: string): Promise<BoardProject> {
@@ -166,6 +204,62 @@ function summarizeProject(project: BoardProject) {
   };
 }
 
+function addPrimitiveCanaryFixture(project: BoardProject): BoardProject {
+  const artboard = project.artboards[0];
+  if (!artboard) return project;
+  const frame = createElementFromPreset("frame", artboard.id, 24, 316);
+  frame.name = `${artboard.name} / Canary Primitive Frame`;
+  frame.semanticRole = "canary validation frame";
+  frame.width = 300;
+  frame.height = 150;
+  frame.zIndex = 20;
+  const icon = createElementFromPreset("icon", artboard.id, 18, 18);
+  icon.name = `${artboard.name} / Canary Add Icon`;
+  icon.parentId = frame.id;
+  icon.props.materialIcon = "add_circle";
+  const line = createElementFromPreset("line", artboard.id, 18, 80);
+  line.name = `${artboard.name} / Canary Divider`;
+  line.parentId = frame.id;
+  line.width = 260;
+  const sparkline = createElementFromPreset("sparkline", artboard.id, 18, 98);
+  sparkline.name = `${artboard.name} / Canary Sparkline`;
+  sparkline.parentId = frame.id;
+  sparkline.width = 260;
+  sparkline.height = 42;
+
+  return BoardProjectSchema.parse({
+    ...project,
+    elements: [...project.elements, frame, icon, line, sparkline],
+    metadata: { ...project.metadata, canaryFixture: "primitive-readback-export", updatedAt: project.metadata.updatedAt }
+  });
+}
+
+async function verifyExports(store: BoardStore, project: BoardProject) {
+  const artboard = project.artboards[0];
+  if (!artboard) {
+    throw new Error("Cannot verify exports for a board with no artboards.");
+  }
+  const png = await store.exportArtboardPng(project.id, artboard.id);
+  const spec = await store.exportSpec(project.id);
+  const react = await store.exportReactTailwind(project.id);
+  return {
+    artboardId: artboard.id,
+    pngPath: png.filePath,
+    specPath: spec.markdownPath,
+    reactDir: react.dir,
+    reactFiles: react.files.length
+  };
+}
+
+function summarizeValidation(report: BoardValidationReport) {
+  return {
+    valid: report.valid,
+    errors: report.summary.errors,
+    warnings: report.summary.warnings,
+    issueCodes: Array.from(new Set(report.issues.map((issue) => issue.code))).sort()
+  };
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
   if (!response.ok) {
@@ -177,10 +271,11 @@ async function fetchJson<T>(url: string): Promise<T> {
 function parseArgs(argv: string[]): SafetyArgs {
   if (argv.includes("--help") || argv.includes("-h")) {
     console.log(`Usage:
-  npm run cloud:safety -- --mode=canary [--write] [--name "PowerBoard Canary"]
-  npm run cloud:safety -- --mode=backup --board <boardId> [--write] [--name "Backup name"]
+  npm run cloud:safety -- --mode=canary [--write] [--verify-exports] [--include-primitives] [--name "PowerBoard Canary"]
+  npm run cloud:safety -- --mode=backup --board <boardId> [--write] [--verify-exports] [--name "Backup name"]
 
-Dry-run is the default. --write requires SUPABASE_DB_URL and creates a new cloud board only.`);
+Dry-run is the default. --write requires SUPABASE_DB_URL and creates a new cloud board only.
+Use --include-primitives only when the target runtime already supports the branch primitive types.`);
     process.exit(0);
   }
   const mode = readArg(argv, "mode") ?? "canary";
@@ -191,7 +286,9 @@ Dry-run is the default. --write requires SUPABASE_DB_URL and creates a new cloud
     mode,
     boardId: readArg(argv, "board"),
     name: readArg(argv, "name"),
-    write: argv.includes("--write")
+    write: argv.includes("--write"),
+    verifyExports: argv.includes("--verify-exports"),
+    includePrimitives: argv.includes("--include-primitives")
   };
 }
 
@@ -208,7 +305,9 @@ function timestampLabel(iso: string): string {
   return iso.replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}

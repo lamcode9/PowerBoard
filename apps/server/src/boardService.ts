@@ -1,6 +1,20 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { applyBoardOperation, BoardOperation, BoardProject, BoardProjectSchema, createDefaultProject, createId, filterValidSelection, sanitizeProjectSelection, validateBoardProject } from "@powerboard/schema";
+import {
+  applyBoardOperation,
+  BoardHierarchyArtboard,
+  BoardOperation,
+  BoardProject,
+  BoardProjectSchema,
+  BoardValidationReport,
+  createDefaultProject,
+  createId,
+  filterValidSelection,
+  inspectBoardHierarchy,
+  sanitizeProjectSelection,
+  validateBoardProject,
+  validateBoardStructure
+} from "@powerboard/schema";
 import { renderArtboardSvg, renderReactTailwind, renderSpecMarkdown } from "@powerboard/renderers";
 import sharp from "sharp";
 import { CloudFileRecord, CloudStore, createCloudStoreFromEnv } from "./cloudStore.js";
@@ -384,6 +398,29 @@ export class BoardStore {
     return `${project.name}: ${project.artboards.length} artboards [${artboards}], ${project.elements.length} elements [${elementSummary || "none"}], ${project.connectors.length} flow connectors.`;
   }
 
+  async validateBoard(boardId: string): Promise<BoardValidationReport> {
+    return validateBoardStructure(await this.readBoard(boardId));
+  }
+
+  async inspectBoardHierarchy(boardId: string): Promise<{ id: string; name: string; hierarchy: BoardHierarchyArtboard[] }> {
+    const project = await this.readBoard(boardId);
+    return { id: project.id, name: project.name, hierarchy: inspectBoardHierarchy(project) };
+  }
+
+  async previewOperation(boardId: string, operation: BoardOperation) {
+    const current = await this.readBoard(boardId);
+    const next = applyBoardOperation(current, operation);
+    const validation = validateBoardStructure(next);
+    return {
+      boardId,
+      operationType: operation.type,
+      targetIds: targetIdsForOperation(operation, next),
+      before: projectCounts(current),
+      after: projectCounts(next),
+      validation
+    };
+  }
+
   private boardDir(boardId: string): string {
     return ensureInsideRoot(this.root, path.join(this.root, safeSegment(boardId)));
   }
@@ -433,6 +470,18 @@ export class BoardStore {
     }
     return this.cloud;
   }
+}
+
+function projectCounts(project: BoardProject) {
+  return {
+    id: project.id,
+    name: project.name,
+    updatedAt: project.metadata.updatedAt,
+    artboards: project.artboards.length,
+    elements: project.elements.length,
+    connectors: project.connectors.length,
+    assets: project.assets.length
+  };
 }
 
 export function agentActivityForOperation(project: BoardProject, operation: BoardOperation): AgentBoardActivity {

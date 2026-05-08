@@ -67,6 +67,48 @@ describe("BoardStore", () => {
     expect(metadata.lastAgentEditedIds).toEqual([element.id]);
   });
 
+  it("returns hierarchy and validation diagnostics for agent inspection", async () => {
+    const { store } = await tempStore();
+    const board = await store.createBoard("Agent Inspect Board");
+    const mobileArtboard = board.artboards[0]!;
+    const webArtboard = board.artboards[1]!;
+    const line = createElementFromPreset("line", mobileArtboard.id, 24, 96);
+    line.name = "Mobile Home / Odd Divider";
+    line.props.direction = "sideways";
+    const crossArtboardChild = createElementFromPreset("text", webArtboard.id, 24, 24);
+    crossArtboardChild.name = "Web Dashboard / Cross Parent Text";
+    crossArtboardChild.parentId = board.elements.find((element) => element.artboardId === mobileArtboard.id)!.id;
+    const fixture = BoardProjectSchema.parse({
+      ...board,
+      elements: [...board.elements, line, crossArtboardChild],
+      metadata: { ...board.metadata, updatedAt: new Date().toISOString() }
+    });
+    await store.replaceBoard(board.id, fixture);
+
+    const validation = await store.validateBoard(board.id);
+    const hierarchy = await store.inspectBoardHierarchy(board.id);
+
+    expect(validation.valid).toBe(false);
+    expect(validation.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining(["line-unknown-direction", "parent-on-different-artboard"]));
+    expect(hierarchy.hierarchy.find((artboard) => artboard.id === mobileArtboard.id)?.children.some((element) => element.path === "Mobile Home / Header Frame")).toBe(true);
+  });
+
+  it("previews operations with validation without writing the board", async () => {
+    const { store } = await tempStore();
+    const board = await store.createBoard("Preview Board");
+    const element = createElementFromPreset("button", board.artboards[0]!.id, 24, 24);
+
+    const preview = await store.previewOperation(board.id, { type: "add_element", element });
+    const stored = await store.readBoard(board.id);
+
+    expect(preview.operationType).toBe("add_element");
+    expect(preview.targetIds).toEqual([element.id]);
+    expect(preview.before.elements).toBe(board.elements.length);
+    expect(preview.after.elements).toBe(board.elements.length + 1);
+    expect(preview.validation.valid).toBe(true);
+    expect(stored.elements.some((candidate) => candidate.id === element.id)).toBe(false);
+  });
+
   it("exports spec, React/Tailwind files, and PNG", async () => {
     const { store } = await tempStore();
     const board = await store.createBoard("Export Board");

@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
-import { ArtboardSchema, BoardElementSchema, BoardOperation, BoardProjectSchema, ConnectorSchema, createElementFromPreset, createId } from "@powerboard/schema";
+import { ArtboardSchema, BoardElementSchema, BoardOperation, BoardProjectSchema, ConnectorSchema, createElementFromPreset, createId, OperationSchema, validateBoardStructure } from "@powerboard/schema";
 import { agentActivityForOperation, agentActivityForSelection, AgentBoardActivity, BoardStore } from "./boardService.js";
 
 interface BoardMcpOptions {
@@ -142,6 +142,19 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
   );
 
   server.registerTool(
+    "preview_operation",
+    {
+      title: "Preview operation",
+      description: "Dry-run a board operation without saving it, returning target ids, count changes, hierarchy, and validation diagnostics.",
+      inputSchema: {
+        boardId: z.string(),
+        operation: z.unknown()
+      }
+    },
+    async ({ boardId, operation }) => text(await store.previewOperation(boardId, OperationSchema.parse(operation)))
+  );
+
+  server.registerTool(
     "update_element",
     {
       title: "Update element",
@@ -239,6 +252,16 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
       });
       return text(descriptions);
     }
+  );
+
+  server.registerTool(
+    "inspect_board_hierarchy",
+    {
+      title: "Inspect board hierarchy",
+      description: "Return an agent-readable artboard and element hierarchy with semantic paths.",
+      inputSchema: { boardId: z.string() }
+    },
+    async ({ boardId }) => text(await store.inspectBoardHierarchy(boardId))
   );
 
   server.registerTool(
@@ -352,8 +375,12 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
       }
     },
     async ({ boardId, project }) => {
-      const parsed = BoardProjectSchema.parse(project ?? (await store.readBoard(required(boardId, "boardId"))));
-      return text({ valid: true, id: parsed.id, artboards: parsed.artboards.length, elements: parsed.elements.length });
+      if (project !== undefined) {
+        const parsed = BoardProjectSchema.parse(project);
+        return text({ id: parsed.id, name: parsed.name, ...validateBoardStructure(parsed) });
+      }
+      const parsed = await store.readBoard(required(boardId, "boardId"));
+      return text({ id: parsed.id, name: parsed.name, ...(await store.validateBoard(parsed.id)) });
     }
   );
 

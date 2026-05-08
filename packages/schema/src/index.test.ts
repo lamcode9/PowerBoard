@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyBoardOperation, BoardProjectSchema, createDefaultProject, createElementFromPreset, DEVICE_PRESETS } from "./index";
+import { applyBoardOperation, BoardProjectSchema, createDefaultProject, createElementFromPreset, DEVICE_PRESETS, inspectBoardHierarchy, validateBoardStructure } from "./index";
 
 describe("Board schema", () => {
   it("validates the default project", () => {
@@ -56,6 +56,42 @@ describe("Board schema", () => {
     expect(line.style.strokeWidth).toBeGreaterThan(0);
     expect(sparkline.props.values).toEqual(expect.arrayContaining([24, 72]));
     expect(sparkline.semanticRole).toBe("sparkline chart");
+  });
+
+  it("inspects hierarchy with stable agent-readable paths", () => {
+    const project = createDefaultProject();
+    const hierarchy = inspectBoardHierarchy(project);
+    const mobile = hierarchy.find((artboard) => artboard.id === "art_home_mobile");
+    const summaryFrame = mobile?.children.find((element) => element.id === "el_mobile_summary_frame");
+    const card = summaryFrame?.children.find((element) => element.id === "el_mobile_card");
+
+    expect(mobile?.path).toBe("Mobile Home");
+    expect(summaryFrame?.path).toBe("Mobile Home / Summary Frame");
+    expect(card?.path).toBe("Mobile Home / Summary Frame / Safe-to-Spend Card");
+  });
+
+  it("reports hierarchy and primitive diagnostics without rejecting valid schema", () => {
+    const project = createDefaultProject();
+    const icon = createElementFromPreset("icon", project.artboards[0]!.id, 20, 20);
+    const line = createElementFromPreset("line", project.artboards[0]!.id, 20, 80);
+    const sparkline = createElementFromPreset("sparkline", project.artboards[0]!.id, 20, 120);
+    const crossArtboardChild = createElementFromPreset("text", project.artboards[1]!.id, 20, 20);
+    icon.props = {};
+    line.props.direction = "sideways";
+    sparkline.props.values = [12];
+    crossArtboardChild.parentId = project.elements[0]!.id;
+    const parsed = BoardProjectSchema.parse({
+      ...project,
+      elements: [...project.elements, icon, line, sparkline, crossArtboardChild]
+    });
+
+    const report = validateBoardStructure(parsed);
+
+    expect(report.valid).toBe(false);
+    expect(report.summary.errors).toBe(1);
+    expect(report.issues.map((issue) => issue.code)).toEqual(
+      expect.arrayContaining(["parent-on-different-artboard", "icon-missing-material-name", "line-unknown-direction", "sparkline-needs-values"])
+    );
   });
 });
 

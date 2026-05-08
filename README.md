@@ -39,6 +39,7 @@ To migrate any local board folders into Supabase, run `npm run sync:cloud`. This
 - `npm run mcp`
 - `npm run mcp:check`
 - `npm run cloud:safety -- --mode=canary`
+- `npm run cloud:safety -- --mode=canary --verify-exports`
 
 The web app runs on `http://127.0.0.1:5173` and the local server runs on `http://127.0.0.1:4318`.
 
@@ -61,7 +62,7 @@ POWERBOARD_STORAGE_MODE = "cloud"
 
 Project agent files can include the connector note in `AGENTS.md` or `agent.md` so future agents know to use PowerBoard for mockups and UI iteration.
 
-Agents should prefer MCP tools for reads, edits, validation, and exports. Raw REST calls are a fallback for health/status reads or emergency diagnostics; arbitrary object mutation through `PUT /api/boards/:boardId` should not be the normal workflow because it bypasses the agent operation metadata and makes live collaboration harder to audit.
+Agents should prefer MCP tools for reads, edits, hierarchy inspection, validation, previews, and exports. Use `inspect_board_hierarchy` before broad edits so element paths and parent/child relationships are clear, use `preview_operation` before risky writes, then use `validate_board` after changes to catch hierarchy and primitive diagnostics. Raw REST calls are a fallback for health/status reads or emergency diagnostics; arbitrary object mutation through `PUT /api/boards/:boardId` should not be the normal workflow because it bypasses the agent operation metadata and makes live collaboration harder to audit.
 
 ## Cloud Safety
 
@@ -70,16 +71,19 @@ Before risky board or exporter work, create a dry-run safety plan:
 ```bash
 npm run cloud:safety -- --mode=canary
 npm run cloud:safety -- --mode=backup --board <boardId>
+npm run cloud:safety -- --mode=canary --verify-exports
 ```
 
-Dry-run is the default and does not create or change cloud boards. To create a clearly named canary or backup duplicate, rerun with `--write` after production health is green and `SUPABASE_DB_URL` is available:
+Dry-run is the default and does not create or change cloud boards. The default canary stays compatible with the currently deployed production runtime. Add `--include-primitives` only when the target runtime already supports the branch primitive types and you intentionally want the canary to exercise icon, line, and sparkline exports. To create a clearly named canary or backup duplicate, rerun with `--write` after production health is green and `SUPABASE_DB_URL` is available:
 
 ```bash
 npm run cloud:safety -- --mode=canary --write
+npm run cloud:safety -- --mode=canary --write --verify-exports
+npm run cloud:safety -- --mode=canary --write --verify-exports --include-primitives
 npm run cloud:safety -- --mode=backup --board <boardId> --write
 ```
 
-These commands create new cloud boards only. They do not mutate active production boards.
+These commands create new cloud boards only. They do not mutate active production boards. `--verify-exports` reads the new safety board back, runs hierarchy/primitive validation, and writes PNG/spec/React exports only to that safety board.
 
 ## Vercel
 

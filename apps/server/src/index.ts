@@ -56,6 +56,14 @@ app.get("/api/boards/:boardId", asyncHandler(async (req, res) => {
   res.json(await store.readBoard(param(req, "boardId")));
 }));
 
+app.get("/api/boards/:boardId/validation", asyncHandler(async (req, res) => {
+  res.json(await store.validateBoard(param(req, "boardId")));
+}));
+
+app.get("/api/boards/:boardId/hierarchy", asyncHandler(async (req, res) => {
+  res.json(await store.inspectBoardHierarchy(param(req, "boardId")));
+}));
+
 app.put("/api/boards/:boardId", asyncHandler(async (req, res) => {
   const project = BoardProjectSchema.parse(req.body);
   const next = await store.replaceBoard(param(req, "boardId"), project);
@@ -70,6 +78,11 @@ app.post("/api/boards/:boardId/operations", asyncHandler(async (req, res) => {
   const agentActivity = agentEdit ? agentActivityForOperation(next, operation) : undefined;
   broadcast(next.id, { type: "board.changed", boardId: next.id, project: next, operation, agentActivity });
   res.json(next);
+}));
+
+app.post("/api/boards/:boardId/operations/preview", asyncHandler(async (req, res) => {
+  const operation = OperationSchema.parse(req.body.operation) as BoardOperation;
+  res.json(await store.previewOperation(param(req, "boardId"), operation));
 }));
 
 app.post("/api/boards/:boardId/undo", asyncHandler(async (req, res) => {
