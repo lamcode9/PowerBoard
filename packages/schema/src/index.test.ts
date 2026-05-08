@@ -42,6 +42,21 @@ describe("Board schema", () => {
     image.props.assetId = "missing_asset";
     expect(() => BoardProjectSchema.parse({ ...project, elements: [...project.elements, image] })).toThrow(/Unknown asset id/);
   });
+
+  it("creates app-mockup drawing primitives from presets", () => {
+    const project = createDefaultProject();
+    const artboardId = project.artboards[0]!.id;
+    const icon = createElementFromPreset("icon", artboardId, 20, 20);
+    const line = createElementFromPreset("line", artboardId, 20, 88);
+    const sparkline = createElementFromPreset("sparkline", artboardId, 20, 124);
+
+    expect(icon.props.materialIcon).toBe("add_circle");
+    expect(icon.semanticRole).toBe("material icon");
+    expect(line.props.direction).toBe("horizontal");
+    expect(line.style.strokeWidth).toBeGreaterThan(0);
+    expect(sparkline.props.values).toEqual(expect.arrayContaining([24, 72]));
+    expect(sparkline.semanticRole).toBe("sparkline chart");
+  });
 });
 
 describe("Board operations", () => {

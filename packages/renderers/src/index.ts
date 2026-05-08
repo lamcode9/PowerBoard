@@ -192,6 +192,25 @@ function renderElementJsx(project: BoardProject, element: BoardElement, depth: n
   const inlineStyles = inlineStyle(style, hierarchyOnly);
 
   switch (element.type) {
+    case "icon":
+      return `${indent}<div data-board-element="${element.id}" className="${joinClasses([wrapperClass, "grid place-items-center"])}"${inlineStyles}>
+${indent}  <svg viewBox="0 0 24 24" role="img" aria-label="${escapeAttr(readString(element.props.label, readString(element.props.materialIcon ?? element.props.icon, "Icon")))}" className="h-full w-full p-[22%]" fill="currentColor">
+${indent}    ${materialIconSvgMarkup(readString(element.props.materialIcon ?? element.props.icon, "add_circle"))}
+${indent}  </svg>
+${indent}</div>`;
+    case "line": {
+      const points = linePrimitivePoints(readString(element.props.direction, "horizontal"));
+      return `${indent}<svg data-board-element="${element.id}" className="${wrapperClass}" viewBox="0 0 100 100" preserveAspectRatio="none"${inlineStyles}>
+${indent}  <line x1="${points.x1}" y1="${points.y1}" x2="${points.x2}" y2="${points.y2}" stroke="${escapeAttr(style.stroke ?? "#64748B")}" strokeWidth="${style.strokeWidth ?? 2}" strokeLinecap="${escapeAttr(readString(element.props.lineCap, "round"))}" vectorEffect="non-scaling-stroke" />
+${indent}</svg>`;
+    }
+    case "sparkline": {
+      const points = sparklinePoints(readNumberArray(element.props.values, [24, 38, 32, 58, 48, 72, 66]), 100, 100, 8);
+      const stroke = style.stroke ?? style.color ?? "#2563EB";
+      return `${indent}<svg data-board-element="${element.id}" className="${wrapperClass}" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="${escapeAttr(readString(element.props.label, "Sparkline"))}"${inlineStyles}>
+${element.props.showArea === true ? `${indent}  <polygon points="8,100 ${points} 92,100" fill="${escapeAttr(stroke)}" opacity="0.12" />\n` : ""}${indent}  <polyline points="${points}" fill="none" stroke="${escapeAttr(stroke)}" strokeWidth="${style.strokeWidth ?? 3}" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+${indent}</svg>`;
+    }
     case "text":
       return `${indent}<p data-board-element="${element.id}" className="${wrapperClass}"${inlineStyles}>${escapeText(readString(element.props.text, element.name))}</p>`;
     case "button":
@@ -310,6 +329,27 @@ function renderElementSvg(project: BoardProject, element: BoardElement, offsetX 
       return `<g opacity="${opacity}">${isHierarchyOnly(element) ? "" : `<rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}" stroke-width="${element.style.strokeWidth ?? 0}"/>`}${children}</g>`;
     case "text":
       return `<text x="${x}" y="${y + fontSize}" width="${element.width}" fill="${escapeAttr(color)}" font-size="${fontSize}" font-weight="${escapeAttr(String(element.style.fontWeight ?? 600))}">${escapeXml(readString(element.props.text, element.name))}</text>`;
+    case "icon": {
+      const size = Math.min(element.width, element.height) * 0.56;
+      const iconX = x + (element.width - size) / 2;
+      const iconY = y + (element.height - size) / 2;
+      return `<g opacity="${opacity}"><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}" stroke-width="${element.style.strokeWidth ?? 0}"/><svg x="${iconX}" y="${iconY}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="${escapeAttr(color)}">${materialIconSvgMarkup(readString(element.props.materialIcon ?? element.props.icon, "add_circle"))}</svg>${children}</g>`;
+    }
+    case "line": {
+      const points = linePrimitivePoints(readString(element.props.direction, "horizontal"));
+      const x1 = x + (points.x1 / 100) * element.width;
+      const y1 = y + (points.y1 / 100) * element.height;
+      const x2 = x + (points.x2 / 100) * element.width;
+      const y2 = y + (points.y2 / 100) * element.height;
+      return `<g opacity="${opacity}"><line x1="${roundForSvg(x1)}" y1="${roundForSvg(y1)}" x2="${roundForSvg(x2)}" y2="${roundForSvg(y2)}" stroke="${escapeAttr(element.style.stroke ?? color)}" stroke-width="${element.style.strokeWidth ?? 2}" stroke-linecap="${escapeAttr(readString(element.props.lineCap, "round"))}"/>${children}</g>`;
+    }
+    case "sparkline": {
+      const values = readNumberArray(element.props.values, [24, 38, 32, 58, 48, 72, 66]);
+      const points = sparklinePoints(values, element.width, element.height, Math.min(12, Math.max(4, element.height * 0.1)), x, y);
+      const strokeColor = element.style.stroke ?? color;
+      const areaPoints = `${roundForSvg(x)},${roundForSvg(y + element.height)} ${points} ${roundForSvg(x + element.width)},${roundForSvg(y + element.height)}`;
+      return `<g opacity="${opacity}">${element.props.showArea === true ? `<polygon points="${areaPoints}" fill="${escapeAttr(strokeColor)}" opacity="0.12"/>` : ""}<polyline points="${points}" fill="none" stroke="${escapeAttr(strokeColor)}" stroke-width="${element.style.strokeWidth ?? 3}" stroke-linecap="round" stroke-linejoin="round"/>${children}</g>`;
+    }
     case "button":
     case "badge":
       return `<g opacity="${opacity}"><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}"/><text x="${x + element.width / 2}" y="${y + element.height / 2 + fontSize / 3}" fill="${escapeAttr(color)}" font-size="${fontSize}" font-weight="700" text-anchor="middle">${escapeXml(readString(element.props.text, element.name))}</text>${children}</g>`;
@@ -421,12 +461,72 @@ function readString(value: unknown, fallback: string): string {
   return typeof value === "string" && value.length > 0 ? value : fallback;
 }
 
+function materialIconSvgMarkup(name: string): string {
+  switch (name.trim().toLowerCase().replace(/[\s-]+/g, "_")) {
+    case "check":
+    case "check_circle":
+      return `<path d="M9.2 16.4 4.8 12l1.5-1.5 2.9 2.9 8.5-8.5L19.2 6z" />`;
+    case "close":
+    case "cancel":
+      return `<path d="m6.4 19-1.4-1.4 5.6-5.6L5 6.4 6.4 5l5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6z" />`;
+    case "search":
+      return `<path d="m19 20.4-5.7-5.7a7 7 0 1 1 1.4-1.4l5.7 5.7zM9.5 14a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9" />`;
+    case "home":
+      return `<path d="M4 20V9.8L12 4l8 5.8V20h-6v-6h-4v6z" />`;
+    case "settings":
+      return `<path d="m10.8 21-.4-3a6 6 0 0 1-1.4-.6l-2.4 1.8-1.8-3 2.8-1.2a6 6 0 0 1 0-1.8L4.8 12l1.8-3L9 10.8q.7-.4 1.4-.6l.4-3h3.4l.4 3q.7.2 1.4.6L18.4 9l1.8 3-2.8 1.2a6 6 0 0 1 0 1.8l2.8 1.2-1.8 3-2.4-1.8q-.7.4-1.4.6l-.4 3zm1.7-5.2a2.8 2.8 0 1 0 0-5.6 2.8 2.8 0 0 0 0 5.6" />`;
+    case "arrow_forward":
+      return `<path d="m14 19-1.4-1.4 4.6-4.6H4v-2h13.2l-4.6-4.6L14 5l7 7z" />`;
+    case "trending_up":
+      return `<path d="m3.8 17.2-1.4-1.4 6.4-6.4 4 4L19.2 7H15V5h7v7h-2V8.4l-7.2 7.2-4-4z" />`;
+    case "credit_card":
+    case "payments":
+      return `<path d="M4 19q-.8 0-1.4-.6T2 17V7q0-.8.6-1.4T4 5h16q.8 0 1.4.6T22 7v10q0 .8-.6 1.4T20 19zm0-10h16V7H4zm0 4v4h16v-4z" />`;
+    case "more_horiz":
+      return `<path d="M5 14a2 2 0 1 1 0-4 2 2 0 0 1 0 4m7 0a2 2 0 1 1 0-4 2 2 0 0 1 0 4m7 0a2 2 0 1 1 0-4 2 2 0 0 1 0 4" />`;
+    case "person":
+    case "account_circle":
+      return `<path d="M12 12a4 4 0 1 1 0-8 4 4 0 0 1 0 8M4 21v-2q0-2.1 2.1-3.3T12 14.5t5.9 1.2T20 19v2z" />`;
+    case "add":
+    case "add_circle":
+    default:
+      return `<path d="M11 20v-7H4v-2h7V4h2v7h7v2h-7v7z" />`;
+  }
+}
+
+function linePrimitivePoints(direction: string): { x1: number; y1: number; x2: number; y2: number } {
+  if (direction === "vertical") return { x1: 50, y1: 6, x2: 50, y2: 94 };
+  if (direction === "diagonal-down") return { x1: 6, y1: 6, x2: 94, y2: 94 };
+  if (direction === "diagonal-up") return { x1: 6, y1: 94, x2: 94, y2: 6 };
+  return { x1: 6, y1: 50, x2: 94, y2: 50 };
+}
+
+function sparklinePoints(values: number[], width: number, height: number, padding: number, offsetX = 0, offsetY = 0): string {
+  if (!values.length) return "";
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const usableWidth = Math.max(1, width - padding * 2);
+  const usableHeight = Math.max(1, height - padding * 2);
+  return values
+    .map((value, index) => {
+      const x = offsetX + padding + (values.length === 1 ? usableWidth / 2 : (index / (values.length - 1)) * usableWidth);
+      const y = offsetY + padding + (1 - (value - min) / range) * usableHeight;
+      return `${roundForSvg(x)},${roundForSvg(y)}`;
+    })
+    .join(" ");
+}
+
 function readStringArray(value: unknown, fallback: string[]): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : fallback;
 }
 
 function readNumberArray(value: unknown, fallback: number[]): number[] {
   return Array.isArray(value) ? value.filter((item): item is number => typeof item === "number") : fallback;
+}
+
+function roundForSvg(value: number): number {
+  return Math.round(value * 10) / 10;
 }
 
 function toComponentName(name: string): string {

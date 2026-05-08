@@ -132,6 +132,47 @@ describe("BoardStore", () => {
     expect(countDarkPixels(data, info.width, info.channels, { left: 18, top: 22, right: 220, bottom: 92 })).toBeGreaterThan(40);
   });
 
+  it("exports icon, line, and sparkline primitives as visible PNG pixels", async () => {
+    const { store } = await tempStore();
+    const board = await store.createBoard("Primitive PNG");
+    const artboard = {
+      ...board.artboards[0]!,
+      name: "Primitive Fixture",
+      width: 260,
+      height: 180,
+      background: "#ffffff"
+    };
+    const icon = createElementFromPreset("icon", artboard.id, 24, 24);
+    icon.name = "Primitive Fixture / Icon";
+    icon.props.materialIcon = "search";
+    icon.style.color = "#000000";
+    const line = createElementFromPreset("line", artboard.id, 24, 92);
+    line.name = "Primitive Fixture / Line";
+    line.width = 210;
+    line.style.stroke = "#000000";
+    line.style.strokeWidth = 4;
+    const sparkline = createElementFromPreset("sparkline", artboard.id, 24, 116);
+    sparkline.name = "Primitive Fixture / Sparkline";
+    sparkline.style.stroke = "#000000";
+    sparkline.style.strokeWidth = 4;
+    const fixture = BoardProjectSchema.parse({
+      ...board,
+      pages: board.pages.map((page, index) => ({ ...page, artboardIds: index === 0 ? [artboard.id] : [] })),
+      artboards: [artboard],
+      elements: [icon, line, sparkline],
+      connectors: [],
+      assets: [],
+      selection: [],
+      metadata: { ...board.metadata, updatedAt: new Date().toISOString() }
+    });
+    await store.replaceBoard(board.id, fixture);
+
+    const png = await store.exportArtboardPng(board.id, artboard.id);
+    const { data, info } = await sharp(png.filePath).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+
+    expect(countDarkPixels(data, info.width, info.channels, { left: 12, top: 12, right: 240, bottom: 170 })).toBeGreaterThan(120);
+  });
+
   it("mirrors boards, assets, and exports to cloud storage", async () => {
     const cloud = new MemoryCloudStore();
     const { dir, store } = await tempStore(cloud);

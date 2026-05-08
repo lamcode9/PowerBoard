@@ -980,15 +980,50 @@ button {
 }
 
 .board-element.kind-button,
-.board-element.kind-badge {
+.board-element.kind-badge,
+.board-element.kind-icon {
   align-items: center;
   justify-content: center;
   font-weight: 800;
 }
 
+.board-element.kind-line,
+.board-element.kind-sparkline {
+  align-items: stretch;
+  justify-content: stretch;
+}
+
 .board-element.kind-text,
 .board-element.kind-sticky {
   align-items: flex-start;
+}
+
+.material-icon-primitive,
+.line-primitive,
+.sparkline-primitive {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.material-icon-primitive {
+  fill: currentColor;
+  padding: 22%;
+}
+
+.line-primitive {
+  overflow: visible;
+}
+
+.sparkline-primitive {
+  fill: none;
+  overflow: visible;
+}
+
+.sparkline-primitive polyline {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .board-element.kind-image img,
