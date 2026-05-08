@@ -104,6 +104,17 @@ app.post("/api/boards/:boardId/selection", asyncHandler(async (req, res) => {
   res.json({ selection });
 }));
 
+app.post("/api/boards/:boardId/selection/inspect", asyncHandler(async (req, res) => {
+  const selection = readSelection(req.body);
+  res.json(await store.inspectSelection(param(req, "boardId"), selection));
+}));
+
+app.post("/api/boards/:boardId/selection/handoff", asyncHandler(async (req, res) => {
+  const selection = readSelection(req.body);
+  const includePng = Boolean(req.body?.includePng);
+  res.json(await store.exportSelectionHandoff(param(req, "boardId"), selection, { includePng }));
+}));
+
 app.post("/api/boards/:boardId/assets", asyncHandler(async (req, res) => {
   const { fileName, dataUrl } = req.body ?? {};
   if (typeof fileName !== "string" || typeof dataUrl !== "string") {
@@ -229,4 +240,10 @@ function readAgentEdit(body: unknown): { actor?: string } | undefined {
   const record = body as Record<string, unknown>;
   if (record.source !== "agent") return undefined;
   return { actor: typeof record.actor === "string" && record.actor.trim() ? record.actor : undefined };
+}
+
+function readSelection(body: unknown): string[] | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const selection = (body as Record<string, unknown>).selection;
+  return Array.isArray(selection) ? selection.filter((id): id is string => typeof id === "string") : undefined;
 }

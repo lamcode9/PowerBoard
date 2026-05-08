@@ -62,7 +62,7 @@ POWERBOARD_STORAGE_MODE = "cloud"
 
 Project agent files can include the connector note in `AGENTS.md` or `agent.md` so future agents know to use PowerBoard for mockups and UI iteration.
 
-Agents should prefer MCP tools for reads, edits, hierarchy inspection, validation, previews, and exports. Use `inspect_board_hierarchy` before broad edits so element paths and parent/child relationships are clear, use `preview_operation` before risky writes, then use `validate_board` after changes to catch hierarchy and primitive diagnostics. Raw REST calls are a fallback for health/status reads or emergency diagnostics; arbitrary object mutation through `PUT /api/boards/:boardId` should not be the normal workflow because it bypasses the agent operation metadata and makes live collaboration harder to audit.
+Agents should prefer MCP tools for reads, edits, hierarchy inspection, validation, previews, and exports. Use `inspect_board_hierarchy` before broad edits so element paths and parent/child relationships are clear, use `inspect_selection` for computed style and absolute frame details, use `preview_operation` before risky writes, then use `validate_board` after changes to catch hierarchy and primitive diagnostics. Use `export_selection_handoff` when an implementation handoff should include React/Tailwind JSX for the selected artboard. Raw REST calls are a fallback for health/status reads or emergency diagnostics; arbitrary object mutation through `PUT /api/boards/:boardId` should not be the normal workflow because it bypasses the agent operation metadata and makes live collaboration harder to audit.
 
 ## Cloud Safety
 

@@ -21,6 +21,8 @@ const REQUIRED_TOOLS = [
   "get_selection",
   "set_selection",
   "describe_selection",
+  "inspect_selection",
+  "export_selection_handoff",
   "inspect_board_hierarchy",
   "add_connector",
   "import_screenshot_overlay",

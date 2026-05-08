@@ -11,13 +11,7 @@ export interface ReactTailwindExport {
 }
 
 export function renderReactTailwind(project: BoardProject): ReactTailwindExport {
-  const componentFiles = project.artboards.map((artboard) => {
-    const componentName = toComponentName(artboard.name);
-    return {
-      path: `src/screens/${componentName}.tsx`,
-      contents: renderArtboardComponent(project, artboard, componentName)
-    };
-  });
+  const componentFiles = project.artboards.map((artboard) => renderArtboardReactTailwind(project, artboard.id));
 
   const indexImports = project.artboards
     .map((artboard) => {
@@ -62,6 +56,18 @@ ${previewGrid}
   return {
     files,
     summary: `Exported ${project.artboards.length} React/Tailwind screen component${project.artboards.length === 1 ? "" : "s"}.`
+  };
+}
+
+export function renderArtboardReactTailwind(project: BoardProject, artboardId: string): RenderedFile {
+  const artboard = project.artboards.find((candidate) => candidate.id === artboardId);
+  if (!artboard) {
+    throw new Error(`Artboard not found: ${artboardId}`);
+  }
+  const componentName = toComponentName(artboard.name);
+  return {
+    path: `src/screens/${componentName}.tsx`,
+    contents: renderArtboardComponent(project, artboard, componentName)
   };
 }
 

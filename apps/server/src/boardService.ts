@@ -15,7 +15,7 @@ import {
   validateBoardProject,
   validateBoardStructure
 } from "@powerboard/schema";
-import { renderArtboardSvg, renderReactTailwind, renderSpecMarkdown } from "@powerboard/renderers";
+import { renderArtboardReactTailwind, renderArtboardSvg, renderReactTailwind, renderSpecMarkdown, type RenderedFile } from "@powerboard/renderers";
 import sharp from "sharp";
 import { CloudFileRecord, CloudStore, createCloudStoreFromEnv } from "./cloudStore.js";
 import { boardRoot as defaultBoardRoot, ensureInsideRoot, safeSegment } from "./paths.js";
@@ -47,6 +47,72 @@ export interface AgentBoardActivity {
   ids: string[];
   operationType?: string;
   at: string;
+}
+
+export interface InspectedArtboard {
+  kind: "artboard";
+  id: string;
+  name: string;
+  path: string;
+  type: BoardProject["artboards"][number]["type"];
+  frame: { x: number; y: number; width: number; height: number };
+  background: string;
+  locked: boolean;
+  visible: boolean;
+  childrenIds: string[];
+}
+
+export interface InspectedElement {
+  kind: "element";
+  id: string;
+  name: string;
+  path: string;
+  type: BoardProject["elements"][number]["type"];
+  artboardId: string;
+  parentId: string | null;
+  semanticRole?: string;
+  frame: { x: number; y: number; width: number; height: number };
+  localFrame: { x: number; y: number; width: number; height: number };
+  computedStyle: Record<string, string | number | boolean | undefined>;
+  layout: BoardProject["elements"][number]["layout"];
+  props: BoardProject["elements"][number]["props"];
+  locked: boolean;
+  visible: boolean;
+  zIndex: number;
+  childrenIds: string[];
+}
+
+export interface InspectedConnector {
+  kind: "connector";
+  id: string;
+  fromArtboardId: string;
+  toArtboardId: string;
+  fromElementId?: string;
+  toElementId?: string;
+  label?: string;
+}
+
+export interface SelectionInspection {
+  boardId: string;
+  boardName: string;
+  requestedSelection: string[];
+  effectiveSelection: string[];
+  nodes: Array<InspectedArtboard | InspectedElement | InspectedConnector>;
+  validation: BoardValidationReport["summary"];
+}
+
+export interface SelectionHandoff {
+  boardId: string;
+  boardName: string;
+  selectedIds: string[];
+  artboards: {
+    id: string;
+    name: string;
+    jsx: RenderedFile;
+    pngPath?: string;
+  }[];
+  inspection: SelectionInspection;
+  validation: BoardValidationReport["summary"];
 }
 
 export class BoardStore {
@@ -421,6 +487,49 @@ export class BoardStore {
     };
   }
 
+  async inspectSelection(boardId: string, selection?: string[]): Promise<SelectionInspection> {
+    const project = await this.readBoard(boardId);
+    const effectiveSelection = resolveSelection(project, selection ?? this.getSelection(boardId));
+    const pathByElementId = elementPathMap(project);
+    const nodes = effectiveSelection.map((id) => inspectSelectionNode(project, id, pathByElementId)).filter((node): node is InspectedArtboard | InspectedElement | InspectedConnector => Boolean(node));
+    return {
+      boardId: project.id,
+      boardName: project.name,
+      requestedSelection: selection ?? this.getSelection(boardId),
+      effectiveSelection,
+      nodes,
+      validation: validateBoardStructure(project).summary
+    };
+  }
+
+  async exportSelectionHandoff(boardId: string, selection?: string[], options: { includePng?: boolean } = {}): Promise<SelectionHandoff> {
+    const project = await this.readBoard(boardId);
+    const inspection = await this.inspectSelection(boardId, selection);
+    const artboards = resolveHandoffArtboards(project, inspection.effectiveSelection);
+    if (!artboards.length) {
+      throw new Error("Select at least one artboard or element, or pass selection ids, before exporting a selection handoff.");
+    }
+    const handoffArtboards = [];
+    for (const artboard of artboards) {
+      const jsx = renderArtboardReactTailwind(project, artboard.id);
+      const png = options.includePng ? await this.exportArtboardPng(boardId, artboard.id) : undefined;
+      handoffArtboards.push({
+        id: artboard.id,
+        name: artboard.name,
+        jsx,
+        pngPath: png?.filePath
+      });
+    }
+    return {
+      boardId: project.id,
+      boardName: project.name,
+      selectedIds: inspection.effectiveSelection,
+      artboards: handoffArtboards,
+      inspection,
+      validation: validateBoardStructure(project).summary
+    };
+  }
+
   private boardDir(boardId: string): string {
     return ensureInsideRoot(this.root, path.join(this.root, safeSegment(boardId)));
   }
@@ -482,6 +591,164 @@ function projectCounts(project: BoardProject) {
     connectors: project.connectors.length,
     assets: project.assets.length
   };
+}
+
+function resolveSelection(project: BoardProject, selection: string[] = []): string[] {
+  return filterValidSelection(project, selection.length ? selection : project.selection);
+}
+
+function inspectSelectionNode(project: BoardProject, id: string, pathByElementId: Map<string, string>): InspectedArtboard | InspectedElement | InspectedConnector | undefined {
+  const artboard = project.artboards.find((candidate) => candidate.id === id);
+  if (artboard) {
+    return {
+      kind: "artboard",
+      id: artboard.id,
+      name: artboard.name,
+      path: artboard.name,
+      type: artboard.type,
+      frame: { x: artboard.x, y: artboard.y, width: artboard.width, height: artboard.height },
+      background: artboard.background,
+      locked: artboard.locked,
+      visible: artboard.visible,
+      childrenIds: project.elements.filter((element) => element.artboardId === artboard.id && !element.parentId).sort(byLayerOrder).map((element) => element.id)
+    };
+  }
+
+  const element = project.elements.find((candidate) => candidate.id === id);
+  if (element) {
+    const absoluteFrame = absoluteElementFrame(project, element);
+    return {
+      kind: "element",
+      id: element.id,
+      name: element.name,
+      path: pathByElementId.get(element.id) ?? element.name,
+      type: element.type,
+      artboardId: element.artboardId,
+      parentId: element.parentId,
+      semanticRole: element.semanticRole,
+      frame: absoluteFrame,
+      localFrame: { x: element.x, y: element.y, width: element.width, height: element.height },
+      computedStyle: computedElementStyle(element, absoluteFrame),
+      layout: element.layout,
+      props: element.props,
+      locked: element.locked,
+      visible: element.visible,
+      zIndex: element.zIndex,
+      childrenIds: project.elements.filter((child) => child.parentId === element.id).sort(byLayerOrder).map((child) => child.id)
+    };
+  }
+
+  const connector = project.connectors.find((candidate) => candidate.id === id);
+  if (connector) {
+    return {
+      kind: "connector",
+      id: connector.id,
+      fromArtboardId: connector.fromArtboardId,
+      toArtboardId: connector.toArtboardId,
+      fromElementId: connector.fromElementId,
+      toElementId: connector.toElementId,
+      label: connector.label
+    };
+  }
+
+  return undefined;
+}
+
+function resolveHandoffArtboards(project: BoardProject, selection: string[]): BoardProject["artboards"] {
+  const seen = new Set<string>();
+  const artboards: BoardProject["artboards"] = [];
+  for (const id of selection) {
+    const selectedArtboard = project.artboards.find((artboard) => artboard.id === id);
+    const selectedElement = project.elements.find((element) => element.id === id);
+    const artboardId = selectedArtboard?.id ?? selectedElement?.artboardId;
+    if (!artboardId || seen.has(artboardId)) continue;
+    const artboard = project.artboards.find((candidate) => candidate.id === artboardId);
+    if (!artboard) continue;
+    seen.add(artboardId);
+    artboards.push(artboard);
+  }
+  return artboards;
+}
+
+function elementPathMap(project: BoardProject): Map<string, string> {
+  const paths = new Map<string, string>();
+  const visit = (node: BoardHierarchyArtboard["children"][number]) => {
+    paths.set(node.id, node.path);
+    for (const child of node.children) visit(child);
+  };
+  for (const artboard of inspectBoardHierarchy(project)) {
+    for (const child of artboard.children) visit(child);
+  }
+  return paths;
+}
+
+function absoluteElementFrame(project: BoardProject, element: BoardProject["elements"][number]): { x: number; y: number; width: number; height: number } {
+  let x = element.x;
+  let y = element.y;
+  let parentId = element.parentId;
+  while (parentId) {
+    const parent = project.elements.find((candidate) => candidate.id === parentId);
+    if (!parent) break;
+    x += parent.x;
+    y += parent.y;
+    parentId = parent.parentId;
+  }
+  return { x, y, width: element.width, height: element.height };
+}
+
+function computedElementStyle(element: BoardProject["elements"][number], frame: { x: number; y: number; width: number; height: number }): Record<string, string | number | boolean | undefined> {
+  const hierarchyOnly = (element.type === "frame" || element.type === "group") && element.props.hierarchyOnly === true;
+  return {
+    position: "absolute",
+    left: px(frame.x),
+    top: px(frame.y),
+    width: px(frame.width),
+    height: px(frame.height),
+    display: element.layout.mode === "stack" ? "flex" : element.layout.mode === "grid" ? "grid" : "block",
+    flexDirection: element.layout.mode === "stack" ? element.layout.direction ?? "column" : undefined,
+    gridTemplateColumns: element.layout.mode === "grid" && element.layout.columns ? `repeat(${element.layout.columns}, minmax(0, 1fr))` : undefined,
+    gap: pxOrUndefined(element.style.gap ?? element.layout.gap),
+    padding: pxOrUndefined(element.style.padding ?? element.layout.padding),
+    alignItems: cssAlign(element.style.align ?? element.layout.align),
+    justifyContent: cssJustify(element.style.justify ?? element.layout.justify),
+    background: hierarchyOnly ? "transparent" : element.style.fill,
+    color: element.style.color,
+    borderColor: hierarchyOnly ? undefined : element.style.stroke,
+    borderWidth: hierarchyOnly ? undefined : pxOrUndefined(element.style.strokeWidth),
+    borderRadius: hierarchyOnly ? undefined : pxOrUndefined(element.style.radius),
+    opacity: element.style.opacity,
+    boxShadow: hierarchyOnly ? undefined : element.style.shadow,
+    fontFamily: element.style.fontFamily,
+    fontSize: pxOrUndefined(element.style.fontSize),
+    fontWeight: element.style.fontWeight,
+    lineHeight: pxOrUndefined(element.style.lineHeight),
+    letterSpacing: pxOrUndefined(element.style.letterSpacing),
+    textAlign: element.style.textAlign,
+    objectFit: element.style.imageFit,
+    hiddenFromVisualExport: hierarchyOnly
+  };
+}
+
+function byLayerOrder(a: BoardProject["elements"][number], b: BoardProject["elements"][number]): number {
+  return a.zIndex - b.zIndex || a.y - b.y || a.x - b.x || a.name.localeCompare(b.name);
+}
+
+function px(value: number): string {
+  return `${Math.round(value * 100) / 100}px`;
+}
+
+function pxOrUndefined(value: number | undefined): string | undefined {
+  return value === undefined ? undefined : px(value);
+}
+
+function cssAlign(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  return ({ start: "flex-start", center: "center", end: "flex-end", stretch: "stretch" } as Record<string, string>)[value] ?? undefined;
+}
+
+function cssJustify(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  return ({ start: "flex-start", center: "center", end: "flex-end", between: "space-between" } as Record<string, string>)[value] ?? undefined;
 }
 
 export function agentActivityForOperation(project: BoardProject, operation: BoardOperation): AgentBoardActivity {

@@ -109,6 +109,41 @@ describe("BoardStore", () => {
     expect(stored.elements.some((candidate) => candidate.id === element.id)).toBe(false);
   });
 
+  it("inspects selected elements with computed style and hierarchy paths", async () => {
+    const { store } = await tempStore();
+    const board = await store.createBoard("Selection Inspect Board");
+    const element = board.elements.find((candidate) => candidate.id === "el_mobile_card")!;
+    await store.setSelection(board.id, [element.id]);
+
+    const inspection = await store.inspectSelection(board.id);
+    const node = inspection.nodes[0];
+
+    expect(inspection.effectiveSelection).toEqual([element.id]);
+    expect(node).toMatchObject({
+      kind: "element",
+      id: element.id,
+      path: "Mobile Home / Summary Frame / Safe-to-Spend Card",
+      frame: { x: 24, y: 132, width: 345, height: 152 }
+    });
+    expect(node?.kind === "element" ? node.computedStyle.background : undefined).toBe("#FFFFFF");
+    expect(node?.kind === "element" ? node.computedStyle.borderRadius : undefined).toBe("24px");
+  });
+
+  it("exports selected artboard handoff with JSX and optional PNG", async () => {
+    const { store } = await tempStore();
+    const board = await store.createBoard("Selection Handoff Board");
+    const artboard = board.artboards[0]!;
+
+    const handoff = await store.exportSelectionHandoff(board.id, [artboard.id], { includePng: true });
+
+    expect(handoff.selectedIds).toEqual([artboard.id]);
+    expect(handoff.artboards).toHaveLength(1);
+    expect(handoff.artboards[0]?.jsx.path).toBe("src/screens/MobileHome.tsx");
+    expect(handoff.artboards[0]?.jsx.contents).toContain("export function MobileHome");
+    expect(handoff.artboards[0]?.pngPath).toMatch(/Mobile-Home\.png$/);
+    expect(handoff.inspection.nodes[0]).toMatchObject({ kind: "artboard", id: artboard.id });
+  });
+
   it("exports spec, React/Tailwind files, and PNG", async () => {
     const { store } = await tempStore();
     const board = await store.createBoard("Export Board");

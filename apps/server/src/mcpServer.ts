@@ -255,6 +255,33 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
   );
 
   server.registerTool(
+    "inspect_selection",
+    {
+      title: "Inspect selection",
+      description: "Inspect selected artboards, elements, or connectors with hierarchy paths and computed style.",
+      inputSchema: {
+        boardId: z.string(),
+        selection: z.array(z.string()).optional()
+      }
+    },
+    async ({ boardId, selection }) => text(await store.inspectSelection(boardId, selection))
+  );
+
+  server.registerTool(
+    "export_selection_handoff",
+    {
+      title: "Export selection handoff",
+      description: "Return React/Tailwind JSX for selected artboards, or artboards that contain selected elements. PNG export is optional.",
+      inputSchema: {
+        boardId: z.string(),
+        selection: z.array(z.string()).optional(),
+        includePng: z.boolean().optional()
+      }
+    },
+    async ({ boardId, selection, includePng }) => text(await store.exportSelectionHandoff(boardId, selection, { includePng: includePng === true }))
+  );
+
+  server.registerTool(
     "inspect_board_hierarchy",
     {
       title: "Inspect board hierarchy",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BoardProjectSchema, createDefaultProject, createElementFromPreset } from "@powerboard/schema";
-import { renderArtboardSvg, renderReactTailwind, renderSpecMarkdown } from "./index";
+import { renderArtboardReactTailwind, renderArtboardSvg, renderReactTailwind, renderSpecMarkdown } from "./index";
 
 describe("renderers", () => {
   it("exports readable React/Tailwind files", () => {
@@ -15,6 +15,16 @@ describe("renderers", () => {
     const spec = renderSpecMarkdown(createDefaultProject());
     expect(spec).toContain("Implementation Spec");
     expect(spec).toContain("App Flows");
+  });
+
+  it("exports one artboard React/Tailwind component for handoff", () => {
+    const project = createDefaultProject();
+    const file = renderArtboardReactTailwind(project, project.artboards[0]!.id);
+
+    expect(file.path).toBe("src/screens/MobileHome.tsx");
+    expect(file.contents).toContain("export function MobileHome");
+    expect(file.contents).toContain("data-board-artboard=\"art_home_mobile\"");
+    expect(file.contents).not.toContain("Web Dashboard");
   });
 
   it("renders a nonblank SVG artboard", () => {

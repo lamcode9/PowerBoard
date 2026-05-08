@@ -49,8 +49,8 @@ Use PowerBoard as the shared design workspace for high-fidelity app mockups, scr
 - Cloud health check: `https://lamper-server.vercel.app/api/health`
 - Local MCP transport, if live agent editing is needed: `http://127.0.0.1:4318/mcp`
 - Local checkout: `/Users/km/Developer/Board`
-- Prefer MCP tools over direct JSON edits: `list_boards`, `read_board`, `summarize_board`, `inspect_board_hierarchy`, `create_artboard`, `add_element`, `preview_operation`, `update_element`, `move_resize_element`, `set_selection`, `export_react_tailwind`, and `validate_board`.
-- Before broad edits, call `inspect_board_hierarchy`; before risky writes, call `preview_operation`; after edits, call `validate_board` and fix hierarchy or primitive diagnostics before exporting.
+- Prefer MCP tools over direct JSON edits: `list_boards`, `read_board`, `summarize_board`, `inspect_board_hierarchy`, `inspect_selection`, `create_artboard`, `add_element`, `preview_operation`, `update_element`, `move_resize_element`, `set_selection`, `export_selection_handoff`, `export_react_tailwind`, and `validate_board`.
+- Before broad edits, call `inspect_board_hierarchy`; before detailed implementation handoff, call `inspect_selection` or `export_selection_handoff`; before risky writes, call `preview_operation`; after edits, call `validate_board` and fix hierarchy or primitive diagnostics before exporting.
 - Treat Supabase/PowerBoard Cloud as the source of truth. Do not edit `boards/*/board.json` or other local board files directly.
 - For cloud-direct MCP work, the running PowerBoard server must report `cloudStore: "supabase-postgres"` and `storageMode: "cloud"` at `http://127.0.0.1:4318/api/health`; still use MCP/API operations, not raw database writes.
 - If the browser board should update live through local MCP/WebSocket, make sure PowerBoard is running with `npm run dev` in `/Users/km/Developer/Board`.
