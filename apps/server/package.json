@@ -9,6 +9,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "mcp": "tsx src/mcp.ts",
+    "mcp:check": "tsx src/mcpCheck.ts",
+    "cloud:safety": "tsx src/cloudSafety.ts",
     "sync:cloud": "tsx src/syncCloud.ts"
   },
   "dependencies": {

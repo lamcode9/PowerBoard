@@ -1,8 +1,9 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import sharp from "sharp";
 import { describe, expect, it } from "vitest";
-import { BoardProject, createElementFromPreset } from "@powerboard/schema";
+import { BoardElement, BoardProject, BoardProjectSchema, createElementFromPreset } from "@powerboard/schema";
 import { BoardStore, type StorageMode } from "./boardService";
 import { CloudBoardSummary, CloudFileRecord, CloudStore } from "./cloudStore";
 
@@ -79,6 +80,56 @@ describe("BoardStore", () => {
     const png = await store.exportArtboardPng(board.id, board.artboards[0]!.id);
     const stat = await fs.stat(png.filePath);
     expect(stat.size).toBeGreaterThan(100);
+  });
+
+  it("exports editable text as visible glyph pixels in PNG", async () => {
+    const { store } = await tempStore();
+    const board = await store.createBoard("Editable Text PNG");
+    const artboard = {
+      ...board.artboards[0]!,
+      name: "Editable Text Fixture",
+      width: 240,
+      height: 120,
+      background: "#ffffff"
+    };
+    const textElement: BoardElement = {
+      id: "text_editable_fixture",
+      type: "text",
+      name: "Editable text fixture",
+      artboardId: artboard.id,
+      parentId: null,
+      x: 24,
+      y: 30,
+      width: 192,
+      height: 52,
+      zIndex: 1,
+      locked: false,
+      visible: true,
+      semanticRole: "headline",
+      style: {
+        color: "#000000",
+        fontSize: 34,
+        fontWeight: 800
+      },
+      layout: { mode: "absolute" },
+      props: { text: "Editable" }
+    };
+    const fixture = BoardProjectSchema.parse({
+      ...board,
+      pages: board.pages.map((page, index) => ({ ...page, artboardIds: index === 0 ? [artboard.id] : [] })),
+      artboards: [artboard],
+      elements: [textElement],
+      connectors: [],
+      assets: [],
+      selection: [],
+      metadata: { ...board.metadata, updatedAt: new Date().toISOString() }
+    });
+    await store.replaceBoard(board.id, fixture);
+
+    const png = await store.exportArtboardPng(board.id, artboard.id);
+    const { data, info } = await sharp(png.filePath).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+
+    expect(countDarkPixels(data, info.width, info.channels, { left: 18, top: 22, right: 220, bottom: 92 })).toBeGreaterThan(40);
   });
 
   it("mirrors boards, assets, and exports to cloud storage", async () => {
@@ -201,4 +252,21 @@ class FailingCloudStore extends MemoryCloudStore {
   override async ensureReady(): Promise<void> {
     throw new Error("network unreachable");
   }
+}
+
+function countDarkPixels(data: Buffer, width: number, channels: number, bounds: { left: number; top: number; right: number; bottom: number }): number {
+  let count = 0;
+  for (let y = bounds.top; y < bounds.bottom; y += 1) {
+    for (let x = bounds.left; x < bounds.right; x += 1) {
+      const offset = (y * width + x) * channels;
+      const red = data[offset] ?? 255;
+      const green = data[offset + 1] ?? 255;
+      const blue = data[offset + 2] ?? 255;
+      const alpha = channels > 3 ? data[offset + 3] ?? 255 : 255;
+      if (alpha > 0 && red < 96 && green < 96 && blue < 96) {
+        count += 1;
+      }
+    }
+  }
+  return count;
 }

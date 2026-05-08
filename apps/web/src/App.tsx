@@ -165,6 +165,8 @@ export function App() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [zoom, setZoom] = useState(INITIAL_ZOOM);
   const [presetId, setPresetId] = useState(DEVICE_PRESETS[0]!.id);
+  const [newBoardDialogOpen, setNewBoardDialogOpen] = useState(false);
+  const [newBoardName, setNewBoardName] = useState("Untitled PowerBoard Board");
   const [drag, setDrag] = useState<DragState | null>(null);
   const [pan, setPan] = useState<PanState | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
@@ -496,17 +498,24 @@ export function App() {
   }
 
   async function createNewBoard() {
-    const name = window.prompt("Board name", "Untitled PowerBoard Board");
-    if (name === null) return;
+    setNewBoardName("Untitled PowerBoard Board");
+    setNewBoardDialogOpen(true);
+    setStatus("Name the new board");
+  }
+
+  async function submitNewBoard(event?: React.FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    const name = newBoardName.trim() || "Untitled PowerBoard Board";
     const seq = beginNavigation();
     try {
-      const next = await createBoard(name.trim() || "Untitled PowerBoard Board");
+      const next = await createBoard(name);
       if (!isCurrentNavigation(seq)) return;
       initialViewportPositionedRef.current = false;
       projectRef.current = next;
       setProject(next);
       selectedIdsRef.current = next.selection;
       setSelectedIds(next.selection);
+      setNewBoardDialogOpen(false);
       setHomeOpen(false);
       rememberBoard(next);
       writeRoute({ view: "board", boardId: next.id }, "push");
@@ -515,6 +524,11 @@ export function App() {
       if (!isCurrentNavigation(seq)) return;
       setStatus(error instanceof Error ? error.message : "Could not create board");
     }
+  }
+
+  function cancelNewBoard() {
+    setNewBoardDialogOpen(false);
+    setStatus(homeOpen ? "Boards" : project?.name ?? "PowerBoard");
   }
 
   async function showHome(routeMode: RouteMode = "push") {
@@ -1249,10 +1263,9 @@ export function App() {
           <div className="layers-list">
             {project.artboards.map((artboard) => (
               <div key={artboard.id} className="layer-group">
-                <button className={selectedIds.includes(artboard.id) ? "layer-row selected" : "layer-row"} onClick={(event) => select([artboard.id], event.shiftKey)}>
+                <button className={selectedIds.includes(artboard.id) ? "layer-row selected" : "layer-row"} title={`${artboard.name} · ${artboard.id}`} onClick={(event) => select([artboard.id], event.shiftKey)}>
                   <Frame size={13} />
                   <span>{artboard.name}</span>
-                  <small>{artboard.id}</small>
                 </button>
                 {(elementIndexes.layerRootsByArtboard.get(artboard.id) ?? []).map((element) => (
                   <LayerNode
@@ -1345,6 +1358,28 @@ export function App() {
       ) : null}
 
         </>
+      ) : null}
+
+      {newBoardDialogOpen ? (
+        <div className="dialog-backdrop" role="presentation">
+          <form className="new-board-dialog" role="dialog" aria-modal="true" aria-labelledby="new-board-title" onSubmit={submitNewBoard}>
+            <div>
+              <h2 id="new-board-title">New board</h2>
+            </div>
+            <label className="field">
+              <span>Board name</span>
+              <input value={newBoardName} autoFocus onChange={(event) => setNewBoardName(event.target.value)} />
+            </label>
+            <div className="dialog-actions">
+              <button type="button" onClick={cancelNewBoard}>
+                Cancel
+              </button>
+              <button type="submit">
+                <Plus size={15} /> Create
+              </button>
+            </div>
+          </form>
+        </div>
       ) : null}
 
       <footer className="statusbar">
@@ -1506,7 +1541,6 @@ function LayerNode({
         <button onClick={(event) => onSelect([element.id], event.shiftKey)} title={`${element.name} · ${element.id}`}>
           {children.length ? <ChevronDown size={11} /> : <span className="layer-spacer" />}
           <span>{element.name}</span>
-          <small>{element.id}</small>
         </button>
         <button title={element.visible ? "Hide" : "Show"} onClick={() => onUpdate(element.id, { visible: !element.visible })}>
           {element.visible ? <Eye size={12} /> : <EyeOff size={12} />}
@@ -1571,7 +1605,6 @@ function ArtboardView({
         }}
       >
         <span>{artboard.name}</span>
-        <small>{artboard.id}</small>
         {bitmapOnly ? <em>Image-only</em> : null}
       </button>
       <div className="artboard-surface" style={{ background: artboard.background, borderRadius: artboard.type === "mobile" ? 42 : artboard.type === "tablet" ? 30 : 18 }} onPointerDown={(event) => (event.stopPropagation(), onSelect([artboard.id], event.shiftKey))}>
@@ -1599,9 +1632,8 @@ function ArtboardView({
       {selectedElements.length ? (
         <div className="selection-badge-layer" aria-hidden="true">
           {selectedElements.map(({ element, position }) => (
-            <span key={element.id} className="element-name-badge" style={{ left: position.x - 2, top: position.y - 24 }}>
+            <span key={element.id} className="element-name-badge" title={`${element.name} · ${element.id}`} style={{ left: position.x - 2, top: position.y - 24 }}>
               {element.name}
-              <small>{element.id}</small>
             </span>
           ))}
         </div>
@@ -1863,13 +1895,17 @@ function SelectionInspector({
           const element = project.elements.find((candidate) => candidate.id === id);
           const artboard = project.artboards.find((candidate) => candidate.id === id);
           return (
-            <div key={id} className="selection-row">
+            <div key={id} className="selection-row" title={`${element?.name ?? artboard?.name ?? id} · ${id}`}>
               <span>{element?.name ?? artboard?.name ?? id}</span>
-              <small>{id}</small>
+              <small>{element?.type ?? (artboard ? "frame" : "unknown")}</small>
             </div>
           );
         })}
       </div>
+      <details className="id-details">
+        <summary>Selection IDs</summary>
+        <ReadOnlyField label="IDs" value={selectedIds.join(", ")} copyable />
+      </details>
     </div>
   );
 }
@@ -1887,7 +1923,7 @@ function ElementInspector({
 }) {
   return (
     <div className="inspector-fields">
-      <ReadOnlyField label="Identifier" value={element.id} />
+      <ReadOnlyField label="Internal ID" value={element.id} copyable />
       <ReadOnlyField label="Path" value={elementPath(project, element)} />
       <Field label="Name" value={element.name} onChange={(name) => onChange({ name })} />
       <Field label="Role" value={element.semanticRole ?? ""} onChange={(semanticRole) => onChange({ semanticRole })} />
@@ -1926,7 +1962,7 @@ function ElementInspector({
 function ArtboardInspector({ artboard, onChange }: { artboard: Artboard; onChange: (patch: Partial<Artboard>) => void }) {
   return (
     <div className="inspector-fields">
-      <ReadOnlyField label="Identifier" value={artboard.id} />
+      <ReadOnlyField label="Internal ID" value={artboard.id} copyable />
       <Field label="Name" value={artboard.name} onChange={(name) => onChange({ name })} />
       <ColorField label="Background" value={artboard.background} onChange={(background) => onChange({ background })} />
       <div className="field-grid two-col">
@@ -1944,12 +1980,31 @@ function ArtboardInspector({ artboard, onChange }: { artboard: Artboard; onChang
   );
 }
 
-function ReadOnlyField({ label, value }: { label: string; value: string }) {
+function ReadOnlyField({ label, value, copyable = false }: { label: string; value: string; copyable?: boolean }) {
+  const [copied, setCopied] = useState(false);
+  async function copyValue() {
+    try {
+      if (!navigator.clipboard?.writeText) return;
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setCopied(false);
+    }
+  }
   return (
-    <label className="field readonly-field">
+    <div className="field readonly-field">
       <span>{label}</span>
-      <input value={value} readOnly />
-    </label>
+      <div className="readonly-value-row">
+        <input value={value} readOnly onFocus={(event) => event.currentTarget.select()} />
+        {copyable ? (
+          <button type="button" title={`Copy ${label}`} onClick={() => void copyValue()}>
+            <Copy size={14} />
+            <span>{copied ? "Copied" : "Copy"}</span>
+          </button>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

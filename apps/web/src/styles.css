@@ -444,6 +444,70 @@ button {
   padding: 0 14px;
 }
 
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.26);
+  padding: 24px;
+}
+
+.new-board-dialog {
+  display: grid;
+  width: min(420px, 100%);
+  gap: 16px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.26);
+  padding: 18px;
+}
+
+.new-board-dialog h2 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 850;
+  letter-spacing: 0;
+}
+
+.new-board-dialog p {
+  margin: 5px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dialog-actions button {
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 780;
+  padding: 0 12px;
+}
+
+.dialog-actions button[type="submit"] {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #ffffff;
+}
+
 .left-panel,
 .right-panel {
   display: flex;
@@ -798,11 +862,6 @@ button {
   white-space: nowrap;
 }
 
-.artboard-label small {
-  margin-left: 8px;
-  max-width: 120px;
-}
-
 .artboard-label em {
   margin-left: 8px;
   border-radius: 999px;
@@ -918,10 +977,6 @@ button {
   padding: 0 8px;
   pointer-events: none;
   white-space: nowrap;
-}
-
-.element-name-badge small {
-  max-width: 160px;
 }
 
 .board-element.kind-button,
@@ -1229,6 +1284,34 @@ button {
   font-size: 11px;
 }
 
+.readonly-value-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.readonly-value-row button {
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 780;
+  padding: 0 9px;
+  text-transform: none;
+}
+
+.readonly-value-row button:hover {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
 .field input[type="range"] {
   padding: 0;
 }
@@ -1308,8 +1391,28 @@ button {
 
 .selection-row small {
   color: #64748b;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 10px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.id-details {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.id-details summary {
+  color: #475569;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.id-details .readonly-field {
+  margin-top: 8px;
 }
 
 .empty-inspector {

@@ -37,12 +37,16 @@ To migrate any local board folders into Supabase, run `npm run sync:cloud`. This
 - `npm run build`
 - `npm test`
 - `npm run mcp`
+- `npm run mcp:check`
+- `npm run cloud:safety -- --mode=canary`
 
 The web app runs on `http://127.0.0.1:5173` and the local server runs on `http://127.0.0.1:4318`.
 
 ## MCP Connector
 
 For live agent control while the browser board is open, start PowerBoard with `npm run dev`, then connect MCP-capable agents to `http://127.0.0.1:4318/mcp` using streamable HTTP. `POWERBOARD_STORAGE_MODE=cloud` must be enabled so MCP changes go directly to Supabase.
+
+Run `npm run mcp:check` before agent-heavy work to prove the stdio MCP server exposes the expected PowerBoard tools. The check uses a temporary local board root when cloud credentials are not available, so it verifies tool exposure without writing to production boards. Use `npm run mcp:check -- --require-cloud` only when `SUPABASE_DB_URL` is available and the local stdio server must be proven in cloud mode.
 
 For stdio-based MCP clients, use:
 
@@ -56,6 +60,26 @@ POWERBOARD_STORAGE_MODE = "cloud"
 ```
 
 Project agent files can include the connector note in `AGENTS.md` or `agent.md` so future agents know to use PowerBoard for mockups and UI iteration.
+
+Agents should prefer MCP tools for reads, edits, validation, and exports. Raw REST calls are a fallback for health/status reads or emergency diagnostics; arbitrary object mutation through `PUT /api/boards/:boardId` should not be the normal workflow because it bypasses the agent operation metadata and makes live collaboration harder to audit.
+
+## Cloud Safety
+
+Before risky board or exporter work, create a dry-run safety plan:
+
+```bash
+npm run cloud:safety -- --mode=canary
+npm run cloud:safety -- --mode=backup --board <boardId>
+```
+
+Dry-run is the default and does not create or change cloud boards. To create a clearly named canary or backup duplicate, rerun with `--write` after production health is green and `SUPABASE_DB_URL` is available:
+
+```bash
+npm run cloud:safety -- --mode=canary --write
+npm run cloud:safety -- --mode=backup --board <boardId> --write
+```
+
+These commands create new cloud boards only. They do not mutate active production boards.
 
 ## Vercel
 

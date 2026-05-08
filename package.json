@@ -13,6 +13,8 @@
     "test": "vitest run",
     "typecheck": "npm run typecheck --workspace @powerboard/schema && npm run typecheck --workspace @powerboard/renderers && npm run typecheck --workspace @powerboard/server && npm run typecheck --workspace @powerboard/web",
     "mcp": "npm run mcp --workspace @powerboard/server",
+    "mcp:check": "npm run mcp:check --workspace @powerboard/server",
+    "cloud:safety": "tsx apps/server/src/cloudSafety.ts",
     "sync:cloud": "npm run sync:cloud --workspace @powerboard/server"
   },
   "devDependencies": {
