@@ -118,6 +118,7 @@ describe("BoardStore", () => {
     const inspection = await store.inspectSelection(board.id);
     const node = inspection.nodes[0];
 
+    expect(inspection.requestedSelection).toEqual([element.id]);
     expect(inspection.effectiveSelection).toEqual([element.id]);
     expect(node).toMatchObject({
       kind: "element",
@@ -127,6 +128,10 @@ describe("BoardStore", () => {
     });
     expect(node?.kind === "element" ? node.computedStyle.background : undefined).toBe("#FFFFFF");
     expect(node?.kind === "element" ? node.computedStyle.borderRadius : undefined).toBe("24px");
+
+    const emptyExplicitSelection = await store.inspectSelection(board.id, []);
+    expect(emptyExplicitSelection.requestedSelection).toEqual([element.id]);
+    expect(emptyExplicitSelection.effectiveSelection).toEqual([element.id]);
   });
 
   it("exports selected artboard handoff with JSX and optional PNG", async () => {

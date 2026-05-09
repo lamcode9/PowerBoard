@@ -489,13 +489,15 @@ export class BoardStore {
 
   async inspectSelection(boardId: string, selection?: string[]): Promise<SelectionInspection> {
     const project = await this.readBoard(boardId);
-    const effectiveSelection = resolveSelection(project, selection ?? this.getSelection(boardId));
+    const currentSelection = selection ?? this.getSelection(boardId);
+    const requestedSelection = currentSelection.length ? currentSelection : project.selection;
+    const effectiveSelection = resolveSelection(project, requestedSelection);
     const pathByElementId = elementPathMap(project);
     const nodes = effectiveSelection.map((id) => inspectSelectionNode(project, id, pathByElementId)).filter((node): node is InspectedArtboard | InspectedElement | InspectedConnector => Boolean(node));
     return {
       boardId: project.id,
       boardName: project.name,
-      requestedSelection: selection ?? this.getSelection(boardId),
+      requestedSelection,
       effectiveSelection,
       nodes,
       validation: validateBoardStructure(project).summary
