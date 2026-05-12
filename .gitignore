@@ -11,3 +11,4 @@ boards/*/assets/
 boards/*/board.json
 !boards/.gitkeep
 .vercel
+.claude/
