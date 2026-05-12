@@ -323,6 +323,7 @@ function renderElementSvg(project: BoardProject, element: BoardElement, offsetX 
   const opacity = element.style.opacity ?? 1;
   const color = element.style.color ?? "#111827";
   const fontSize = element.style.fontSize ?? 14;
+  const fontFamily = escapeAttr(svgFontFamily(project, element));
   const children = project.elements
     .filter((child) => child.parentId === element.id && child.visible)
     .sort((a, b) => a.zIndex - b.zIndex)
@@ -333,8 +334,10 @@ function renderElementSvg(project: BoardProject, element: BoardElement, offsetX 
     case "frame":
     case "group":
       return `<g opacity="${opacity}">${isHierarchyOnly(element) ? "" : `<rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}" stroke-width="${element.style.strokeWidth ?? 0}"/>`}${children}</g>`;
-    case "text":
-      return `<text x="${x}" y="${y + fontSize}" width="${element.width}" fill="${escapeAttr(color)}" font-size="${fontSize}" font-weight="${escapeAttr(String(element.style.fontWeight ?? 600))}">${escapeXml(readString(element.props.text, element.name))}</text>`;
+    case "text": {
+      const { textX, textAnchor } = svgTextAlignment(element, x);
+      return `<text x="${textX}" y="${y + fontSize}" width="${element.width}" fill="${escapeAttr(color)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${escapeAttr(String(element.style.fontWeight ?? 600))}" text-anchor="${textAnchor}">${escapeXml(readString(element.props.text, element.name))}</text>`;
+    }
     case "icon": {
       const size = Math.min(element.width, element.height) * 0.56;
       const iconX = x + (element.width - size) / 2;
@@ -358,7 +361,7 @@ function renderElementSvg(project: BoardProject, element: BoardElement, offsetX 
     }
     case "button":
     case "badge":
-      return `<g opacity="${opacity}"><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}"/><text x="${x + element.width / 2}" y="${y + element.height / 2 + fontSize / 3}" fill="${escapeAttr(color)}" font-size="${fontSize}" font-weight="700" text-anchor="middle">${escapeXml(readString(element.props.text, element.name))}</text>${children}</g>`;
+      return `<g opacity="${opacity}"><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}"/><text x="${x + element.width / 2}" y="${y + element.height / 2 + fontSize / 3}" fill="${escapeAttr(color)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="700" text-anchor="middle">${escapeXml(readString(element.props.text, element.name))}</text>${children}</g>`;
     case "chart": {
       const values = readNumberArray(element.props.values, [20, 48, 34, 72, 55]);
       const bars = values
@@ -371,25 +374,39 @@ function renderElementSvg(project: BoardProject, element: BoardElement, offsetX 
           return `<rect x="${barX}" y="${barY}" width="${barWidth}" height="${barHeight}" rx="6" fill="#3B82F6"/>`;
         })
         .join("");
-      return `<g opacity="${opacity}"><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}"/><text x="${x + 18}" y="${y + 32}" fill="${escapeAttr(color)}" font-size="14" font-weight="800">${escapeXml(readString(element.props.title, "Chart"))}</text>${bars}${children}</g>`;
+      return `<g opacity="${opacity}"><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}"/><text x="${x + 18}" y="${y + 32}" fill="${escapeAttr(color)}" font-family="${fontFamily}" font-size="14" font-weight="800">${escapeXml(readString(element.props.title, "Chart"))}</text>${bars}${children}</g>`;
     }
     case "image":
     case "screenshotOverlay": {
       const asset = project.assets.find((candidate) => candidate.id === element.props.assetId);
       const image = asset ? `<image href="${escapeAttr(asset.src)}" x="${x}" y="${y}" width="${element.width}" height="${element.height}" preserveAspectRatio="xMidYMid slice" opacity="${opacity}"/>` : "";
-      return `<g><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill || "#E2E8F0")}" stroke="${escapeAttr(stroke)}" opacity="${opacity}"/>${image}<text x="${x + element.width / 2}" y="${y + element.height / 2}" fill="#64748B" font-size="13" text-anchor="middle">${asset ? "" : escapeXml(element.type === "screenshotOverlay" ? "Screenshot overlay" : "Image")}</text>${children}</g>`;
+      return `<g><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill || "#E2E8F0")}" stroke="${escapeAttr(stroke)}" opacity="${opacity}"/>${image}<text x="${x + element.width / 2}" y="${y + element.height / 2}" fill="#64748B" font-family="${fontFamily}" font-size="13" text-anchor="middle">${asset ? "" : escapeXml(element.type === "screenshotOverlay" ? "Screenshot overlay" : "Image")}</text>${children}</g>`;
     }
     default:
-      return `<g opacity="${opacity}"><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}"/><text x="${x + 18}" y="${y + 32}" fill="${escapeAttr(color)}" font-size="${fontSize}" font-weight="800">${escapeXml(readString(element.props.title ?? element.props.text ?? element.name, element.name))}</text>${renderSecondarySvgLines(element, x, y)}${children}</g>`;
+      return `<g opacity="${opacity}"><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}"/><text x="${x + 18}" y="${y + 32}" fill="${escapeAttr(color)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="800">${escapeXml(readString(element.props.title ?? element.props.text ?? element.name, element.name))}</text>${renderSecondarySvgLines(project, element, x, y)}${children}</g>`;
   }
 }
 
-function renderSecondarySvgLines(element: BoardElement, x: number, y: number): string {
+function renderSecondarySvgLines(project: BoardProject, element: BoardElement, x: number, y: number): string {
   const subtitle = readString(element.props.subtitle ?? element.props.body ?? element.props.price, "");
   if (!subtitle) {
     return "";
   }
-  return `<text x="${x + 18}" y="${y + 58}" fill="${escapeAttr(element.style.color ?? "#64748B")}" opacity="0.7" font-size="13">${escapeXml(subtitle)}</text>`;
+  return `<text x="${x + 18}" y="${y + 58}" fill="${escapeAttr(element.style.color ?? "#64748B")}" font-family="${escapeAttr(svgFontFamily(project, element))}" opacity="0.7" font-size="13">${escapeXml(subtitle)}</text>`;
+}
+
+function svgFontFamily(project: BoardProject, element: BoardElement): string {
+  return element.style.fontFamily ?? project.tokens.fonts.sans ?? "Inter, Arial, Helvetica, sans-serif";
+}
+
+function svgTextAlignment(element: BoardElement, x: number): { textX: number; textAnchor: "start" | "middle" | "end" } {
+  if (element.style.textAlign === "center") {
+    return { textX: x + element.width / 2, textAnchor: "middle" };
+  }
+  if (element.style.textAlign === "right") {
+    return { textX: x + element.width, textAnchor: "end" };
+  }
+  return { textX: x, textAnchor: "start" };
 }
 
 function absoluteElementPosition(project: BoardProject, element: BoardElement): { x: number; y: number } {
