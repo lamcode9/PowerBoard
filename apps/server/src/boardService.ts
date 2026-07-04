@@ -15,9 +15,11 @@ import {
   validateBoardProject,
   validateBoardStructure
 } from "@powerboard/schema";
-import { renderArtboardReactTailwind, renderArtboardSvg, renderReactTailwind, renderSpecMarkdown, type RenderedFile } from "@powerboard/renderers";
+import { renderArtboardReactTailwind, renderArtboardSvg, renderMermaid, renderPageSvg, renderReactTailwind, renderSpecMarkdown, type RenderedFile } from "@powerboard/renderers";
 import sharp from "sharp";
+import { jpegToPdf } from "./pdf.js";
 import { CloudFileRecord, CloudStore, createCloudStoreFromEnv } from "./cloudStore.js";
+import { HistoryStore, OpLogEntry } from "./historyStore.js";
 import { boardRoot as defaultBoardRoot, ensureInsideRoot, safeSegment } from "./paths.js";
 
 interface BoardSummary {
@@ -116,16 +118,21 @@ export interface SelectionHandoff {
 }
 
 export class BoardStore {
+  // Cloud mode keeps history in memory (boards live remotely); local/mirror modes use the
+  // disk-backed HistoryStore so undo/redo and the op-log survive restarts (decision D6).
   private undoStacks = new Map<string, BoardProject[]>();
   private redoStacks = new Map<string, BoardProject[]>();
   private selections = new Map<string, string[]>();
   private cloudUnavailableStatus: string | undefined;
+  private readonly history: HistoryStore;
 
   constructor(
     private readonly root = defaultBoardRoot,
     private cloud: CloudStore | undefined = createCloudStoreFromEnv(),
     private readonly storageMode: StorageMode = storageModeFromEnv()
-  ) {}
+  ) {
+    this.history = new HistoryStore(this.root);
+  }
 
   async ensureReady(): Promise<void> {
     if (!this.isCloudPrimary()) {
@@ -276,43 +283,108 @@ export class BoardStore {
     if (options.source === "agent") {
       next = markAgentEdited(next, operation, options.actor);
     }
-    this.pushUndo(boardId, current);
-    this.redoStacks.set(boardId, []);
-    return this.writeBoard(next);
+    await this.pushUndoState(boardId, current);
+    await this.clearRedoState(boardId);
+    const written = await this.writeBoard(next);
+    await this.logOperation(boardId, {
+      at: written.metadata.updatedAt,
+      source: options.source ?? "user",
+      actor: options.actor,
+      type: operation.type,
+      targetIds: targetIdsForOperation(operation, written)
+    });
+    return written;
   }
 
-  async replaceBoard(boardId: string, project: BoardProject): Promise<BoardProject> {
+  /**
+   * Atomic batch: every operation validates and applies against a draft; only if ALL
+   * succeed is the result written (one undo entry). Conflict detection via expectedUpdatedAt.
+   */
+  async applyOperations(
+    boardId: string,
+    operations: BoardOperation[],
+    options: ApplyOperationOptions & { expectedUpdatedAt?: string } = {}
+  ): Promise<{ project: BoardProject; applied: number }> {
+    const current = await this.readBoard(boardId);
+    if (options.expectedUpdatedAt && options.expectedUpdatedAt !== current.metadata.updatedAt) {
+      throw new Error(
+        `Conflict: board changed since you read it (expected updatedAt ${options.expectedUpdatedAt}, actual ${current.metadata.updatedAt}). Re-read the board and retry.`
+      );
+    }
+    let draft = current;
+    for (let index = 0; index < operations.length; index++) {
+      try {
+        draft = applyBoardOperation(draft, operations[index]!);
+      } catch (error) {
+        throw new Error(`Batch aborted, nothing was written. operations[${index}] (${operations[index]!.type}) failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    if (options.source === "agent") {
+      draft = markAgentEdited(draft, operations[operations.length - 1]!, options.actor);
+    }
+    await this.pushUndoState(boardId, current);
+    await this.clearRedoState(boardId);
+    const written = await this.writeBoard(draft);
+    for (const operation of operations) {
+      await this.logOperation(boardId, {
+        at: written.metadata.updatedAt,
+        source: options.source ?? "user",
+        actor: options.actor,
+        type: operation.type,
+        targetIds: targetIdsForOperation(operation, written)
+      });
+    }
+    return { project: written, applied: operations.length };
+  }
+
+  async replaceBoard(boardId: string, project: BoardProject, options: ApplyOperationOptions = {}): Promise<BoardProject> {
     if (boardId !== project.id) {
       throw new Error("Board id in URL and body must match.");
     }
     const current = await this.readBoard(boardId).catch(() => undefined);
-    if (current) this.pushUndo(boardId, current);
-    this.redoStacks.set(boardId, []);
-    return this.writeBoard(project);
+    if (current) await this.pushUndoState(boardId, current);
+    await this.clearRedoState(boardId);
+    const written = await this.writeBoard(project);
+    await this.logOperation(boardId, {
+      at: written.metadata.updatedAt,
+      source: options.source ?? "user",
+      actor: options.actor,
+      type: "replace_board",
+      targetIds: [boardId]
+    });
+    return written;
   }
 
   async undo(boardId: string): Promise<BoardProject> {
-    const stack = this.undoStacks.get(boardId) ?? [];
-    const previous = stack.pop();
+    const previous = await this.popUndoState(boardId);
     if (!previous) {
       return this.readBoard(boardId);
     }
     const current = await this.readBoard(boardId);
-    this.pushRedo(boardId, current);
-    this.undoStacks.set(boardId, stack);
+    await this.pushRedoState(boardId, current);
     return this.writeBoard(previous);
   }
 
   async redo(boardId: string): Promise<BoardProject> {
-    const stack = this.redoStacks.get(boardId) ?? [];
-    const next = stack.pop();
+    const next = await this.popRedoState(boardId);
     if (!next) {
       return this.readBoard(boardId);
     }
     const current = await this.readBoard(boardId);
-    this.pushUndo(boardId, current);
-    this.redoStacks.set(boardId, stack);
+    await this.pushUndoState(boardId, current);
     return this.writeBoard(next);
+  }
+
+  async historyDepths(boardId: string): Promise<{ undo: number; redo: number }> {
+    if (this.isCloudPrimary()) {
+      return { undo: (this.undoStacks.get(boardId) ?? []).length, redo: (this.redoStacks.get(boardId) ?? []).length };
+    }
+    return this.history.depths(boardId);
+  }
+
+  async readOpLog(boardId: string, limit = 100): Promise<OpLogEntry[]> {
+    if (this.isCloudPrimary()) return [];
+    return this.history.readOpLog(boardId, limit);
   }
 
   getSelection(boardId: string): string[] {
@@ -453,6 +525,51 @@ export class BoardStore {
     return { filePath };
   }
 
+  async exportPageSvg(boardId: string, pageId?: string): Promise<{ filePath: string; svg: string }> {
+    const project = await this.readBoard(boardId);
+    const svg = renderPageSvg(project, pageId);
+    const fileName = `${safeSegment(project.pages.find((page) => page.id === pageId)?.name ?? "page")}.svg`;
+    const filePath = this.isCloudPrimary() ? `cloud://${boardId}/exports/${fileName}` : path.join(await this.ensureExportDir(boardId), fileName);
+    if (!this.isCloudPrimary()) {
+      await fs.writeFile(filePath, svg, "utf8");
+    }
+    await this.cloudExportWrite(boardId, `exports/${fileName}`, "image/svg+xml", Buffer.from(svg, "utf8"));
+    return { filePath, svg };
+  }
+
+  async exportPagePdf(boardId: string, pageId?: string): Promise<{ filePath: string }> {
+    const project = await this.readBoard(boardId);
+    const svg = renderPageSvg(project, pageId);
+    const image = sharp(Buffer.from(svg));
+    const { width, height } = await image.metadata();
+    const jpeg = await image.flatten({ background: "#F1F5F9" }).jpeg({ quality: 92 }).toBuffer();
+    const pdf = jpegToPdf(jpeg, width ?? 1200, height ?? 800);
+    const fileName = `${safeSegment(project.pages.find((page) => page.id === pageId)?.name ?? "page")}.pdf`;
+    const filePath = this.isCloudPrimary() ? `cloud://${boardId}/exports/${fileName}` : path.join(await this.ensureExportDir(boardId), fileName);
+    if (!this.isCloudPrimary()) {
+      await fs.writeFile(filePath, pdf);
+    }
+    await this.cloudExportWrite(boardId, `exports/${fileName}`, "application/pdf", pdf);
+    return { filePath };
+  }
+
+  async exportMermaid(boardId: string): Promise<{ filePath: string; mermaid: string }> {
+    const project = await this.readBoard(boardId);
+    const mermaid = renderMermaid(project);
+    const filePath = this.isCloudPrimary() ? `cloud://${boardId}/exports/diagram.mmd` : path.join(await this.ensureExportDir(boardId), "diagram.mmd");
+    if (!this.isCloudPrimary()) {
+      await fs.writeFile(filePath, mermaid, "utf8");
+    }
+    await this.cloudExportWrite(boardId, "exports/diagram.mmd", "text/plain; charset=utf-8", Buffer.from(mermaid, "utf8"));
+    return { filePath, mermaid };
+  }
+
+  private async cloudExportWrite(boardId: string, relativePath: string, contentType: string, data: Buffer): Promise<void> {
+    const cloud = this.isCloudPrimary() ? this.requiredCloud() : this.cloud;
+    if (!cloud) return;
+    await cloud.writeFile({ boardId, path: relativePath, kind: "export", contentType, data });
+  }
+
   async summarizeBoard(boardId: string): Promise<string> {
     const project = await this.readBoard(boardId);
     const artboards = project.artboards.map((artboard) => `${artboard.name} (${artboard.type}, ${Math.round(artboard.width)}x${Math.round(artboard.height)})`).join(", ");
@@ -555,16 +672,57 @@ export class BoardStore {
     return dir;
   }
 
-  private pushUndo(boardId: string, project: BoardProject): void {
-    const stack = this.undoStacks.get(boardId) ?? [];
-    stack.push(project);
-    this.undoStacks.set(boardId, stack.slice(-50));
+  private async pushUndoState(boardId: string, project: BoardProject): Promise<void> {
+    if (this.isCloudPrimary()) {
+      const stack = this.undoStacks.get(boardId) ?? [];
+      stack.push(project);
+      this.undoStacks.set(boardId, stack.slice(-50));
+      return;
+    }
+    await this.history.pushUndo(boardId, project);
   }
 
-  private pushRedo(boardId: string, project: BoardProject): void {
-    const stack = this.redoStacks.get(boardId) ?? [];
-    stack.push(project);
-    this.redoStacks.set(boardId, stack.slice(-50));
+  private async popUndoState(boardId: string): Promise<BoardProject | undefined> {
+    if (this.isCloudPrimary()) {
+      return (this.undoStacks.get(boardId) ?? []).pop();
+    }
+    return this.history.popUndo(boardId);
+  }
+
+  private async pushRedoState(boardId: string, project: BoardProject): Promise<void> {
+    if (this.isCloudPrimary()) {
+      const stack = this.redoStacks.get(boardId) ?? [];
+      stack.push(project);
+      this.redoStacks.set(boardId, stack.slice(-50));
+      return;
+    }
+    await this.history.pushRedo(boardId, project);
+  }
+
+  private async popRedoState(boardId: string): Promise<BoardProject | undefined> {
+    if (this.isCloudPrimary()) {
+      return (this.redoStacks.get(boardId) ?? []).pop();
+    }
+    return this.history.popRedo(boardId);
+  }
+
+  private async clearRedoState(boardId: string): Promise<void> {
+    if (this.isCloudPrimary()) {
+      this.redoStacks.set(boardId, []);
+      return;
+    }
+    await this.history.clearRedo(boardId);
+  }
+
+  private async logOperation(boardId: string, entry: Omit<OpLogEntry, "seq">): Promise<void> {
+    if (this.isCloudPrimary()) return;
+    try {
+      await this.history.appendOpLog(boardId, entry);
+    } catch (error) {
+      // The board write already succeeded; a failed log line must not corrupt the edit,
+      // but it must be visible.
+      console.error(`PowerBoard op-log append failed for ${boardId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private isCloudPrimary(): boolean {
@@ -791,6 +949,13 @@ export function targetIdsForOperation(operation: BoardOperation, projectAfter?: 
       return [operation.group.id, ...operation.elementIds];
     case "add_connector":
       return [operation.connector.id];
+    case "update_connector":
+    case "delete_connector":
+      return [operation.connectorId];
+    case "delete_artboard":
+      return [operation.artboardId];
+    case "apply_layout":
+      return operation.elementIds ?? projectAfter?.selection ?? [];
     case "set_selection":
       return operation.selection;
     default:

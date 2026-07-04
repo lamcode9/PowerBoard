@@ -149,3 +149,100 @@ describe("Board operations", () => {
     expect(next.selection).toEqual([artboardId, elementId]);
   });
 });
+
+describe("Connector v2 + diagram operations", () => {
+  it("defaults new connector fields and updates them via update_connector", () => {
+    const project = createDefaultProject();
+    const connector = project.connectors[0]!;
+    expect(connector.routing).toBe("curved");
+    expect(connector.arrowEnd).toBe("arrow");
+    expect(connector.waypoints).toEqual([]);
+
+    const next = applyBoardOperation(project, {
+      type: "update_connector",
+      connectorId: connector.id,
+      patch: { routing: "orthogonal", arrowEnd: "triangle", waypoints: [{ x: 500, y: 300 }], label: "Go", style: { stroke: "#DC2626" } }
+    });
+    const updated = next.connectors[0]!;
+    expect(updated.routing).toBe("orthogonal");
+    expect(updated.arrowEnd).toBe("triangle");
+    expect(updated.waypoints).toEqual([{ x: 500, y: 300 }]);
+    expect(updated.style.stroke).toBe("#DC2626");
+    expect(next.selection).toEqual([connector.id]);
+  });
+
+  it("deletes connectors and rejects unknown ids", () => {
+    const project = createDefaultProject();
+    const next = applyBoardOperation(project, { type: "delete_connector", connectorId: project.connectors[0]!.id });
+    expect(next.connectors).toHaveLength(0);
+    expect(() => applyBoardOperation(project, { type: "delete_connector", connectorId: "nope" })).toThrow(/not found/i);
+  });
+
+  it("delete_artboard removes elements, connectors, and page references", () => {
+    const project = createDefaultProject();
+    const artboardId = project.artboards[0]!.id;
+    const next = applyBoardOperation(project, { type: "delete_artboard", artboardId });
+    expect(next.artboards.some((artboard) => artboard.id === artboardId)).toBe(false);
+    expect(next.elements.some((element) => element.artboardId === artboardId)).toBe(false);
+    expect(next.connectors.some((connector) => connector.fromArtboardId === artboardId || connector.toArtboardId === artboardId)).toBe(false);
+    expect(next.pages.every((page) => !page.artboardIds.includes(artboardId))).toBe(true);
+  });
+
+  it("lays out an org tree from connectors", () => {
+    let project = createDefaultProject();
+    const artboardId = project.artboards[0]!.id;
+    const root = createElementFromPreset("shape", artboardId, 0, 0);
+    const childA = createElementFromPreset("shape", artboardId, 10, 10);
+    const childB = createElementFromPreset("shape", artboardId, 20, 20);
+    for (const element of [root, childA, childB]) {
+      project = applyBoardOperation(project, { type: "add_element", element });
+    }
+    for (const child of [childA, childB]) {
+      project = applyBoardOperation(project, {
+        type: "add_connector",
+        connector: { id: `conn_${child.id}`, fromArtboardId: artboardId, toArtboardId: artboardId, fromElementId: root.id, toElementId: child.id }
+      });
+    }
+    const next = applyBoardOperation(project, { type: "apply_layout", layout: "tree", elementIds: [root.id, childA.id, childB.id], spacingX: 40, spacingY: 60 });
+    const laidRoot = next.elements.find((element) => element.id === root.id)!;
+    const laidA = next.elements.find((element) => element.id === childA.id)!;
+    const laidB = next.elements.find((element) => element.id === childB.id)!;
+    expect(laidA.y).toBe(laidRoot.y + laidRoot.height + 60);
+    expect(laidB.y).toBe(laidA.y);
+    expect(laidB.x).toBeGreaterThan(laidA.x);
+    // Root is centered over its children.
+    const childrenCenter = (laidA.x + (laidB.x + laidB.width)) / 2;
+    expect(Math.abs(laidRoot.x + laidRoot.width / 2 - childrenCenter)).toBeLessThan(1);
+  });
+
+  it("aligns and distributes elements", () => {
+    let project = createDefaultProject();
+    const artboardId = project.artboards[0]!.id;
+    const a = { ...createElementFromPreset("shape", artboardId, 0, 5), width: 50, height: 20 };
+    const b = { ...createElementFromPreset("shape", artboardId, 100, 40), width: 50, height: 20 };
+    const c = { ...createElementFromPreset("shape", artboardId, 400, 80), width: 50, height: 20 };
+    for (const element of [a, b, c]) {
+      project = applyBoardOperation(project, { type: "add_element", element });
+    }
+    const aligned = applyBoardOperation(project, { type: "apply_layout", layout: "align-top", elementIds: [a.id, b.id, c.id], spacingX: 80, spacingY: 64 });
+    const ys = [a.id, b.id, c.id].map((id) => aligned.elements.find((element) => element.id === id)!.y);
+    expect(new Set(ys).size).toBe(1);
+
+    const distributed = applyBoardOperation(project, { type: "apply_layout", layout: "distribute-horizontal", elementIds: [a.id, b.id, c.id], spacingX: 80, spacingY: 64 });
+    const xs = [a.id, b.id, c.id].map((id) => distributed.elements.find((element) => element.id === id)!.x).sort((x1, x2) => x1 - x2);
+    expect(xs[1]! - xs[0]!).toBeCloseTo(xs[2]! - xs[1]!, 5);
+  });
+
+  it("flags unknown shape kinds and empty ink strokes as warnings", () => {
+    let project = createDefaultProject();
+    const artboardId = project.artboards[0]!.id;
+    const shape = { ...createElementFromPreset("shape", artboardId, 0, 0), props: { shape: "dodecahedron", text: "?" } };
+    const ink = createElementFromPreset("ink", artboardId, 0, 0);
+    project = applyBoardOperation(project, { type: "add_element", element: shape });
+    project = applyBoardOperation(project, { type: "add_element", element: ink });
+    const report = validateBoardStructure(project);
+    expect(report.issues.some((issue) => issue.code === "shape-unknown-kind")).toBe(true);
+    expect(report.issues.some((issue) => issue.code === "ink-needs-points")).toBe(true);
+    expect(report.valid).toBe(true);
+  });
+});

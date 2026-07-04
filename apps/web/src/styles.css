@@ -1547,3 +1547,669 @@ button {
     opacity: 1;
   }
 }
+
+/* ============================================================
+   Phase 3/4 surfaces: tools, diagram palette, agent feed, dialogs,
+   command palette, and a designed dark mode. Semantic tokens live
+   here so new components theme cleanly; existing surfaces get a
+   targeted [data-theme="dark"] remap below.
+   ============================================================ */
+
+:root {
+  --accent: #2563eb;
+  --accent-soft: rgba(37, 99, 235, 0.12);
+  --shape-tile-fill: #eff6ff;
+  --panel-bg: #f8fafc;
+  --panel-border: #cbd5e1;
+  --surface-1: #ffffff;
+  --surface-2: #f1f5f9;
+  --text-1: #0f172a;
+  --text-2: #64748b;
+  --hairline: #e2e8f0;
+}
+
+/* ---- Tool state cursors ---- */
+.canvas-viewport.tool-connect,
+.canvas-viewport.tool-connect .artboard-surface,
+.canvas-viewport.connect-armed {
+  cursor: crosshair;
+}
+.canvas-viewport.tool-ink,
+.canvas-viewport.tool-ink .artboard-surface {
+  cursor: crosshair;
+}
+
+/* ---- Palette mode switch ---- */
+.palette-mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin: 10px 12px 4px;
+  padding: 3px;
+  border-radius: 11px;
+  background: var(--surface-2);
+}
+.palette-mode-switch button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.palette-mode-switch button.active {
+  background: var(--surface-1);
+  color: var(--text-1);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+}
+
+/* ---- Diagram shape grid ---- */
+.shape-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.shape-tile {
+  display: grid;
+  gap: 5px;
+  justify-items: center;
+  padding: 9px 4px 6px;
+  border-radius: 10px;
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: border-color 0.14s ease, transform 0.14s ease;
+}
+.shape-tile:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.shape-tile svg {
+  width: 34px;
+  height: 26px;
+}
+
+/* ---- Diagram primitives on canvas ---- */
+.board-element.kind-shape,
+.board-element.kind-ink {
+  background: transparent;
+}
+.shape-primitive {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+.shape-primitive svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.shape-label {
+  position: relative;
+  z-index: 1;
+  padding: 0 8px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  pointer-events: none;
+}
+.ink-primitive,
+.line-primitive,
+.sparkline-primitive {
+  width: 100%;
+  height: 100%;
+}
+.ink-draft-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+
+/* ---- Connector v2 spine + label ---- */
+.connector-spine {
+  transition: stroke-width 0.12s ease;
+}
+.connector.selected .connector-spine {
+  filter: drop-shadow(0 0 2px rgba(37, 99, 235, 0.5));
+}
+.connector-label rect {
+  fill: var(--surface-1);
+  stroke: var(--hairline);
+}
+.connector-label text {
+  fill: var(--text-1);
+  font-size: 12px;
+  font-weight: 650;
+  stroke: none;
+}
+
+/* ---- Snap guides + marquee ---- */
+.snap-guide {
+  position: absolute;
+  z-index: 7;
+  pointer-events: none;
+  background: #f43f5e;
+}
+.snap-guide.vertical {
+  top: 0;
+  width: 1px;
+  height: 100%;
+}
+.snap-guide.horizontal {
+  left: 0;
+  height: 1px;
+  width: 100%;
+}
+.marquee-box {
+  position: absolute;
+  z-index: 7;
+  pointer-events: none;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 2px;
+}
+
+/* ---- Frameless artboard ---- */
+.artboard-frame.frameless .artboard-surface {
+  box-shadow: none;
+  border: 1px dashed rgba(100, 116, 139, 0.4);
+}
+.artboard-frame.connect-source .artboard-surface,
+.board-element.connect-source {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- Inline text editor ---- */
+.inline-text-editor {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: inherit;
+  border: 0;
+  outline: 2px solid var(--accent);
+  border-radius: inherit;
+  background: rgba(255, 255, 255, 0.96);
+  color: inherit;
+  font: inherit;
+  resize: none;
+  z-index: 3;
+}
+
+/* ---- Agent feed ---- */
+.agent-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.agent-feed-row {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 7px 8px;
+  border-radius: 9px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.agent-feed-row:hover {
+  background: var(--surface-2);
+}
+.agent-feed-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #14b8a6;
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.16);
+}
+.agent-feed-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.agent-feed-message {
+  color: var(--text-1);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.agent-feed-meta {
+  color: var(--text-2);
+  font-size: 10.5px;
+}
+.agent-feed-empty {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 18px 12px;
+  color: var(--text-2);
+  text-align: center;
+}
+.agent-feed-empty p {
+  margin: 0;
+  font-weight: 650;
+  font-size: 12px;
+}
+.agent-feed-empty small {
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+/* ---- Align grid + toggle rows ---- */
+.align-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+}
+.align-grid button {
+  display: grid;
+  place-items: center;
+  padding: 7px 0;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-1);
+  cursor: pointer;
+}
+.align-grid button:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.align-grid button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.inspector-subhead {
+  margin: 4px 0 0;
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.toggle-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.toggle-row input {
+  margin-top: 2px;
+}
+.wide-action.danger {
+  color: #e11d48;
+}
+.wide-action.danger:hover {
+  background: rgba(225, 29, 72, 0.1);
+}
+
+/* ---- Backup panel + badge ---- */
+.backup-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.backup-status {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.backup-status.ok strong {
+  color: #059669;
+}
+.backup-status.failed {
+  background: rgba(225, 29, 72, 0.1);
+}
+.backup-status.failed strong {
+  color: #e11d48;
+}
+.backup-status small {
+  color: var(--text-2);
+  font-size: 11px;
+}
+.backup-dir {
+  font-size: 11px;
+}
+.backup-badge {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 680;
+  white-space: nowrap;
+}
+.backup-badge.ok {
+  color: #6ee7b7;
+}
+.backup-badge.failed {
+  color: #fda4af;
+}
+.statusbar-spacer {
+  flex: 1 1 auto;
+}
+.status-hint {
+  flex: 0 0 auto;
+  color: #93c5fd;
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+/* ---- Command palette ---- */
+.palette-backdrop {
+  align-items: flex-start;
+  padding-top: 12vh;
+}
+.command-palette {
+  width: min(560px, 92vw);
+  max-height: 62vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--surface-1);
+  box-shadow: 0 32px 90px rgba(15, 23, 42, 0.32);
+  border: 1px solid var(--hairline);
+}
+.palette-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--text-2);
+}
+.palette-input-row input {
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-1);
+  font-size: 15px;
+}
+.palette-input-row kbd,
+.shortcut-row kbd,
+.palette-item kbd {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-family: inherit;
+}
+.palette-list {
+  overflow-y: auto;
+  padding: 6px;
+}
+.palette-section p {
+  margin: 8px 10px 3px;
+  color: var(--text-2);
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.palette-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-1);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.palette-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.palette-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+/* ---- Restore + shortcut dialogs ---- */
+.restore-dialog,
+.shortcut-overlay {
+  width: min(520px, 92vw);
+  max-height: 76vh;
+  overflow-y: auto;
+  border-radius: 16px;
+  background: var(--surface-1);
+  padding: 20px;
+  box-shadow: 0 32px 90px rgba(15, 23, 42, 0.32);
+  border: 1px solid var(--hairline);
+}
+.restore-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.restore-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-1);
+  font-size: 16px;
+}
+.restore-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 12px;
+}
+.restore-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.restore-row strong {
+  display: block;
+  color: var(--text-1);
+  font-size: 13px;
+}
+.restore-row small {
+  color: var(--text-2);
+  font-size: 11px;
+}
+.restore-row button,
+.backup-panel .segmented-row button {
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.backup-panel .segmented-row button {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+.restore-error {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(225, 29, 72, 0.1);
+  color: #e11d48;
+  font-size: 12px;
+}
+.restore-footnote,
+.restore-dialog .muted {
+  color: var(--text-2);
+  font-size: 11px;
+}
+.shortcut-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 18px;
+}
+.shortcut-group p {
+  margin: 0 0 7px;
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 12.5px;
+  color: var(--text-1);
+}
+.shortcut-row kbd {
+  flex: 0 0 auto;
+  min-width: 74px;
+}
+.empty-inspector small {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+/* ============================================================
+   Dark mode — designed surfaces (not an inversion). Remaps the
+   main app surfaces + all new components via token overrides.
+   ============================================================ */
+[data-theme="dark"] {
+  --accent: #60a5fa;
+  --accent-soft: rgba(96, 165, 250, 0.16);
+  --shape-tile-fill: #1e293b;
+  --panel-bg: #131a26;
+  --panel-border: #263042;
+  --surface-1: #1a2230;
+  --surface-2: #202a3a;
+  --text-1: #e5edf7;
+  --text-2: #93a4bd;
+  --hairline: #2a3547;
+  color: #e5edf7;
+  background: #0c111b;
+}
+[data-theme="dark"] body {
+  background: #0c111b;
+}
+[data-theme="dark"] .app-shell {
+  background: #0c111b;
+}
+[data-theme="dark"] .topbar,
+[data-theme="dark"] .left-panel,
+[data-theme="dark"] .right-panel {
+  background: #131a26;
+  border-color: #263042;
+}
+[data-theme="dark"] .brand-block h1 {
+  color: #e5edf7;
+}
+[data-theme="dark"] .brand-block p,
+[data-theme="dark"] .muted,
+[data-theme="dark"] .panel-heading {
+  color: #93a4bd;
+}
+[data-theme="dark"] .brand-mark,
+[data-theme="dark"] .loading-mark {
+  background: #60a5fa;
+  color: #0c111b;
+}
+[data-theme="dark"] .icon-button,
+[data-theme="dark"] .text-button,
+[data-theme="dark"] .component-grid button,
+[data-theme="dark"] .wide-action,
+[data-theme="dark"] .segmented-row button,
+[data-theme="dark"] .nav-button,
+[data-theme="dark"] .artboard-control select,
+[data-theme="dark"] .field input,
+[data-theme="dark"] .field select {
+  background: #202a3a;
+  color: #d7e2f0;
+}
+[data-theme="dark"] .icon-button:hover,
+[data-theme="dark"] .text-button:hover,
+[data-theme="dark"] .component-grid button:hover,
+[data-theme="dark"] .wide-action:hover {
+  background: #2a3547;
+}
+[data-theme="dark"] .icon-button.active,
+[data-theme="dark"] .nav-button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+[data-theme="dark"] .panel-section {
+  border-color: #263042;
+}
+[data-theme="dark"] .panel-title {
+  color: #e5edf7;
+}
+[data-theme="dark"] .canvas-viewport {
+  background-color: #0c111b;
+}
+[data-theme="dark"] .canvas-grid {
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.1) 1px, transparent 1px);
+}
+[data-theme="dark"] .home-view,
+[data-theme="dark"] .board-card {
+  background: #131a26;
+  color: #e5edf7;
+}
+[data-theme="dark"] .board-card {
+  border-color: #263042;
+}
+[data-theme="dark"] .board-card h3,
+[data-theme="dark"] .home-header h2 {
+  color: #e5edf7;
+}
+[data-theme="dark"] .new-board-dialog {
+  background: #1a2230;
+  color: #e5edf7;
+}
+[data-theme="dark"] .field input,
+[data-theme="dark"] .field select {
+  border-color: #2a3547;
+}
+[data-theme="dark"] .empty-inspector {
+  color: #93a4bd;
+}
+[data-theme="dark"] .inline-text-editor {
+  background: rgba(26, 34, 48, 0.96);
+}
+[data-theme="dark"] .dialog-backdrop {
+  background: rgba(4, 8, 15, 0.62);
+}

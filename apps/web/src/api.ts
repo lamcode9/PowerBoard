@@ -15,12 +15,27 @@ export interface BoardSummary {
   elementCount: number;
 }
 
+export interface BackupStatus {
+  dir: string;
+  healthy: boolean;
+  lastBackupAt?: string;
+  lastError?: string;
+  pending: number;
+}
+
+export interface BackupEntry {
+  file: string;
+  at: string;
+  sizeBytes: number;
+}
+
 export interface ApiHealth {
   ok: boolean;
   name: string;
   boardRoot?: string;
   cloudStore: string;
   storageMode?: string;
+  backup?: BackupStatus;
 }
 
 export async function getHealth(): Promise<ApiHealth> {
@@ -110,6 +125,30 @@ export async function exportSpec(boardId: string): Promise<{ markdownPath: strin
 
 export async function exportReactTailwind(boardId: string): Promise<{ dir: string; summary: string; files: { path: string; contents: string }[] }> {
   return withLocalFallback(() => request(`/api/boards/${boardId}/export/react-tailwind`, { method: "POST" }), () => localExportReactTailwind(boardId));
+}
+
+export async function exportPageSvg(boardId: string, pageId?: string): Promise<{ filePath: string; svg: string }> {
+  return request(`/api/boards/${boardId}/export/svg`, { method: "POST", body: JSON.stringify({ pageId }) });
+}
+
+export async function exportPagePdf(boardId: string, pageId?: string): Promise<{ filePath: string }> {
+  return request(`/api/boards/${boardId}/export/pdf`, { method: "POST", body: JSON.stringify({ pageId }) });
+}
+
+export async function exportMermaid(boardId: string): Promise<{ filePath: string; mermaid: string }> {
+  return request(`/api/boards/${boardId}/export/mermaid`, { method: "POST" });
+}
+
+export async function listBackups(boardId: string): Promise<BackupEntry[]> {
+  return request(`/api/boards/${boardId}/backups`);
+}
+
+export async function restoreBackup(boardId: string, file: string): Promise<BoardProject> {
+  return request(`/api/boards/${boardId}/restore`, { method: "POST", body: JSON.stringify({ file }) });
+}
+
+export async function backupNow(): Promise<{ backedUp: string[]; failed: { boardId: string; error: string }[] }> {
+  return request(`/api/backups/flush`, { method: "POST" });
 }
 
 async function withLocalFallback<T>(remote: () => Promise<T>, local: () => Promise<T> | T): Promise<T> {

@@ -47,10 +47,37 @@ async function startServer() {
   process.env.PORT = String(port);
   process.env.POWERBOARD_STORAGE_MODE = process.env.POWERBOARD_STORAGE_MODE ?? "local";
   process.env.POWERBOARD_ROOT = process.env.POWERBOARD_ROOT ?? path.join(app.getPath("userData"), "boards");
+  process.env.POWERBOARD_BACKUP_DIR = process.env.POWERBOARD_BACKUP_DIR ?? defaultBackupDir();
   process.env.POWERBOARD_WEB_DIST = path.join(here, "dist", "web");
   await import("./dist/server.js");
   await waitForHealth();
 }
+
+function defaultBackupDir() {
+  // MAS sandbox cannot reach ~/Library/Mobile Documents without an iCloud container
+  // entitlement (Phase 2 follow-up); back up inside the app container there so versioned
+  // snapshots still exist. Unsandboxed (dev / Developer ID) builds go straight to iCloud Drive.
+  if (process.mas) {
+    return path.join(app.getPath("userData"), "backups");
+  }
+  return path.join(app.getPath("home"), "Library", "Mobile Documents", "com~apple~CloudDocs", "PowerBoard", "Backups");
+}
+
+// Flush pending board backups before quitting; the server debounces them by 15s, so a
+// fast quit right after an edit would otherwise skip the newest snapshot.
+let backupFlushed = false;
+app.on("before-quit", (event) => {
+  if (backupFlushed) return;
+  event.preventDefault();
+  const finish = () => {
+    backupFlushed = true;
+    app.quit();
+  };
+  Promise.race([
+    fetch(`${serverOrigin}/api/backups/flush`, { method: "POST" }),
+    new Promise((resolve) => setTimeout(resolve, 5000))
+  ]).then(finish, finish);
+});
 
 async function waitForHealth() {
   const deadline = Date.now() + 10_000;
@@ -123,6 +150,29 @@ function buildMenu() {
         {
           label: "Reveal Boards Folder",
           click: () => shell.openPath(process.env.POWERBOARD_ROOT ?? path.join(app.getPath("userData"), "boards"))
+        },
+        { type: "separator" },
+        {
+          label: "Back Up All Boards Now",
+          click: async () => {
+            try {
+              const response = await fetch(`${serverOrigin}/api/backups/flush`, { method: "POST" });
+              const result = await response.json();
+              const failures = Array.isArray(result?.failed) ? result.failed : [];
+              dialog.showMessageBox({
+                message: failures.length ? "Backup finished with errors" : "Backup complete",
+                detail: failures.length
+                  ? failures.map((f) => `${f.boardId}: ${f.error}`).join("\n")
+                  : `${(result?.backedUp ?? []).length} board(s) backed up to\n${process.env.POWERBOARD_BACKUP_DIR}`
+              });
+            } catch (error) {
+              dialog.showErrorBox("Backup failed", error instanceof Error ? error.message : String(error));
+            }
+          }
+        },
+        {
+          label: "Reveal Backups Folder",
+          click: () => shell.openPath(process.env.POWERBOARD_BACKUP_DIR ?? "")
         },
         { type: "separator" },
         { role: "close" }

@@ -17,3 +17,5 @@ apps/desktop/release/
 fastlane/report.xml
 fastlane/README.md
 *.provisionprofile
+.dev-boards/
+.dev-backups/

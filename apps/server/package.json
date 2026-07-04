@@ -11,7 +11,9 @@
     "mcp": "tsx src/mcp.ts",
     "mcp:check": "tsx src/mcpCheck.ts",
     "cloud:safety": "tsx src/cloudSafety.ts",
-    "sync:cloud": "tsx src/syncCloud.ts"
+    "sync:cloud": "tsx src/syncCloud.ts",
+    "import:cloud": "tsx src/importCloud.ts",
+    "soak": "tsx src/mcpSoak.ts"
   },
   "dependencies": {
     "@powerboard/renderers": "file:../../packages/renderers",

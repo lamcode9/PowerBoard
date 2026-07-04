@@ -26,8 +26,30 @@ export const elementTypes = [
   "paywall",
   "table",
   "sticky",
-  "screenshotOverlay"
+  "screenshotOverlay",
+  "shape",
+  "ink"
 ] as const;
+
+// Diagram shape kinds (decision D5: diagrams are element types on the same model, not a fork).
+export const shapeKinds = [
+  "rectangle",
+  "rounded",
+  "ellipse",
+  "diamond",
+  "parallelogram",
+  "cylinder",
+  "hexagon",
+  "triangle",
+  "star",
+  "cloud",
+  "document",
+  "arrow-right"
+] as const;
+
+export const connectorPorts = ["auto", "n", "s", "e", "w"] as const;
+export const connectorRoutings = ["straight", "orthogonal", "curved"] as const;
+export const connectorArrowheads = ["none", "arrow", "triangle", "dot", "diamond"] as const;
 
 export const layoutModes = ["absolute", "stack", "grid", "constraints"] as const;
 
@@ -147,6 +169,8 @@ export const ArtboardSchema = z.object({
   height: Numberish.positive(),
   background: z.string().default("#F7F8FA"),
   devicePreset: z.string().optional(),
+  // Frameless artboards render without device chrome/shadow — diagram canvases, sections.
+  frameless: z.boolean().default(false),
   locked: z.boolean().default(false),
   visible: z.boolean().default(true)
 });
@@ -174,13 +198,22 @@ export const BoardElementSchema = z.object({
 
 export type BoardElement = z.infer<typeof BoardElementSchema>;
 
+// Connector v2: one connector system for app flows AND diagram edges (D5). Ports pin the
+// endpoint to a side; waypoints are user-dragged elbow points in page coordinates.
 export const ConnectorSchema = z.object({
   id: z.string().min(1),
   fromArtboardId: z.string().min(1),
   toArtboardId: z.string().min(1),
   fromElementId: z.string().optional(),
   toElementId: z.string().optional(),
+  fromPort: z.enum(connectorPorts).default("auto"),
+  toPort: z.enum(connectorPorts).default("auto"),
+  routing: z.enum(connectorRoutings).default("curved"),
+  arrowStart: z.enum(connectorArrowheads).default("none"),
+  arrowEnd: z.enum(connectorArrowheads).default("arrow"),
+  waypoints: z.array(z.object({ x: Numberish, y: Numberish })).default([]),
   label: z.string().optional(),
+  labelPosition: z.number().min(0).max(1).default(0.5),
   style: BoardStyleSchema.default({})
 });
 
@@ -346,6 +379,28 @@ export const OperationSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("move_resize_element"), elementId: z.string(), x: Numberish.optional(), y: Numberish.optional(), width: Numberish.positive().optional(), height: Numberish.positive().optional() }),
   z.object({ type: z.literal("group_elements"), group: BoardElementSchema, elementIds: z.array(z.string()).min(1) }),
   z.object({ type: z.literal("add_connector"), connector: ConnectorSchema }),
+  z.object({ type: z.literal("update_connector"), connectorId: z.string(), patch: z.record(z.string(), z.unknown()) }),
+  z.object({ type: z.literal("delete_connector"), connectorId: z.string() }),
+  z.object({ type: z.literal("delete_artboard"), artboardId: z.string() }),
+  z.object({
+    type: z.literal("apply_layout"),
+    layout: z.enum([
+      "tree",
+      "flow",
+      "distribute-horizontal",
+      "distribute-vertical",
+      "align-left",
+      "align-center-x",
+      "align-right",
+      "align-top",
+      "align-center-y",
+      "align-bottom"
+    ]),
+    artboardId: z.string().optional(),
+    elementIds: z.array(z.string()).optional(),
+    spacingX: Numberish.positive().default(80),
+    spacingY: Numberish.positive().default(64)
+  }),
   z.object({ type: z.literal("set_selection"), selection: z.array(z.string()) })
 ]);
 
@@ -373,6 +428,7 @@ export function createDefaultProject(name = "PowerBoard Starter Board"): BoardPr
     height: 852,
     background: "#F5F7FB",
     devicePreset: "iphone-15",
+    frameless: false,
     locked: false,
     visible: true
   };
@@ -386,6 +442,7 @@ export function createDefaultProject(name = "PowerBoard Starter Board"): BoardPr
     height: 800,
     background: "#F8FAFC",
     devicePreset: "web-landing",
+    frameless: false,
     locked: false,
     visible: true
   };
@@ -704,6 +761,29 @@ export function validateBoardStructure(input: BoardProject): BoardValidationRepo
       }
     }
 
+    if (element.type === "shape") {
+      const kind = readNonEmptyString(element.props.shape) ?? "rectangle";
+      if (!(shapeKinds as readonly string[]).includes(kind)) {
+        issues.push({
+          severity: "warning",
+          code: "shape-unknown-kind",
+          message: `Shape kind is not recognized (falls back to rectangle): ${kind}`,
+          artboardId: element.artboardId,
+          elementId: element.id
+        });
+      }
+    }
+
+    if (element.type === "ink" && readPointArray(element.props.points).length < 2) {
+      issues.push({
+        severity: "warning",
+        code: "ink-needs-points",
+        message: `Ink stroke has fewer than two points: ${element.name}`,
+        artboardId: element.artboardId,
+        elementId: element.id
+      });
+    }
+
     if (element.type === "sparkline" && readNumberArray(element.props.values).length < 2) {
       issues.push({
         severity: "warning",
@@ -872,6 +952,52 @@ export function applyBoardOperation(project: BoardProject, rawOperation: BoardOp
       next.connectors.push(operation.connector);
       next.selection = [operation.connector.id];
       break;
+    case "update_connector": {
+      const index = next.connectors.findIndex((connector) => connector.id === operation.connectorId);
+      if (index === -1) {
+        throw new Error(`Connector not found: ${operation.connectorId}`);
+      }
+      const existing = next.connectors[index]!;
+      const merged = { ...existing, ...operation.patch } as BoardConnector;
+      if (operation.patch.style && typeof operation.patch.style === "object" && !Array.isArray(operation.patch.style)) {
+        merged.style = { ...existing.style, ...(operation.patch.style as Record<string, unknown>) } as BoardStyle;
+      }
+      next.connectors[index] = ConnectorSchema.parse(merged);
+      next.selection = [operation.connectorId];
+      break;
+    }
+    case "delete_connector": {
+      const before = next.connectors.length;
+      next.connectors = next.connectors.filter((connector) => connector.id !== operation.connectorId);
+      if (next.connectors.length === before) {
+        throw new Error(`Connector not found: ${operation.connectorId}`);
+      }
+      next.selection = next.selection.filter((id) => id !== operation.connectorId);
+      break;
+    }
+    case "delete_artboard": {
+      const exists = next.artboards.some((artboard) => artboard.id === operation.artboardId);
+      if (!exists) {
+        throw new Error(`Artboard not found: ${operation.artboardId}`);
+      }
+      const removedElementIds = new Set(next.elements.filter((element) => element.artboardId === operation.artboardId).map((element) => element.id));
+      next.artboards = next.artboards.filter((artboard) => artboard.id !== operation.artboardId);
+      next.elements = next.elements.filter((element) => element.artboardId !== operation.artboardId);
+      next.connectors = next.connectors.filter(
+        (connector) =>
+          connector.fromArtboardId !== operation.artboardId &&
+          connector.toArtboardId !== operation.artboardId &&
+          !removedElementIds.has(connector.fromElementId ?? "") &&
+          !removedElementIds.has(connector.toElementId ?? "")
+      );
+      next.pages = next.pages.map((page) => ({ ...page, artboardIds: page.artboardIds.filter((id) => id !== operation.artboardId) }));
+      next.selection = next.selection.filter((id) => id !== operation.artboardId && !removedElementIds.has(id));
+      break;
+    }
+    case "apply_layout": {
+      applyAutoLayout(next, operation);
+      break;
+    }
     case "set_selection":
       next.selection = filterValidSelection(next, operation.selection);
       break;
@@ -900,6 +1026,221 @@ export function filterValidSelection(project: BoardProject, selection: string[])
     seen.add(id);
     return true;
   });
+}
+
+type LayoutOperation = Extract<BoardOperation, { type: "apply_layout" }>;
+
+/**
+ * Deterministic auto-layout (Phase 4): tree for org charts, flow for left-to-right process
+ * diagrams, plus align/distribute. Mutates element x/y in place on the draft project.
+ */
+function applyAutoLayout(project: BoardProject, operation: LayoutOperation): void {
+  const targets = resolveLayoutTargets(project, operation);
+  if (targets.length === 0) {
+    throw new Error("apply_layout found no target elements. Pass elementIds or an artboardId with root elements.");
+  }
+  const byId = new Map(targets.map((element) => [element.id, element]));
+
+  switch (operation.layout) {
+    case "align-left": {
+      const minX = Math.min(...targets.map((element) => element.x));
+      for (const element of targets) element.x = minX;
+      break;
+    }
+    case "align-right": {
+      const maxRight = Math.max(...targets.map((element) => element.x + element.width));
+      for (const element of targets) element.x = maxRight - element.width;
+      break;
+    }
+    case "align-center-x": {
+      const minX = Math.min(...targets.map((element) => element.x));
+      const maxRight = Math.max(...targets.map((element) => element.x + element.width));
+      const center = (minX + maxRight) / 2;
+      for (const element of targets) element.x = center - element.width / 2;
+      break;
+    }
+    case "align-top": {
+      const minY = Math.min(...targets.map((element) => element.y));
+      for (const element of targets) element.y = minY;
+      break;
+    }
+    case "align-bottom": {
+      const maxBottom = Math.max(...targets.map((element) => element.y + element.height));
+      for (const element of targets) element.y = maxBottom - element.height;
+      break;
+    }
+    case "align-center-y": {
+      const minY = Math.min(...targets.map((element) => element.y));
+      const maxBottom = Math.max(...targets.map((element) => element.y + element.height));
+      const center = (minY + maxBottom) / 2;
+      for (const element of targets) element.y = center - element.height / 2;
+      break;
+    }
+    case "distribute-horizontal": {
+      if (targets.length < 3) break;
+      const sorted = [...targets].sort((a, b) => a.x - b.x);
+      const first = sorted[0]!;
+      const last = sorted[sorted.length - 1]!;
+      const span = last.x + last.width - first.x;
+      const totalWidth = sorted.reduce((sum, element) => sum + element.width, 0);
+      const gap = (span - totalWidth) / (sorted.length - 1);
+      let cursor = first.x;
+      for (const element of sorted) {
+        element.x = cursor;
+        cursor += element.width + gap;
+      }
+      break;
+    }
+    case "distribute-vertical": {
+      if (targets.length < 3) break;
+      const sorted = [...targets].sort((a, b) => a.y - b.y);
+      const first = sorted[0]!;
+      const last = sorted[sorted.length - 1]!;
+      const span = last.y + last.height - first.y;
+      const totalHeight = sorted.reduce((sum, element) => sum + element.height, 0);
+      const gap = (span - totalHeight) / (sorted.length - 1);
+      let cursor = first.y;
+      for (const element of sorted) {
+        element.y = cursor;
+        cursor += element.height + gap;
+      }
+      break;
+    }
+    case "tree":
+      layoutTree(project, targets, byId, operation.spacingX, operation.spacingY);
+      break;
+    case "flow":
+      layoutFlow(project, targets, byId, operation.spacingX, operation.spacingY);
+      break;
+    default:
+      assertNever(operation.layout as never);
+  }
+
+  project.selection = targets.map((element) => element.id);
+}
+
+function resolveLayoutTargets(project: BoardProject, operation: LayoutOperation): BoardElement[] {
+  if (operation.elementIds?.length) {
+    const wanted = new Set(operation.elementIds);
+    return project.elements.filter((element) => wanted.has(element.id));
+  }
+  if (operation.artboardId) {
+    return project.elements.filter((element) => element.artboardId === operation.artboardId && !element.parentId && element.type !== "screenshotOverlay");
+  }
+  return [];
+}
+
+function connectorEdges(project: BoardProject, byId: Map<string, BoardElement>): Array<{ from: string; to: string }> {
+  return project.connectors
+    .filter((connector) => connector.fromElementId && connector.toElementId && byId.has(connector.fromElementId) && byId.has(connector.toElementId))
+    .map((connector) => ({ from: connector.fromElementId!, to: connector.toElementId! }));
+}
+
+function layoutTree(project: BoardProject, targets: BoardElement[], byId: Map<string, BoardElement>, spacingX: number, spacingY: number): void {
+  const edges = connectorEdges(project, byId);
+  const childrenOf = new Map<string, string[]>();
+  const hasParent = new Set<string>();
+  for (const edge of edges) {
+    const list = childrenOf.get(edge.from) ?? [];
+    if (!list.includes(edge.to)) list.push(edge.to);
+    childrenOf.set(edge.from, list);
+    hasParent.add(edge.to);
+  }
+  const roots = targets.filter((element) => !hasParent.has(element.id));
+  const originX = Math.min(...targets.map((element) => element.x));
+  const originY = Math.min(...targets.map((element) => element.y));
+
+  const widthCache = new Map<string, number>();
+  const subtreeWidth = (id: string, trail: Set<string>): number => {
+    if (widthCache.has(id)) return widthCache.get(id)!;
+    if (trail.has(id)) return byId.get(id)?.width ?? 0;
+    trail.add(id);
+    const node = byId.get(id)!;
+    const children = (childrenOf.get(id) ?? []).filter((child) => !trail.has(child));
+    const childrenWidth = children.reduce((sum, child, index) => sum + subtreeWidth(child, trail) + (index > 0 ? spacingX : 0), 0);
+    const width = Math.max(node.width, childrenWidth);
+    widthCache.set(id, width);
+    return width;
+  };
+
+  const placed = new Set<string>();
+  const place = (id: string, left: number, y: number): void => {
+    if (placed.has(id)) return;
+    placed.add(id);
+    const node = byId.get(id)!;
+    const width = subtreeWidth(id, new Set());
+    node.x = left + (width - node.width) / 2;
+    node.y = y;
+    let childLeft = left;
+    for (const child of childrenOf.get(id) ?? []) {
+      if (placed.has(child)) continue;
+      place(child, childLeft, y + node.height + spacingY);
+      childLeft += subtreeWidth(child, new Set()) + spacingX;
+    }
+  };
+
+  let rootLeft = originX;
+  for (const root of roots.length ? roots : targets.slice(0, 1)) {
+    place(root.id, rootLeft, originY);
+    rootLeft += subtreeWidth(root.id, new Set()) + spacingX * 2;
+  }
+  // Isolated nodes (no connectors) line up in a row under the trees.
+  const isolatedY = Math.max(...targets.filter((element) => placed.has(element.id)).map((element) => element.y + element.height), originY) + spacingY;
+  let isolatedX = originX;
+  for (const element of targets) {
+    if (placed.has(element.id)) continue;
+    element.x = isolatedX;
+    element.y = isolatedY;
+    isolatedX += element.width + spacingX;
+  }
+}
+
+function layoutFlow(project: BoardProject, targets: BoardElement[], byId: Map<string, BoardElement>, spacingX: number, spacingY: number): void {
+  const edges = connectorEdges(project, byId);
+  const incoming = new Map<string, string[]>();
+  const outgoing = new Map<string, string[]>();
+  for (const edge of edges) {
+    outgoing.set(edge.from, [...(outgoing.get(edge.from) ?? []), edge.to]);
+    incoming.set(edge.to, [...(incoming.get(edge.to) ?? []), edge.from]);
+  }
+  // Longest-path layering with a cycle guard.
+  const layerOf = new Map<string, number>();
+  const layerFor = (id: string, trail: Set<string>): number => {
+    if (layerOf.has(id)) return layerOf.get(id)!;
+    if (trail.has(id)) return 0;
+    trail.add(id);
+    const parents = incoming.get(id) ?? [];
+    const layer = parents.length ? Math.max(...parents.map((parent) => layerFor(parent, trail))) + 1 : 0;
+    layerOf.set(id, layer);
+    return layer;
+  };
+  for (const element of targets) layerFor(element.id, new Set());
+
+  const originX = Math.min(...targets.map((element) => element.x));
+  const originY = Math.min(...targets.map((element) => element.y));
+  const layers = new Map<number, BoardElement[]>();
+  for (const element of targets) {
+    const layer = layerOf.get(element.id) ?? 0;
+    layers.set(layer, [...(layers.get(layer) ?? []), element]);
+  }
+  let x = originX;
+  const layerKeys = [...layers.keys()].sort((a, b) => a - b);
+  const totalHeights = layerKeys.map((key) => {
+    const nodes = layers.get(key)!;
+    return nodes.reduce((sum, node) => sum + node.height, 0) + spacingY * (nodes.length - 1);
+  });
+  const maxColumnHeight = Math.max(...totalHeights);
+  for (let index = 0; index < layerKeys.length; index++) {
+    const nodes = layers.get(layerKeys[index]!)!.sort((a, b) => a.y - b.y);
+    let y = originY + (maxColumnHeight - totalHeights[index]!) / 2;
+    const columnWidth = Math.max(...nodes.map((node) => node.width));
+    for (const node of nodes) {
+      node.x = x + (columnWidth - node.width) / 2;
+      node.y = y;
+      y += node.height + spacingY;
+    }
+    x += columnWidth + spacingX;
+  }
 }
 
 function ensureMainPage(project: BoardProject): BoardProject["pages"][number] {
@@ -1015,6 +1356,18 @@ function readNumberArray(value: unknown): number[] {
   return Array.isArray(value) ? value.filter((item): item is number => typeof item === "number" && Number.isFinite(item)) : [];
 }
 
+/** Ink points are [x, y] pairs normalized to the element box (0..1). */
+export function readPointArray(value: unknown): Array<[number, number]> {
+  if (!Array.isArray(value)) return [];
+  const points: Array<[number, number]> = [];
+  for (const item of value) {
+    if (Array.isArray(item) && typeof item[0] === "number" && typeof item[1] === "number" && Number.isFinite(item[0]) && Number.isFinite(item[1])) {
+      points.push([item[0], item[1]]);
+    }
+  }
+  return points;
+}
+
 function byLayerOrder(a: BoardElement, b: BoardElement): number {
   return a.zIndex - b.zIndex || a.y - b.y || a.x - b.x || a.name.localeCompare(b.name);
 }
@@ -1063,7 +1416,9 @@ export function createElementFromPreset(type: BoardElement["type"], artboardId: 
     paywall: { width: 340, height: 470, style: { fill: "#FFFFFF", color: "#111827", radius: 28, shadow: "0 20px 70px rgba(15, 23, 42, 0.16)", padding: 24 }, props: { title: "Go Pro", price: "$4.99/mo", features: ["Unlimited boards", "Code export", "Agent control"], action: "Start Pro" } },
     table: { width: 520, height: 280, style: { fill: "#FFFFFF", color: "#111827", radius: 18, shadow: "0 14px 40px rgba(15, 23, 42, 0.08)", padding: 18 }, props: { title: "Rows", columns: ["Name", "Status"], rows: [["Home", "Ready"], ["Paywall", "Draft"]] } },
     sticky: { width: 220, height: 160, style: { fill: "#FEF3C7", color: "#78350F", radius: 16, shadow: "0 10px 28px rgba(120, 53, 15, 0.12)", padding: 16 }, props: { text: "Prompt notes go here." } },
-    screenshotOverlay: { width: 320, height: 640, locked: true, style: { fill: "#E2E8F0", radius: 24, opacity: 0.65, imageFit: "contain" }, props: { alt: "Screenshot overlay" } }
+    screenshotOverlay: { width: 320, height: 640, locked: true, style: { fill: "#E2E8F0", radius: 24, opacity: 0.65, imageFit: "contain" }, props: { alt: "Screenshot overlay" } },
+    shape: { width: 180, height: 100, semanticRole: "diagram shape", style: { fill: "#EFF6FF", stroke: "#2563EB", strokeWidth: 1.5, color: "#1E3A5F", radius: 10, fontSize: 14, fontWeight: 600, textAlign: "center" }, props: { shape: "rectangle", text: "Step" } },
+    ink: { width: 240, height: 160, semanticRole: "freehand ink", style: { fill: "transparent", stroke: "#334155", strokeWidth: 2.5 }, props: { points: [] } }
   };
 
   return BoardElementSchema.parse({ ...base, ...presets[type] });
@@ -1072,3 +1427,5 @@ export function createElementFromPreset(type: BoardElement["type"], artboardId: 
 function titleCase(value: string): string {
   return value.replace(/([A-Z])/g, " $1").replace(/^./, (char) => char.toUpperCase());
 }
+
+export * from "./connector.js";

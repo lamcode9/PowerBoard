@@ -1,17 +1,102 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
+import { ZodError } from "zod";
 import { ArtboardSchema, BoardElementSchema, BoardOperation, BoardProjectSchema, ConnectorSchema, createElementFromPreset, createId, OperationSchema, validateBoardStructure } from "@powerboard/schema";
 import { agentActivityForOperation, agentActivityForSelection, AgentBoardActivity, BoardStore } from "./boardService.js";
 
 interface BoardMcpOptions {
   onBoardChanged?: (boardId: string, activity?: AgentBoardActivity) => Promise<void> | void;
+  /** Extra live status for get_board_status (e.g. backup health from the HTTP server). */
+  statusExtras?: () => Record<string, unknown>;
+}
+
+type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+
+// Idempotency-key replay cache. Keys live at module scope because HTTP mode creates a
+// fresh McpServer per request; the process (one per installed app) is the session.
+const idempotencyCache = new Map<string, { at: number; result: ToolResult }>();
+const IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+
+function idempotencyGet(key: string | undefined, tool: string): ToolResult | undefined {
+  if (!key) return undefined;
+  const entry = idempotencyCache.get(`${tool}:${key}`);
+  if (!entry) return undefined;
+  if (Date.now() - entry.at > IDEMPOTENCY_TTL_MS) {
+    idempotencyCache.delete(`${tool}:${key}`);
+    return undefined;
+  }
+  return entry.result;
+}
+
+function idempotencySet(key: string | undefined, tool: string, result: ToolResult): void {
+  if (!key) return;
+  if (idempotencyCache.size > 500) {
+    const oldest = [...idempotencyCache.entries()].sort((a, b) => a[1].at - b[1].at).slice(0, 100);
+    for (const [staleKey] of oldest) idempotencyCache.delete(staleKey);
+  }
+  idempotencyCache.set(`${tool}:${key}`, { at: Date.now(), result });
+}
+
+/**
+ * Every tool returns structured, machine-parseable errors (playbook §4): code + message +
+ * hint naming the offending input. Agents should treat these as data, not retry blind.
+ */
+function toolError(tool: string, error: unknown): ToolResult {
+  let code = "internal_error";
+  let message = error instanceof Error ? error.message : String(error);
+  let hint: string | undefined;
+  let details: unknown;
+  if (error instanceof ZodError || (error instanceof Error && error.name === "ZodError")) {
+    code = "validation_failed";
+    const issues = (error as ZodError).issues ?? [];
+    details = issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
+    message = "Input failed schema validation.";
+    hint = "Fix the listed fields and retry. Use preview_operation to dry-run first.";
+  } else if (/not found/i.test(message)) {
+    code = "not_found";
+    hint = "Check ids with list_boards / inspect_board_hierarchy before writing.";
+  } else if (/required/i.test(message)) {
+    code = "missing_input";
+  } else if (/conflict|does not match|already exists/i.test(message)) {
+    code = "conflict";
+  }
+  return {
+    isError: true,
+    content: [{ type: "text", text: JSON.stringify({ error: { code, tool, message, hint, details } }, null, 2) }]
+  };
 }
 
 export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions = {}): McpServer {
   const server = new McpServer({
     name: "powerboard",
-    version: "0.1.0"
+    version: "0.2.0"
   });
+
+  // Wrap every handler: structured errors + optional idempotency replay.
+  const registerTool = (
+    name: string,
+    config: { title: string; description: string; inputSchema?: Record<string, unknown> },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tool inputs are validated by the SDK against inputSchema
+    handler: (input: any) => Promise<ToolResult>
+  ) => {
+    if (config.inputSchema) {
+      config = { ...config, inputSchema: { ...config.inputSchema, ...idempotencyInput } };
+    }
+    server.registerTool(name, config as never, (async (input: Record<string, unknown> = {}) => {
+      const key = typeof input?.idempotencyKey === "string" ? input.idempotencyKey : undefined;
+      const cached = idempotencyGet(key, name);
+      if (cached) return cached;
+      try {
+        const result = await handler(input);
+        idempotencySet(key, name, result);
+        return result;
+      } catch (error) {
+        return toolError(name, error);
+      }
+    }) as never);
+  };
+
+  const idempotencyInput = { idempotencyKey: z.string().optional().describe("Optional replay-protection key: same key returns the first call's result for 10 minutes instead of re-applying.") };
 
   const changed = async (boardId: string, activity?: AgentBoardActivity) => {
     await options.onBoardChanged?.(boardId, activity);
@@ -23,7 +108,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     return project;
   };
 
-  server.registerTool(
+  registerTool(
     "list_boards",
     {
       title: "List boards",
@@ -32,7 +117,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     async () => text(await store.listBoards())
   );
 
-  server.registerTool(
+  registerTool(
     "read_board",
     {
       title: "Read board",
@@ -42,7 +127,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     async ({ boardId }) => text(await store.readBoard(boardId))
   );
 
-  server.registerTool(
+  registerTool(
     "summarize_board",
     {
       title: "Summarize board",
@@ -52,7 +137,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     async ({ boardId }) => text(await store.summarizeBoard(boardId))
   );
 
-  server.registerTool(
+  registerTool(
     "create_board",
     {
       title: "Create board",
@@ -66,7 +151,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     }
   );
 
-  server.registerTool(
+  registerTool(
     "create_artboard",
     {
       title: "Create artboard",
@@ -83,7 +168,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     }
   );
 
-  server.registerTool(
+  registerTool(
     "update_artboard",
     {
       title: "Update artboard",
@@ -100,7 +185,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     }
   );
 
-  server.registerTool(
+  registerTool(
     "create_variant",
     {
       title: "Create variant",
@@ -118,7 +203,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     }
   );
 
-  server.registerTool(
+  registerTool(
     "add_element",
     {
       title: "Add element",
@@ -141,7 +226,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     }
   );
 
-  server.registerTool(
+  registerTool(
     "preview_operation",
     {
       title: "Preview operation",
@@ -154,7 +239,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     async ({ boardId, operation }) => text(await store.previewOperation(boardId, OperationSchema.parse(operation)))
   );
 
-  server.registerTool(
+  registerTool(
     "update_element",
     {
       title: "Update element",
@@ -171,7 +256,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     }
   );
 
-  server.registerTool(
+  registerTool(
     "delete_element",
     {
       title: "Delete element",
@@ -184,7 +269,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     }
   );
 
-  server.registerTool(
+  registerTool(
     "move_resize_element",
     {
       title: "Move or resize element",
@@ -204,7 +289,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     }
   );
 
-  server.registerTool(
+  registerTool(
     "get_selection",
     {
       title: "Get selection",
@@ -214,7 +299,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     async ({ boardId }) => text({ boardId, selection: store.getSelection(boardId) })
   );
 
-  server.registerTool(
+  registerTool(
     "set_selection",
     {
       title: "Set selection",
@@ -231,7 +316,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     }
   );
 
-  server.registerTool(
+  registerTool(
     "describe_selection",
     {
       title: "Describe selection",
@@ -254,7 +339,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     }
   );
 
-  server.registerTool(
+  registerTool(
     "inspect_selection",
     {
       title: "Inspect selection",
@@ -267,7 +352,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     async ({ boardId, selection }) => text(await store.inspectSelection(boardId, selection))
   );
 
-  server.registerTool(
+  registerTool(
     "export_selection_handoff",
     {
       title: "Export selection handoff",
@@ -281,7 +366,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     async ({ boardId, selection, includePng }) => text(await store.exportSelectionHandoff(boardId, selection, { includePng: includePng === true }))
   );
 
-  server.registerTool(
+  registerTool(
     "inspect_board_hierarchy",
     {
       title: "Inspect board hierarchy",
@@ -291,11 +376,12 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     async ({ boardId }) => text(await store.inspectBoardHierarchy(boardId))
   );
 
-  server.registerTool(
+  registerTool(
     "add_connector",
     {
       title: "Add connector",
-      description: "Connect two artboards in the app flow.",
+      description:
+        "Add a connector between artboards or elements. Connector v2 fields: fromElementId/toElementId (element anchoring), fromPort/toPort (auto|n|s|e|w), routing (straight|orthogonal|curved), arrowStart/arrowEnd (none|arrow|triangle|dot|diamond), waypoints [{x,y}] in page coordinates, label, labelPosition 0..1.",
       inputSchema: {
         boardId: z.string(),
         connector: z.unknown()
@@ -308,7 +394,198 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     }
   );
 
-  server.registerTool(
+  registerTool(
+    "update_connector",
+    {
+      title: "Update connector",
+      description: "Patch a connector (routing, ports, arrowheads, waypoints, label, style). style is shallow-merged.",
+      inputSchema: {
+        boardId: z.string(),
+        connectorId: z.string(),
+        patch: z.record(z.string(), z.unknown())
+      }
+    },
+    async ({ boardId, connectorId, patch }) => {
+      const project = await applyAgentOperation(boardId, { type: "update_connector", connectorId, patch });
+      return text(project);
+    }
+  );
+
+  registerTool(
+    "delete_connector",
+    {
+      title: "Delete connector",
+      description: "Delete a connector by id.",
+      inputSchema: { boardId: z.string(), connectorId: z.string() }
+    },
+    async ({ boardId, connectorId }) => {
+      const project = await applyAgentOperation(boardId, { type: "delete_connector", connectorId });
+      return text(project);
+    }
+  );
+
+  registerTool(
+    "delete_artboard",
+    {
+      title: "Delete artboard",
+      description: "Delete an artboard together with its elements, its connectors, and its page references. Irreversible except via undo.",
+      inputSchema: { boardId: z.string(), artboardId: z.string() }
+    },
+    async ({ boardId, artboardId }) => {
+      const project = await applyAgentOperation(boardId, { type: "delete_artboard", artboardId });
+      return text(project);
+    }
+  );
+
+  registerTool(
+    "apply_layout",
+    {
+      title: "Apply auto-layout",
+      description:
+        "Auto-arrange elements: 'tree' (org charts, parent→child connectors), 'flow' (left-to-right process layers), 'distribute-horizontal/vertical', 'align-left/center-x/right/top/center-y/bottom'. Targets elementIds, or all root elements of artboardId.",
+      inputSchema: {
+        boardId: z.string(),
+        layout: z.enum(["tree", "flow", "distribute-horizontal", "distribute-vertical", "align-left", "align-center-x", "align-right", "align-top", "align-center-y", "align-bottom"]),
+        artboardId: z.string().optional(),
+        elementIds: z.array(z.string()).optional(),
+        spacingX: z.number().positive().optional(),
+        spacingY: z.number().positive().optional()
+      }
+    },
+    async ({ boardId, layout, artboardId, elementIds, spacingX, spacingY }) => {
+      const project = await applyAgentOperation(boardId, { type: "apply_layout", layout, artboardId, elementIds, spacingX: spacingX ?? 80, spacingY: spacingY ?? 64 });
+      return text(project);
+    }
+  );
+
+  registerTool(
+    "batch_operations",
+    {
+      title: "Batch operations",
+      description:
+        "Apply multiple operations atomically: all succeed or none are written, one undo entry. Pass expectedUpdatedAt (board metadata.updatedAt you last read) for conflict detection. Prefer this over sequential single ops for multi-step edits.",
+      inputSchema: {
+        boardId: z.string(),
+        operations: z.array(z.unknown()).min(1).max(200),
+        expectedUpdatedAt: z.string().optional()
+      }
+    },
+    async ({ boardId, operations, expectedUpdatedAt }) => {
+      const parsed = (operations as unknown[]).map((operation, index) => {
+        try {
+          return OperationSchema.parse(operation);
+        } catch (error) {
+          throw new Error(`operations[${index}] is invalid: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      });
+      const result = await store.applyOperations(boardId, parsed, { source: "agent", expectedUpdatedAt });
+      await changed(boardId, agentActivityForOperation(result.project, parsed[parsed.length - 1]!));
+      return text({ applied: result.applied, board: result.project });
+    }
+  );
+
+  registerTool(
+    "get_board_status",
+    {
+      title: "Get board status",
+      description: "Health/heartbeat: storage mode, backup health, board counts, undo/redo depth, last agent edit. Call this to confirm the server and board are live before long editing sessions.",
+      inputSchema: { boardId: z.string().optional() }
+    },
+    async ({ boardId }) => {
+      const status: Record<string, unknown> = {
+        ok: true,
+        serverTime: new Date().toISOString(),
+        storageMode: store.storageModeStatus(),
+        cloudStore: store.cloudStatus(),
+        ...options.statusExtras?.()
+      };
+      if (boardId) {
+        const project = await store.readBoard(boardId);
+        status.board = {
+          id: project.id,
+          name: project.name,
+          updatedAt: project.metadata.updatedAt,
+          artboards: project.artboards.length,
+          elements: project.elements.length,
+          connectors: project.connectors.length,
+          history: await store.historyDepths(boardId),
+          lastAgentEditedAt: (project.metadata as Record<string, unknown>).lastAgentEditedAt,
+          lastAgentEditedBy: (project.metadata as Record<string, unknown>).lastAgentEditedBy
+        };
+      }
+      return text(status);
+    }
+  );
+
+  registerTool(
+    "board_undo",
+    {
+      title: "Undo",
+      description: "Undo the last board change (persisted history — survives restarts).",
+      inputSchema: { boardId: z.string() }
+    },
+    async ({ boardId }) => {
+      const project = await store.undo(boardId);
+      await changed(boardId);
+      return text(project);
+    }
+  );
+
+  registerTool(
+    "board_redo",
+    {
+      title: "Redo",
+      description: "Redo the last undone board change.",
+      inputSchema: { boardId: z.string() }
+    },
+    async ({ boardId }) => {
+      const project = await store.redo(boardId);
+      await changed(boardId);
+      return text(project);
+    }
+  );
+
+  registerTool(
+    "read_oplog",
+    {
+      title: "Read operation log",
+      description: "Read the board's append-only operation log (most recent last). Useful to see what other editors — human or agent — changed.",
+      inputSchema: { boardId: z.string(), limit: z.number().int().positive().max(1000).optional() }
+    },
+    async ({ boardId, limit }) => text(await store.readOpLog(boardId, limit ?? 100))
+  );
+
+  registerTool(
+    "export_page_svg",
+    {
+      title: "Export page SVG",
+      description: "Export a whole page (artboards + connectors) as one SVG file.",
+      inputSchema: { boardId: z.string(), pageId: z.string().optional() }
+    },
+    async ({ boardId, pageId }) => text(await store.exportPageSvg(boardId, pageId))
+  );
+
+  registerTool(
+    "export_page_pdf",
+    {
+      title: "Export page PDF",
+      description: "Export a whole page (artboards + connectors) as a single-page PDF.",
+      inputSchema: { boardId: z.string(), pageId: z.string().optional() }
+    },
+    async ({ boardId, pageId }) => text(await store.exportPagePdf(boardId, pageId))
+  );
+
+  registerTool(
+    "export_mermaid",
+    {
+      title: "Export Mermaid",
+      description: "Export the board's connectors + diagram nodes as a Mermaid flowchart (.mmd).",
+      inputSchema: { boardId: z.string() }
+    },
+    async ({ boardId }) => text(await store.exportMermaid(boardId))
+  );
+
+  registerTool(
     "import_screenshot_overlay",
     {
       title: "Import screenshot overlay",
@@ -361,7 +638,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     }
   );
 
-  server.registerTool(
+  registerTool(
     "export_artboard_png",
     {
       title: "Export artboard PNG",
@@ -371,7 +648,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     async ({ boardId, artboardId }) => text(await store.exportArtboardPng(boardId, artboardId))
   );
 
-  server.registerTool(
+  registerTool(
     "export_react_tailwind",
     {
       title: "Export React Tailwind",
@@ -381,7 +658,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     async ({ boardId }) => text(await store.exportReactTailwind(boardId))
   );
 
-  server.registerTool(
+  registerTool(
     "export_board_spec",
     {
       title: "Export board spec",
@@ -391,7 +668,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     async ({ boardId }) => text(await store.exportSpec(boardId))
   );
 
-  server.registerTool(
+  registerTool(
     "validate_board",
     {
       title: "Validate board",

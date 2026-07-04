@@ -6,6 +6,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { BoardOperation, BoardProjectSchema, OperationSchema } from "@powerboard/schema";
 import { agentActivityForOperation, BoardStore } from "./boardService.js";
+import { BackupService } from "./backupService.js";
 import { boardRoot } from "./paths.js";
 import { createBoardMcpServer } from "./mcpServer.js";
 
@@ -13,6 +14,7 @@ const host = "127.0.0.1";
 const port = Number(process.env.PORT ?? 4318);
 const store = new BoardStore();
 await store.ensureReady();
+const backup = new BackupService((boardId) => store.readBoard(boardId));
 
 const app = express();
 app.use(cors({ origin: ["http://127.0.0.1:5173", "http://localhost:5173"] }));
@@ -39,7 +41,41 @@ app.get(/^\/boards\/([^/]+)\/(assets|exports)\/(.+)$/, asyncHandler(async (req, 
 
 app.get("/api/health", asyncHandler(async (_req, res) => {
   await store.ensureReady();
-  res.json({ ok: true, name: "PowerBoard", boardRoot, cloudStore: store.cloudStatus(), storageMode: store.storageModeStatus() });
+  res.json({ ok: true, name: "PowerBoard", boardRoot, cloudStore: store.cloudStatus(), storageMode: store.storageModeStatus(), backup: backup.status() });
+}));
+
+app.get("/api/backups/status", (_req, res) => {
+  res.json(backup.status());
+});
+
+app.post("/api/backups/flush", asyncHandler(async (_req, res) => {
+  const boards = await store.listBoards();
+  res.json(await backup.flush(boards.map((board) => board.id)));
+}));
+
+app.get("/api/boards/:boardId/backups", asyncHandler(async (req, res) => {
+  res.json(await backup.listBackups(param(req, "boardId")));
+}));
+
+app.post("/api/boards/:boardId/restore", asyncHandler(async (req, res) => {
+  const fileName = typeof req.body?.file === "string" ? req.body.file : "";
+  const boardId = param(req, "boardId");
+  const snapshot = await backup.readBackup(boardId, fileName);
+  if (snapshot.id !== boardId) {
+    throw new Error(`Backup belongs to a different board (${snapshot.id}).`);
+  }
+  const next = await store.replaceBoard(boardId, snapshot);
+  broadcast(next.id, { type: "board.changed", boardId: next.id, project: next });
+  res.json(next);
+}));
+
+app.get("/api/boards/:boardId/oplog", asyncHandler(async (req, res) => {
+  const limit = Number(req.query.limit ?? 100);
+  res.json(await store.readOpLog(param(req, "boardId"), Number.isFinite(limit) ? limit : 100));
+}));
+
+app.get("/api/boards/:boardId/history", asyncHandler(async (req, res) => {
+  res.json(await store.historyDepths(param(req, "boardId")));
 }));
 
 app.get("/api/boards", asyncHandler(async (_req, res) => {
@@ -78,6 +114,24 @@ app.post("/api/boards/:boardId/operations", asyncHandler(async (req, res) => {
   const agentActivity = agentEdit ? agentActivityForOperation(next, operation) : undefined;
   broadcast(next.id, { type: "board.changed", boardId: next.id, project: next, operation, agentActivity });
   res.json(next);
+}));
+
+app.post("/api/boards/:boardId/operations/batch", asyncHandler(async (req, res) => {
+  const rawOperations = Array.isArray(req.body?.operations) ? (req.body.operations as unknown[]) : [];
+  if (!rawOperations.length) {
+    res.status(400).json({ error: "operations must be a non-empty array." });
+    return;
+  }
+  const operations = rawOperations.map((operation) => OperationSchema.parse(operation) as BoardOperation);
+  const agentEdit = readAgentEdit(req.body);
+  const expectedUpdatedAt = typeof req.body?.expectedUpdatedAt === "string" ? req.body.expectedUpdatedAt : undefined;
+  const result = await store.applyOperations(param(req, "boardId"), operations, {
+    ...(agentEdit ? { source: "agent" as const, actor: agentEdit.actor } : {}),
+    expectedUpdatedAt
+  });
+  const agentActivity = agentEdit ? agentActivityForOperation(result.project, operations[operations.length - 1]!) : undefined;
+  broadcast(result.project.id, { type: "board.changed", boardId: result.project.id, project: result.project, agentActivity });
+  res.json(result);
 }));
 
 app.post("/api/boards/:boardId/operations/preview", asyncHandler(async (req, res) => {
@@ -143,12 +197,27 @@ app.post("/api/boards/:boardId/export/react-tailwind", asyncHandler(async (req, 
   res.json(await store.exportReactTailwind(param(req, "boardId")));
 }));
 
+app.post("/api/boards/:boardId/export/svg", asyncHandler(async (req, res) => {
+  const pageId = typeof req.body?.pageId === "string" ? req.body.pageId : undefined;
+  res.json(await store.exportPageSvg(param(req, "boardId"), pageId));
+}));
+
+app.post("/api/boards/:boardId/export/pdf", asyncHandler(async (req, res) => {
+  const pageId = typeof req.body?.pageId === "string" ? req.body.pageId : undefined;
+  res.json(await store.exportPagePdf(param(req, "boardId"), pageId));
+}));
+
+app.post("/api/boards/:boardId/export/mermaid", asyncHandler(async (req, res) => {
+  res.json(await store.exportMermaid(param(req, "boardId")));
+}));
+
 app.post("/mcp", async (req, res) => {
   const server = createBoardMcpServer(store, {
     onBoardChanged: async (boardId, agentActivity) => {
       const project = await store.readBoard(boardId);
       broadcast(boardId, { type: "board.changed", boardId, project, agentActivity });
-    }
+    },
+    statusExtras: () => ({ backup: backup.status() })
   });
 
   try {
@@ -238,6 +307,22 @@ function broadcast(boardId: string, message: unknown, except?: WebSocket): void 
       socket.send(payload);
     }
   }
+  if ((message as { type?: string }).type === "board.changed" && store.storageModeStatus() !== "cloud") {
+    backup.schedule(boardId);
+  }
+}
+
+// Flush pending backups before the process dies (Cmd+Q, SIGTERM from Electron, Ctrl+C in dev).
+let shuttingDown = false;
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    void backup
+      .flush()
+      .catch((error) => console.error(`PowerBoard: backup flush on ${signal} failed: ${error instanceof Error ? error.message : String(error)}`))
+      .finally(() => process.exit(0));
+  });
 }
 
 function asyncHandler(handler: (req: Request, res: Response, next: NextFunction) => Promise<void> | Promise<Response> | Promise<unknown>) {

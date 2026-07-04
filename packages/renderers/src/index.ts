@@ -1,4 +1,4 @@
-import type { Artboard, BoardElement, BoardProject } from "@powerboard/schema";
+import { arrowheadIsFilled, arrowheadPath, connectorGeometry, readPointArray, type Artboard, type BoardConnector, type BoardElement, type BoardProject, type Rect } from "@powerboard/schema";
 
 export interface RenderedFile {
   path: string;
@@ -362,6 +362,31 @@ function renderElementSvg(project: BoardProject, element: BoardElement, offsetX 
     case "button":
     case "badge":
       return `<g opacity="${opacity}"><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}"/><text x="${x + element.width / 2}" y="${y + element.height / 2 + fontSize / 3}" fill="${escapeAttr(color)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="700" text-anchor="middle">${escapeXml(readString(element.props.text, element.name))}</text>${children}</g>`;
+    case "shape": {
+      const kind = readString(element.props.shape, "rectangle");
+      const outline = shapeOutlineSvg(kind, x, y, element.width, element.height, radius, escapeAttr(fill), escapeAttr(stroke), element.style.strokeWidth ?? 1.5);
+      const label = readString(element.props.text, "");
+      const text = label
+        ? `<text x="${x + element.width / 2}" y="${y + element.height / 2 + fontSize / 3}" fill="${escapeAttr(color)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${escapeAttr(String(element.style.fontWeight ?? 600))}" text-anchor="middle">${escapeXml(label)}</text>`
+        : "";
+      return `<g opacity="${opacity}">${outline}${text}${children}</g>`;
+    }
+    case "ink": {
+      const points = readPointArray(element.props.points);
+      if (points.length < 2) return `<g opacity="${opacity}">${children}</g>`;
+      const path = points
+        .map(([px, py], index) => `${index === 0 ? "M" : "L"} ${roundForSvg(x + px * element.width)} ${roundForSvg(y + py * element.height)}`)
+        .join(" ");
+      return `<g opacity="${opacity}"><path d="${path}" fill="none" stroke="${escapeAttr(element.style.stroke ?? color)}" stroke-width="${element.style.strokeWidth ?? 2.5}" stroke-linecap="round" stroke-linejoin="round"/>${children}</g>`;
+    }
+    case "sticky": {
+      const lines = wrapSvgText(readString(element.props.text, "Note"), Math.max(8, Math.floor(element.width / (fontSize * 0.62))));
+      const textLines = lines
+        .slice(0, Math.max(1, Math.floor((element.height - 32) / (fontSize * 1.4))))
+        .map((line, index) => `<text x="${x + 16}" y="${y + 28 + index * fontSize * 1.4}" fill="${escapeAttr(color)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="600">${escapeXml(line)}</text>`)
+        .join("");
+      return `<g opacity="${opacity}"><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius || 12}" fill="${escapeAttr(fill === "transparent" ? "#FEF3C7" : fill)}" stroke="${escapeAttr(stroke)}"/>${textLines}${children}</g>`;
+    }
     case "chart": {
       const values = readNumberArray(element.props.values, [20, 48, 34, 72, 55]);
       const bars = values
@@ -575,4 +600,215 @@ function escapeAttr(value: string): string {
 
 function escapePipe(value: string): string {
   return value.replace(/\|/g, "\\|");
+}
+
+function shapeOutlineSvg(kind: string, x: number, y: number, w: number, h: number, radius: number, fill: string, stroke: string, strokeWidth: number): string {
+  const attrs = `fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linejoin="round"`;
+  const poly = (points: Array<[number, number]>) => `<polygon points="${points.map(([px, py]) => `${roundForSvg(x + px * w)},${roundForSvg(y + py * h)}`).join(" ")}" ${attrs}/>`;
+  switch (kind) {
+    case "ellipse":
+      return `<ellipse cx="${x + w / 2}" cy="${y + h / 2}" rx="${w / 2}" ry="${h / 2}" ${attrs}/>`;
+    case "diamond":
+      return poly([[0.5, 0], [1, 0.5], [0.5, 1], [0, 0.5]]);
+    case "parallelogram":
+      return poly([[0.22, 0], [1, 0], [0.78, 1], [0, 1]]);
+    case "triangle":
+      return poly([[0.5, 0], [1, 1], [0, 1]]);
+    case "hexagon":
+      return poly([[0.25, 0], [0.75, 0], [1, 0.5], [0.75, 1], [0.25, 1], [0, 0.5]]);
+    case "star":
+      return poly(starPoints());
+    case "arrow-right":
+      return poly([[0, 0.28], [0.62, 0.28], [0.62, 0], [1, 0.5], [0.62, 1], [0.62, 0.72], [0, 0.72]]);
+    case "cylinder": {
+      const ry = Math.min(h * 0.16, 22);
+      return `<path d="M ${x} ${y + ry} A ${w / 2} ${ry} 0 0 1 ${x + w} ${y + ry} L ${x + w} ${y + h - ry} A ${w / 2} ${ry} 0 0 1 ${x} ${y + h - ry} Z" ${attrs}/><path d="M ${x} ${y + ry} A ${w / 2} ${ry} 0 0 0 ${x + w} ${y + ry}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}"/>`;
+    }
+    case "document": {
+      const wave = h * 0.12;
+      return `<path d="M ${x} ${y} L ${x + w} ${y} L ${x + w} ${y + h - wave} Q ${x + w * 0.75} ${y + h - wave * 2.4} ${x + w / 2} ${y + h - wave} T ${x} ${y + h - wave} Z" ${attrs}/>`;
+    }
+    case "cloud": {
+      const r = Math.min(w, h) / 4;
+      return `<path d="M ${x + r} ${y + h * 0.7} A ${r} ${r} 0 1 1 ${x + w * 0.28} ${y + h * 0.32} A ${r * 1.15} ${r * 1.15} 0 1 1 ${x + w * 0.68} ${y + h * 0.3} A ${r} ${r} 0 1 1 ${x + w - r * 0.7} ${y + h * 0.7} Z" ${attrs}/>`;
+    }
+    case "rounded":
+      return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${Math.min(w, h) / 2}" ${attrs}/>`;
+    default:
+      return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${radius}" ${attrs}/>`;
+  }
+}
+
+function starPoints(): Array<[number, number]> {
+  const points: Array<[number, number]> = [];
+  for (let index = 0; index < 10; index++) {
+    const angle = -Math.PI / 2 + (index * Math.PI) / 5;
+    const radius = index % 2 === 0 ? 0.5 : 0.21;
+    points.push([0.5 + radius * Math.cos(angle), 0.5 + radius * Math.sin(angle)]);
+  }
+  return points;
+}
+
+function wrapSvgText(text: string, maxChars: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    if (current && (current.length + word.length + 1) > maxChars) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = current ? `${current} ${word}` : word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines.length ? lines : [text];
+}
+
+/** Render a full page (all artboards + connectors) to one SVG — diagrams export whole. */
+export function renderPageSvg(project: BoardProject, pageId?: string): string {
+  const page = pageId ? project.pages.find((candidate) => candidate.id === pageId) : project.pages[0];
+  const artboards = project.artboards.filter((artboard) => artboard.visible && (!page || page.artboardIds.includes(artboard.id)));
+  if (!artboards.length) {
+    throw new Error("Page has no visible artboards to export.");
+  }
+  const pad = 60;
+  const minX = Math.min(...artboards.map((a) => a.x)) - pad;
+  const minY = Math.min(...artboards.map((a) => a.y)) - pad;
+  const maxX = Math.max(...artboards.map((a) => a.x + a.width)) + pad;
+  const maxY = Math.max(...artboards.map((a) => a.y + a.height)) + pad;
+
+  const artboardMarkup = artboards
+    .map((artboard) => {
+      const chrome = artboard.frameless
+        ? artboard.background && artboard.background !== "transparent"
+          ? `<rect x="${artboard.x}" y="${artboard.y}" width="${artboard.width}" height="${artboard.height}" fill="${escapeAttr(artboard.background)}"/>`
+          : ""
+        : `<rect x="${artboard.x}" y="${artboard.y}" width="${artboard.width}" height="${artboard.height}" rx="18" fill="${escapeAttr(artboard.background)}" stroke="#CBD5E1" stroke-width="1"/>`;
+      const elements = project.elements
+        .filter((element) => element.artboardId === artboard.id && element.visible && !element.parentId)
+        .sort((a, b) => a.zIndex - b.zIndex)
+        .map((element) => renderElementSvg(project, element, artboard.x, artboard.y))
+        .join("");
+      const label = artboard.frameless
+        ? ""
+        : `<text x="${artboard.x}" y="${artboard.y - 12}" fill="#64748B" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600">${escapeXml(artboard.name)}</text>`;
+      return `${label}${chrome}${elements}`;
+    })
+    .join("\n  ");
+
+  const artboardIds = new Set(artboards.map((artboard) => artboard.id));
+  const connectors = project.connectors
+    .filter((connector) => artboardIds.has(connector.fromArtboardId) && artboardIds.has(connector.toArtboardId))
+    .map((connector) => renderConnectorSvg(project, connector))
+    .join("\n  ");
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(maxX - minX)}" height="${Math.round(maxY - minY)}" viewBox="${Math.round(minX)} ${Math.round(minY)} ${Math.round(maxX - minX)} ${Math.round(maxY - minY)}">
+  <rect x="${Math.round(minX)}" y="${Math.round(minY)}" width="100%" height="100%" fill="#F1F5F9"/>
+  ${artboardMarkup}
+  ${connectors}
+</svg>`;
+}
+
+export function connectorEndpointRect(project: BoardProject, artboardId: string, elementId?: string): Rect | undefined {
+  const artboard = project.artboards.find((candidate) => candidate.id === artboardId);
+  if (!artboard) return undefined;
+  if (!elementId) {
+    return { x: artboard.x, y: artboard.y, width: artboard.width, height: artboard.height };
+  }
+  const element = project.elements.find((candidate) => candidate.id === elementId);
+  if (!element) return undefined;
+  const position = absoluteElementPosition(project, element);
+  return { x: artboard.x + position.x, y: artboard.y + position.y, width: element.width, height: element.height };
+}
+
+function renderConnectorSvg(project: BoardProject, connector: BoardConnector): string {
+  const fromRect = connectorEndpointRect(project, connector.fromArtboardId, connector.fromElementId);
+  const toRect = connectorEndpointRect(project, connector.toArtboardId, connector.toElementId);
+  if (!fromRect || !toRect) return "";
+  const geometry = connectorGeometry(fromRect, toRect, connector);
+  const stroke = escapeAttr(connector.style.stroke ?? "#2563EB");
+  const strokeWidth = connector.style.strokeWidth ?? 2;
+  const parts: string[] = [`<path d="${geometry.d}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round"/>`];
+  if (connector.arrowEnd !== "none") {
+    const head = arrowheadPath(geometry.end, geometry.endAngle, connector.arrowEnd);
+    parts.push(`<path d="${head}" fill="${arrowheadIsFilled(connector.arrowEnd) ? stroke : "none"}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linejoin="round"/>`);
+  }
+  if (connector.arrowStart !== "none") {
+    const head = arrowheadPath(geometry.start, geometry.startAngle + Math.PI, connector.arrowStart);
+    parts.push(`<path d="${head}" fill="${arrowheadIsFilled(connector.arrowStart) ? stroke : "none"}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linejoin="round"/>`);
+  }
+  if (connector.label) {
+    const labelWidth = connector.label.length * 7.2 + 20;
+    parts.push(
+      `<rect x="${roundForSvg(geometry.labelPoint.x - labelWidth / 2)}" y="${roundForSvg(geometry.labelPoint.y - 13)}" width="${roundForSvg(labelWidth)}" height="26" rx="13" fill="#FFFFFF" stroke="#E2E8F0"/>`,
+      `<text x="${roundForSvg(geometry.labelPoint.x)}" y="${roundForSvg(geometry.labelPoint.y + 4.5)}" fill="#334155" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle">${escapeXml(connector.label)}</text>`
+    );
+  }
+  return `<g>${parts.join("")}</g>`;
+}
+
+/** Mermaid flowchart export — agents and docs love this for flows and org charts. */
+export function renderMermaid(project: BoardProject): string {
+  const lines: string[] = ["flowchart LR"];
+  const declared = new Set<string>();
+  const idMap = new Map<string, string>();
+  let counter = 0;
+
+  const mermaidId = (rawId: string): string => {
+    const existing = idMap.get(rawId);
+    if (existing) return existing;
+    const id = `n${++counter}`;
+    idMap.set(rawId, id);
+    return id;
+  };
+
+  const declare = (rawId: string, label: string, element?: BoardElement): string => {
+    const id = mermaidId(rawId);
+    if (declared.has(id)) return id;
+    declared.add(id);
+    const safeLabel = label.replace(/["\[\]{}()|]/g, " ").replace(/\s+/g, " ").trim() || "Node";
+    const kind = element?.type === "shape" ? readString(element.props.shape, "rectangle") : "rectangle";
+    let open = "[";
+    let close = "]";
+    if (element?.type === "shape") {
+      if (kind === "diamond") [open, close] = ["{", "}"];
+      else if (kind === "ellipse" || kind === "rounded") [open, close] = ["(", ")"];
+      else if (kind === "parallelogram") [open, close] = ["[/", "/]"];
+      else if (kind === "cylinder") [open, close] = ["[(", ")]"];
+      else if (kind === "hexagon") [open, close] = ["{{", "}}"];
+    }
+    lines.push(`  ${id}${open}"${safeLabel}"${close}`);
+    return id;
+  };
+
+  const nodeFor = (artboardId: string, elementId?: string): string | undefined => {
+    if (elementId) {
+      const element = project.elements.find((candidate) => candidate.id === elementId);
+      if (!element) return undefined;
+      const label = readString(element.props.text, element.name);
+      return declare(element.id, label, element);
+    }
+    const artboard = project.artboards.find((candidate) => candidate.id === artboardId);
+    if (!artboard) return undefined;
+    return declare(artboard.id, artboard.name);
+  };
+
+  for (const connector of project.connectors) {
+    const from = nodeFor(connector.fromArtboardId, connector.fromElementId);
+    const to = nodeFor(connector.toArtboardId, connector.toElementId);
+    if (!from || !to) continue;
+    const edge = connector.arrowEnd === "none" ? "---" : "-->";
+    const label = connector.label ? `|"${connector.label.replace(/["|]/g, " ").trim()}"|` : "";
+    lines.push(`  ${from} ${edge}${label} ${to}`);
+  }
+
+  // Include unconnected diagram nodes so the export is complete.
+  for (const element of project.elements) {
+    if ((element.type === "shape" || element.type === "sticky") && !idMap.has(element.id)) {
+      declare(element.id, readString(element.props.text, element.name), element);
+    }
+  }
+
+  return `${lines.join("\n")}\n`;
 }

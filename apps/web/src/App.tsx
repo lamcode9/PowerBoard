@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignHorizontalDistributeCenter,
+  AlignStartHorizontal,
+  AlignStartVertical,
+  AlignVerticalDistributeCenter,
+  ArchiveRestore,
   ArrowRight,
+  Bot,
   BoxSelect,
   BringToFront,
   ChevronDown,
@@ -14,34 +24,59 @@ import {
   FileText,
   Focus,
   Frame,
+  GitBranch,
   Group,
   Home,
   Image as ImageIcon,
+  Keyboard,
   Layers3,
+  LayoutTemplate,
   Lock,
   LockOpen,
   Maximize2,
+  Moon,
   MousePointer2,
+  Network,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  PenTool,
   Plus,
   Redo2,
   Save,
   Send,
+  Shapes,
   Smartphone,
+  Spline,
+  StickyNote,
+  Sun,
   Trash2,
   Undo2,
   Upload,
+  Workflow,
   ZoomIn,
   ZoomOut
 } from "lucide-react";
-import type { Artboard, BoardElement, BoardOperation, BoardProject } from "@powerboard/schema";
-import { createElementFromPreset, createId, DEVICE_PRESETS } from "@powerboard/schema";
+import type { Artboard, BoardConnector, BoardElement, BoardOperation, BoardProject } from "@powerboard/schema";
+import {
+  arrowheadIsFilled,
+  arrowheadPath,
+  connectorGeometry,
+  createElementFromPreset,
+  createId,
+  DEVICE_PRESETS,
+  readPointArray,
+  shapeKinds,
+  type Rect
+} from "@powerboard/schema";
 import {
   applyOperation,
+  backupNow,
   createBoard,
+  exportMermaid,
+  exportPagePdf,
+  exportPageSvg,
   exportPng,
   exportReactTailwind,
   exportSpec,
@@ -56,6 +91,10 @@ import {
   type BoardSummary
 } from "./api";
 import { cameraTransform, panCamera, zoomCameraAroundPoint, type Camera, type ViewportPoint } from "./canvasCamera";
+import { CommandPalette, type PaletteCommand } from "./components/CommandPalette";
+import { AgentFeed, type AgentFeedEntry } from "./components/AgentFeed";
+import { RestoreDialog } from "./components/RestoreDialog";
+import { ShortcutOverlay } from "./components/ShortcutOverlay";
 
 const componentTypes: BoardElement["type"][] = [
   "icon",
@@ -144,6 +183,29 @@ const CANVAS_ORIGIN_Y = 16000;
 
 type RouteState = { view: "home" } | { view: "board"; boardId: string };
 type RouteMode = "push" | "replace" | "none";
+type CanvasTool = "select" | "connect" | "ink";
+type PaletteMode = "mockup" | "diagram";
+type Theme = "light" | "dark";
+type MarqueeState = { startX: number; startY: number; x: number; y: number; width: number; height: number };
+type SnapGuides = { vertical: number[]; horizontal: number[] };
+type InkDraft = { artboardId: string; points: Array<[number, number]> };
+const NO_GUIDES: SnapGuides = { vertical: [], horizontal: [] };
+const SNAP_THRESHOLD = 6;
+const THEME_STORAGE_KEY = "powerboard.theme";
+const DIAGRAM_SHAPES: Array<{ kind: (typeof shapeKinds)[number]; label: string }> = [
+  { kind: "rectangle", label: "Process" },
+  { kind: "rounded", label: "Start / End" },
+  { kind: "diamond", label: "Decision" },
+  { kind: "parallelogram", label: "Input / Output" },
+  { kind: "cylinder", label: "Database" },
+  { kind: "ellipse", label: "Ellipse" },
+  { kind: "hexagon", label: "Prepare" },
+  { kind: "document", label: "Document" },
+  { kind: "cloud", label: "Cloud" },
+  { kind: "triangle", label: "Triangle" },
+  { kind: "star", label: "Star" },
+  { kind: "arrow-right", label: "Arrow" }
+];
 type ElementIndexes = {
   canvasRootsByArtboard: Map<string, BoardElement[]>;
   canvasChildrenByParent: Map<string, BoardElement[]>;
@@ -178,6 +240,24 @@ export function App() {
   const [collapsedPanels, setCollapsedPanels] = useState<Record<string, boolean>>({});
   const [leftPaneOpen, setLeftPaneOpen] = useState(true);
   const [rightPaneOpen, setRightPaneOpen] = useState(true);
+  const [theme, setTheme] = useState<Theme>(readStoredTheme);
+  const [tool, setTool] = useState<CanvasTool>("select");
+  const [paletteMode, setPaletteMode] = useState<PaletteMode>("mockup");
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const [agentFeed, setAgentFeed] = useState<AgentFeedEntry[]>([]);
+  const [marquee, setMarquee] = useState<MarqueeState | null>(null);
+  const [snapGuides, setSnapGuides] = useState<SnapGuides>(NO_GUIDES);
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const [connectFromId, setConnectFromId] = useState<string | null>(null);
+  const [inkDraft, setInkDraft] = useState<InkDraft | null>(null);
+  const marqueeRef = useRef<MarqueeState | null>(null);
+  const inkDraftRef = useRef<InkDraft | null>(null);
+  const toolRef = useRef<CanvasTool>("select");
+  const actionsRef = useRef<Record<string, () => void>>({});
+  const nudgeRef = useRef<((dx: number, dy: number) => void) | null>(null);
+  const lastGuidesKeyRef = useRef("|");
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const canvasPlaneRef = useRef<HTMLDivElement | null>(null);
   const cameraRef = useRef<Camera>({ x: 0, y: 0, zoom: INITIAL_ZOOM });
@@ -265,13 +345,64 @@ export function App() {
   }, [project?.id, homeOpen]);
 
   useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // Theme preference is a nicety; never block on storage.
+    }
+  }, [theme]);
+
+  useEffect(() => {
+    toolRef.current = tool;
+  }, [tool]);
+
+  useEffect(() => {
+    inkDraftRef.current = inkDraft;
+  }, [inkDraft]);
+
+  // Poll health while a board is open so the backup badge stays honest.
+  useEffect(() => {
+    if (homeOpen || !project) return;
+    const timer = window.setInterval(() => {
+      void refreshStorageStatus().catch(() => undefined);
+    }, 45_000);
+    return () => window.clearInterval(timer);
+  }, [homeOpen, project?.id]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (isTypingTarget(event.target)) return;
+      const actions = actionsRef.current;
       if (event.code === "Space") {
         event.preventDefault();
         setSpaceDown(true);
       }
-      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.key === "Escape") {
+        actions.escape?.();
+        return;
+      }
+      if (!(event.metaKey || event.ctrlKey)) {
+        if (event.key === "?" || (event.shiftKey && event.key === "/")) {
+          event.preventDefault();
+          actions.shortcuts?.();
+          return;
+        }
+        if (event.key === "Backspace" || event.key === "Delete") {
+          event.preventDefault();
+          actions.deleteSelection?.();
+          return;
+        }
+        if (event.key.startsWith("Arrow")) {
+          event.preventDefault();
+          const step = event.shiftKey ? 10 : 1;
+          const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+          const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+          nudgeRef.current?.(dx, dy);
+          return;
+        }
+        return;
+      }
       if (event.key === "=" || event.key === "+") {
         event.preventDefault();
         zoomAtViewportCenter(cameraRef.current.zoom * BUTTON_ZOOM_FACTOR);
@@ -283,6 +414,27 @@ export function App() {
       if (event.key === "0") {
         event.preventDefault();
         zoomAtViewportCenter(INITIAL_ZOOM);
+      }
+      if (event.key === "1") {
+        event.preventDefault();
+        actions.fitAll?.();
+      }
+      if (event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        actions.commandPalette?.();
+      }
+      if (event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) actions.redo?.();
+        else actions.undo?.();
+      }
+      if (event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        actions.duplicate?.();
+      }
+      if (event.key.toLowerCase() === "g" && !event.shiftKey) {
+        event.preventDefault();
+        actions.group?.();
       }
     };
     const onKeyUp = (event: KeyboardEvent) => {
@@ -377,6 +529,7 @@ export function App() {
         rememberBoard(message.project);
         if (isAgentActivity(message.agentActivity)) {
           flashAgentActivity(message.agentActivity);
+          recordAgentFeed(message.agentActivity, message.project);
         }
       }
       if (message.type === "selection.changed" && message.selection) {
@@ -404,6 +557,11 @@ export function App() {
   const selectedArtboard = useMemo(() => {
     if (!project || selectedIds.length !== 1) return null;
     return project.artboards.find((artboard) => artboard.id === selectedIds[0]) ?? null;
+  }, [project, selectedIds]);
+
+  const selectedConnector = useMemo(() => {
+    if (!project || selectedIds.length !== 1) return null;
+    return project.connectors.find((connector) => connector.id === selectedIds[0]) ?? null;
   }, [project, selectedIds]);
 
   const activeArtboard = useMemo(() => {
@@ -440,6 +598,28 @@ export function App() {
     }, 2700);
     agentActivityTimersRef.current.push(timer);
     setStatus(agentActivityStatus(activity));
+  }
+
+  function recordAgentFeed(activity: AgentActivity, boardAfter: BoardProject) {
+    const actor = readString((boardAfter.metadata as Record<string, unknown>).lastAgentEditedBy, "Agent");
+    const namesById = new Map<string, string>([
+      ...boardAfter.artboards.map((artboard) => [artboard.id, artboard.name] as const),
+      ...boardAfter.elements.map((element) => [element.id, element.name] as const)
+    ]);
+    const named = activity.ids.map((id) => namesById.get(id)).filter((name): name is string => Boolean(name));
+    const targetText = named.length ? ` — ${named.slice(0, 2).join(", ")}${named.length > 2 ? ` +${named.length - 2}` : ""}` : "";
+    setAgentFeed((current) =>
+      [
+        {
+          id: `${activity.at}-${Math.random().toString(36).slice(2, 7)}`,
+          at: activity.at,
+          actor,
+          message: `${agentActivityStatus(activity)}${targetText}`,
+          targets: activity.ids
+        },
+        ...current
+      ].slice(0, 50)
+    );
   }
 
   function rememberBoard(nextProject: BoardProject) {
@@ -698,22 +878,106 @@ export function App() {
       });
       return;
     }
+    if (marqueeRef.current) {
+      updateMarquee(event);
+      return;
+    }
+    if (inkDraftRef.current) {
+      updateInkDraft(event);
+      return;
+    }
     const activeDrag = dragRef.current;
     if (!activeDrag || !projectRef.current) return;
     const currentZoom = cameraRef.current.zoom;
     const dx = (event.clientX - activeDrag.startX) / currentZoom;
     const dy = (event.clientY - activeDrag.startY) / currentZoom;
     const minSize = activeDrag.target === "artboard" ? 120 : 24;
-    const patch =
-      activeDrag.mode === "move"
-        ? { x: Math.round(activeDrag.original.x + dx), y: Math.round(activeDrag.original.y + dy) }
-        : {
-            width: Math.max(minSize, Math.round(activeDrag.original.width + dx)),
-            height: Math.max(minSize, Math.round(activeDrag.original.height + dy))
-          };
+    let patch: Partial<Pick<BoardElement, "x" | "y" | "width" | "height">>;
+    if (activeDrag.mode === "move") {
+      const snapped = computeSnap(activeDrag, Math.round(activeDrag.original.x + dx), Math.round(activeDrag.original.y + dy));
+      setGuidesIfChanged(snapped.guides);
+      patch = { x: snapped.x, y: snapped.y };
+    } else {
+      patch = {
+        width: Math.max(minSize, Math.round(activeDrag.original.width + dx)),
+        height: Math.max(minSize, Math.round(activeDrag.original.height + dy))
+      };
+    }
     const latest = { ...activeDrag.latest, ...patch };
     dragRef.current = { ...activeDrag, latest };
     scheduleDragPreview({ id: activeDrag.id, target: activeDrag.target, patch: latest });
+  }
+
+  function setGuidesIfChanged(guides: SnapGuides) {
+    const key = `${guides.vertical.join(",")}|${guides.horizontal.join(",")}`;
+    if (lastGuidesKeyRef.current === key) return;
+    lastGuidesKeyRef.current = key;
+    setSnapGuides(guides);
+  }
+
+  /** Snap moved frames/root elements to sibling edges + centers (alignment guides). */
+  function computeSnap(activeDrag: DragState, proposedX: number, proposedY: number): { x: number; y: number; guides: SnapGuides } {
+    const current = projectRef.current;
+    if (!current) return { x: proposedX, y: proposedY, guides: NO_GUIDES };
+    const threshold = SNAP_THRESHOLD / cameraRef.current.zoom;
+    const { width, height } = activeDrag.latest;
+
+    let candidatesX: number[] = [];
+    let candidatesY: number[] = [];
+    let worldOffsetX = CANVAS_ORIGIN_X;
+    let worldOffsetY = CANVAS_ORIGIN_Y;
+
+    if (activeDrag.target === "artboard") {
+      for (const artboard of current.artboards) {
+        if (artboard.id === activeDrag.id || !artboard.visible) continue;
+        candidatesX.push(artboard.x, artboard.x + artboard.width / 2, artboard.x + artboard.width);
+        candidatesY.push(artboard.y, artboard.y + artboard.height / 2, artboard.y + artboard.height);
+      }
+    } else {
+      const element = current.elements.find((candidate) => candidate.id === activeDrag.id);
+      if (!element || element.parentId) return { x: proposedX, y: proposedY, guides: NO_GUIDES };
+      const artboard = current.artboards.find((candidate) => candidate.id === element.artboardId);
+      if (!artboard) return { x: proposedX, y: proposedY, guides: NO_GUIDES };
+      worldOffsetX += artboard.x;
+      worldOffsetY += artboard.y;
+      candidatesX.push(0, artboard.width / 2, artboard.width);
+      candidatesY.push(0, artboard.height / 2, artboard.height);
+      for (const sibling of current.elements) {
+        if (sibling.id === element.id || sibling.parentId || sibling.artboardId !== element.artboardId || !sibling.visible) continue;
+        candidatesX.push(sibling.x, sibling.x + sibling.width / 2, sibling.x + sibling.width);
+        candidatesY.push(sibling.y, sibling.y + sibling.height / 2, sibling.y + sibling.height);
+      }
+    }
+
+    const anchorsX = [0, width / 2, width];
+    const anchorsY = [0, height / 2, height];
+    let snappedX = proposedX;
+    let snappedY = proposedY;
+    let bestDx = threshold;
+    let bestDy = threshold;
+    const guides: SnapGuides = { vertical: [], horizontal: [] };
+
+    for (const candidate of candidatesX) {
+      for (const anchor of anchorsX) {
+        const delta = Math.abs(proposedX + anchor - candidate);
+        if (delta < bestDx) {
+          bestDx = delta;
+          snappedX = Math.round(candidate - anchor);
+          guides.vertical = [worldOffsetX + candidate];
+        }
+      }
+    }
+    for (const candidate of candidatesY) {
+      for (const anchor of anchorsY) {
+        const delta = Math.abs(proposedY + anchor - candidate);
+        if (delta < bestDy) {
+          bestDy = delta;
+          snappedY = Math.round(candidate - anchor);
+          guides.horizontal = [worldOffsetY + candidate];
+        }
+      }
+    }
+    return { x: snappedX, y: snappedY, guides };
   }
 
   async function onCanvasPointerUp() {
@@ -721,9 +985,18 @@ export function App() {
       setPan(null);
       return;
     }
+    if (marqueeRef.current) {
+      finishMarquee();
+      return;
+    }
+    if (inkDraftRef.current) {
+      await finishInkDraft();
+      return;
+    }
     const activeDrag = dragRef.current;
     if (!activeDrag || !projectRef.current) return;
     clearDrag();
+    setGuidesIfChanged(NO_GUIDES);
     if (boundsEqual(activeDrag.original, activeDrag.latest)) return;
     if (activeDrag.target === "element") {
       await runOperation({
@@ -757,6 +1030,7 @@ export function App() {
       height: preset.height,
       background: preset.type === "desktop" || preset.type === "web" ? "#F8FAFC" : "#F5F7FB",
       devicePreset: preset.id,
+      frameless: false,
       locked: false,
       visible: true
     };
@@ -879,11 +1153,336 @@ export function App() {
         id: createId("conn"),
         fromArtboardId: from,
         toArtboardId: to,
+        fromPort: "auto",
+        toPort: "auto",
+        routing: "curved",
+        arrowStart: "none",
+        arrowEnd: "arrow",
+        waypoints: [],
         label: "Flow",
+        labelPosition: 0.5,
         style: { stroke: "#2563EB" }
       }
     });
   }
+
+  async function nudgeSelection(dx: number, dy: number) {
+    const current = projectRef.current;
+    if (!current || (!dx && !dy)) return;
+    const elements = current.elements.filter((element) => selectedIdsRef.current.includes(element.id) && !element.locked);
+    for (const element of elements) {
+      await runOperation({ type: "move_resize_element", elementId: element.id, x: element.x + dx, y: element.y + dy });
+    }
+  }
+
+  async function runLayout(layout: "tree" | "flow" | "distribute-horizontal" | "distribute-vertical" | "align-left" | "align-center-x" | "align-right" | "align-top" | "align-center-y" | "align-bottom") {
+    const current = projectRef.current;
+    if (!current) return;
+    const elementIds = selectedIdsRef.current.filter((id) => current.elements.some((element) => element.id === id));
+    if (!elementIds.length && !activeArtboard) {
+      setStatus("Select elements (or a frame) to lay out");
+      return;
+    }
+    await runOperation({
+      type: "apply_layout",
+      layout,
+      elementIds: elementIds.length ? elementIds : undefined,
+      artboardId: elementIds.length ? undefined : activeArtboard?.id,
+      spacingX: 80,
+      spacingY: 64
+    });
+    setStatus(`Applied ${layout.replace(/-/g, " ")} layout`);
+  }
+
+  async function addShape(kind: (typeof shapeKinds)[number], label: string) {
+    if (!project || !activeArtboard) {
+      setStatus("Select a frame or canvas before adding a shape");
+      return;
+    }
+    const element = createElementFromPreset("shape", activeArtboard.id, 48 + selectedIds.length * 16, 96 + selectedIds.length * 16);
+    element.props = { ...element.props, shape: kind, text: label };
+    element.name = uniqueElementName(project, activeArtboard.id, `${activeArtboard.name} / ${label}`);
+    element.zIndex = Math.max(0, ...project.elements.filter((candidate) => candidate.artboardId === activeArtboard.id).map((candidate) => candidate.zIndex)) + 1;
+    await runOperation({ type: "add_element", element });
+  }
+
+  async function addDiagramCanvas() {
+    if (!project) return;
+    const position = nextArtboardPosition(project, activeArtboard);
+    const artboard: Artboard = {
+      id: createId("art"),
+      name: uniqueArtboardName(project, "Diagram Canvas"),
+      type: "custom",
+      x: position.x,
+      y: position.y,
+      width: 1600,
+      height: 1100,
+      background: theme === "dark" ? "#1B2432" : "#FBFCFE",
+      frameless: true,
+      locked: false,
+      visible: true
+    };
+    await runOperation({ type: "create_artboard", artboard });
+    setStatus("Diagram canvas added — drop shapes and connect them");
+  }
+
+  function onConnectTap(targetId: string) {
+    const current = projectRef.current;
+    if (!current) return;
+    const resolve = (id: string): { artboardId: string; elementId?: string } | null => {
+      const artboard = current.artboards.find((candidate) => candidate.id === id);
+      if (artboard) return { artboardId: artboard.id };
+      const element = current.elements.find((candidate) => candidate.id === id);
+      if (element) return { artboardId: element.artboardId, elementId: element.id };
+      return null;
+    };
+    if (!connectFromId) {
+      if (!resolve(targetId)) return;
+      setConnectFromId(targetId);
+      setStatus("Connector: now click the target shape or frame");
+      return;
+    }
+    const from = resolve(connectFromId);
+    const to = resolve(targetId);
+    setConnectFromId(null);
+    if (!from || !to || connectFromId === targetId) {
+      setStatus("Connector cancelled");
+      return;
+    }
+    const isDiagram = Boolean(from.elementId || to.elementId);
+    void runOperation({
+      type: "add_connector",
+      connector: {
+        id: createId("conn"),
+        fromArtboardId: from.artboardId,
+        toArtboardId: to.artboardId,
+        fromElementId: from.elementId,
+        toElementId: to.elementId,
+        fromPort: "auto",
+        toPort: "auto",
+        routing: isDiagram ? "orthogonal" : "curved",
+        arrowStart: "none",
+        arrowEnd: "arrow",
+        waypoints: [],
+        labelPosition: 0.5,
+        style: { stroke: "#2563EB" }
+      }
+    }).then(() => setStatus("Connected — pick endpoints again or press Esc to exit the connector tool"));
+  }
+
+  async function commitTextEdit(elementId: string, textValue: string) {
+    setEditingTextId(null);
+    const element = projectRef.current?.elements.find((candidate) => candidate.id === elementId);
+    if (!element || readString(element.props.text, "") === textValue) return;
+    await runOperation({ type: "update_element", elementId, patch: { props: { text: textValue } } });
+  }
+
+  function worldPointFromClient(clientX: number, clientY: number): { x: number; y: number } | null {
+    const viewport = viewportRef.current;
+    if (!viewport) return null;
+    const rect = viewport.getBoundingClientRect();
+    const camera = cameraRef.current;
+    return {
+      x: (clientX - rect.left - camera.x) / camera.zoom,
+      y: (clientY - rect.top - camera.y) / camera.zoom
+    };
+  }
+
+  function artboardAtWorldPoint(point: { x: number; y: number }): Artboard | null {
+    const current = projectRef.current;
+    if (!current) return null;
+    // Iterate topmost-last so overlapping frames pick the most recently added.
+    for (let index = current.artboards.length - 1; index >= 0; index--) {
+      const artboard = current.artboards[index]!;
+      if (!artboard.visible || artboard.locked) continue;
+      const x = CANVAS_ORIGIN_X + artboard.x;
+      const y = CANVAS_ORIGIN_Y + artboard.y;
+      if (point.x >= x && point.x <= x + artboard.width && point.y >= y && point.y <= y + artboard.height) {
+        return artboard;
+      }
+    }
+    return null;
+  }
+
+  function onViewportPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 || spaceDown) return;
+    const world = worldPointFromClient(event.clientX, event.clientY);
+    if (!world) return;
+    if (toolRef.current === "ink") {
+      const artboard = artboardAtWorldPoint(world);
+      if (!artboard) {
+        setStatus("Draw inside a frame or diagram canvas");
+        return;
+      }
+      capturePointer(event.currentTarget, event.pointerId);
+      const point: [number, number] = [world.x - CANVAS_ORIGIN_X - artboard.x, world.y - CANVAS_ORIGIN_Y - artboard.y];
+      const draft = { artboardId: artboard.id, points: [point] };
+      inkDraftRef.current = draft;
+      setInkDraft(draft);
+      return;
+    }
+    if (toolRef.current === "connect") {
+      setConnectFromId(null);
+      setStatus("Connector cancelled — click a shape or frame to start");
+      return;
+    }
+    // Select tool on empty canvas: start a marquee. A click without movement clears selection.
+    capturePointer(event.currentTarget, event.pointerId);
+    const state: MarqueeState = { startX: world.x, startY: world.y, x: world.x, y: world.y, width: 0, height: 0 };
+    marqueeRef.current = state;
+    setMarquee(state);
+  }
+
+  function updateMarquee(event: React.PointerEvent<HTMLDivElement>) {
+    const active = marqueeRef.current;
+    const world = worldPointFromClient(event.clientX, event.clientY);
+    if (!active || !world) return;
+    const next: MarqueeState = {
+      startX: active.startX,
+      startY: active.startY,
+      x: Math.min(active.startX, world.x),
+      y: Math.min(active.startY, world.y),
+      width: Math.abs(world.x - active.startX),
+      height: Math.abs(world.y - active.startY)
+    };
+    marqueeRef.current = next;
+    setMarquee(next);
+  }
+
+  function finishMarquee() {
+    const active = marqueeRef.current;
+    marqueeRef.current = null;
+    setMarquee(null);
+    if (!active) return;
+    const current = projectRef.current;
+    if (!current) return;
+    if (active.width < 4 && active.height < 4) {
+      void select([]);
+      return;
+    }
+    const box: Bounds = { x: active.x, y: active.y, width: active.width, height: active.height };
+    const hitArtboards = current.artboards
+      .filter((artboard) => artboard.visible && boundsIntersect(box, artboardWorldBounds(artboard)) && boundsContain(box, artboardWorldBounds(artboard)))
+      .map((artboard) => artboard.id);
+    const hitElements = current.elements
+      .filter((element) => {
+        if (!element.visible || element.parentId) return false;
+        const bounds = elementWorldBounds(current, element);
+        return bounds ? boundsIntersect(box, bounds) : false;
+      })
+      .map((element) => element.id);
+    const ids = hitArtboards.length && !hitElements.length ? hitArtboards : hitElements;
+    void select(ids);
+    setStatus(ids.length ? `Selected ${ids.length} ${pluralize(ids.length, "item")}` : "Nothing in selection");
+  }
+
+  function updateInkDraft(event: React.PointerEvent<HTMLDivElement>) {
+    const draft = inkDraftRef.current;
+    const world = worldPointFromClient(event.clientX, event.clientY);
+    const current = projectRef.current;
+    if (!draft || !world || !current) return;
+    const artboard = current.artboards.find((candidate) => candidate.id === draft.artboardId);
+    if (!artboard) return;
+    const point: [number, number] = [world.x - CANVAS_ORIGIN_X - artboard.x, world.y - CANVAS_ORIGIN_Y - artboard.y];
+    const last = draft.points[draft.points.length - 1];
+    if (last && Math.hypot(point[0] - last[0], point[1] - last[1]) < 2.5) return;
+    const next = { ...draft, points: [...draft.points, point] };
+    inkDraftRef.current = next;
+    setInkDraft(next);
+  }
+
+  async function finishInkDraft() {
+    const draft = inkDraftRef.current;
+    inkDraftRef.current = null;
+    setInkDraft(null);
+    const current = projectRef.current;
+    if (!draft || !current || draft.points.length < 2) return;
+    const xs = draft.points.map(([x]) => x);
+    const ys = draft.points.map(([, y]) => y);
+    const minX = Math.min(...xs);
+    const minY = Math.min(...ys);
+    const width = Math.max(8, Math.max(...xs) - minX);
+    const height = Math.max(8, Math.max(...ys) - minY);
+    const normalized = draft.points.map(([x, y]) => [round2((x - minX) / width), round2((y - minY) / height)] as [number, number]);
+    const element = createElementFromPreset("ink", draft.artboardId, Math.round(minX), Math.round(minY));
+    element.width = Math.round(width);
+    element.height = Math.round(height);
+    element.props = { ...element.props, points: normalized };
+    element.name = uniqueElementName(current, draft.artboardId, "Ink stroke");
+    await runOperation({ type: "add_element", element });
+    setStatus("Ink stroke added — keep drawing or press Esc for select");
+  }
+
+  async function exportDiagram(kind: "svg" | "pdf" | "mermaid") {
+    if (!project) return;
+    try {
+      await operationQueueRef.current.catch(() => null);
+      if (kind === "svg") {
+        const result = await exportPageSvg(project.id);
+        setStatus(`SVG exported: ${result.filePath}`);
+      } else if (kind === "pdf") {
+        const result = await exportPagePdf(project.id);
+        setStatus(`PDF exported: ${result.filePath}`);
+      } else {
+        const result = await exportMermaid(project.id);
+        setStatus(`Mermaid exported: ${result.filePath}`);
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : `${kind.toUpperCase()} export failed`);
+    }
+  }
+
+  async function backupAllNow() {
+    try {
+      setStatus("Backing up…");
+      const result = await backupNow();
+      await refreshStorageStatus().catch(() => undefined);
+      setStatus(result.failed.length ? `Backup finished with ${result.failed.length} failure(s): ${result.failed[0]?.error}` : `Backed up ${result.backedUp.length} ${pluralize(result.backedUp.length, "board")}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Backup failed");
+    }
+  }
+
+  function focusAgentTargets(ids: string[]) {
+    const current = projectRef.current;
+    if (!current) return;
+    const bounds = boundsForSelection(current, ids);
+    if (!bounds) return;
+    void select(ids);
+    focusBounds(bounds, "Focused agent edit");
+  }
+
+  function escapeAction() {
+    if (commandOpen) return setCommandOpen(false);
+    if (shortcutsOpen) return setShortcutsOpen(false);
+    if (restoreOpen) return setRestoreOpen(false);
+    if (editingTextId) return setEditingTextId(null);
+    if (connectFromId) {
+      setConnectFromId(null);
+      setStatus("Connector cancelled");
+      return;
+    }
+    if (toolRef.current !== "select") {
+      setTool("select");
+      setStatus("Select tool");
+      return;
+    }
+    void select([]);
+  }
+
+  // Keyboard actions read through a ref so the singleton key handler always sees fresh closures.
+  actionsRef.current = {
+    escape: escapeAction,
+    deleteSelection: () => void deleteSelection(),
+    duplicate: () => void duplicateSelection(),
+    group: () => void groupSelection(),
+    undo: () => void undoBoard(),
+    redo: () => void redoBoard(),
+    fitAll,
+    commandPalette: () => setCommandOpen((current) => !current),
+    shortcuts: () => setShortcutsOpen((current) => !current)
+  };
+  nudgeRef.current = (dx, dy) => void nudgeSelection(dx, dy);
 
   async function uploadImage(kind: "image" | "screenshot", file: File) {
     if (!project || !activeArtboard) return;
@@ -1125,6 +1724,44 @@ export function App() {
 
   const canDeleteSelection = Boolean(project && selectedIds.some((id) => project.elements.some((element) => element.id === id)));
 
+  const paletteCommands: PaletteCommand[] = project
+    ? [
+        { id: "new-board", section: "Board", title: "New board", run: () => void createNewBoard(), keywords: "create" },
+        { id: "go-home", section: "Board", title: "Go to all boards", run: () => void showHome() },
+        { id: "undo", section: "Edit", title: "Undo", hint: "⌘Z", run: () => void undoBoard() },
+        { id: "redo", section: "Edit", title: "Redo", hint: "⌘⇧Z", run: () => void redoBoard() },
+        { id: "duplicate", section: "Edit", title: "Duplicate selection", hint: "⌘D", run: () => void duplicateSelection() },
+        { id: "group", section: "Edit", title: "Group selection", hint: "⌘G", run: () => void groupSelection() },
+        { id: "delete", section: "Edit", title: "Delete selection", hint: "⌫", run: () => void deleteSelection() },
+        { id: "add-frame", section: "Insert", title: "Add device frame", run: () => void addArtboard(), keywords: "artboard screen" },
+        { id: "add-canvas", section: "Insert", title: "Add diagram canvas", run: () => void addDiagramCanvas(), keywords: "diagram frameless" },
+        ...componentTypes.map((type) => ({ id: `add-${type}`, section: "Insert · Mockup", title: `Add ${labelFor(type)}`, run: () => void addComponent(type), keywords: "component element" })),
+        ...DIAGRAM_SHAPES.map(({ kind, label }) => ({ id: `shape-${kind}`, section: "Insert · Diagram", title: `Add ${label} shape`, run: () => void addShape(kind, label), keywords: `shape ${kind}` })),
+        { id: "tool-connect", section: "Tools", title: "Connector tool", run: () => setTool("connect"), keywords: "arrow edge link" },
+        { id: "tool-ink", section: "Tools", title: "Ink / freehand tool", run: () => setTool("ink"), keywords: "draw pen pencil" },
+        { id: "tool-select", section: "Tools", title: "Select tool", run: () => setTool("select") },
+        { id: "layout-tree", section: "Layout", title: "Tree layout (org chart)", run: () => void runLayout("tree") },
+        { id: "layout-flow", section: "Layout", title: "Flow layout (left→right)", run: () => void runLayout("flow") },
+        { id: "align-left", section: "Layout", title: "Align left", run: () => void runLayout("align-left") },
+        { id: "align-center-x", section: "Layout", title: "Align centers (horizontal)", run: () => void runLayout("align-center-x") },
+        { id: "align-top", section: "Layout", title: "Align top", run: () => void runLayout("align-top") },
+        { id: "distribute-h", section: "Layout", title: "Distribute horizontally", run: () => void runLayout("distribute-horizontal") },
+        { id: "distribute-v", section: "Layout", title: "Distribute vertically", run: () => void runLayout("distribute-vertical") },
+        { id: "export-png", section: "Export", title: "Export PNG", run: () => void exportSelectedPng() },
+        { id: "export-spec", section: "Export", title: "Export implementation spec", run: () => void exportImplementationSpec() },
+        { id: "export-react", section: "Export", title: "Export React + Tailwind", run: () => void exportCode() },
+        { id: "export-svg", section: "Export", title: "Export page SVG", run: () => void exportDiagram("svg") },
+        { id: "export-pdf", section: "Export", title: "Export page PDF", run: () => void exportDiagram("pdf") },
+        { id: "export-mermaid", section: "Export", title: "Export Mermaid diagram", run: () => void exportDiagram("mermaid") },
+        { id: "fit-all", section: "View", title: "Fit all frames", hint: "⌘1", run: fitAll },
+        { id: "focus-selection", section: "View", title: "Focus selection", run: focusSelection },
+        { id: "theme", section: "View", title: theme === "dark" ? "Switch to light mode" : "Switch to dark mode", run: () => setTheme((current) => (current === "dark" ? "light" : "dark")) },
+        { id: "backup-now", section: "Backup", title: "Back up all boards now", run: () => void backupAllNow() },
+        { id: "restore", section: "Backup", title: "Restore from backup…", run: () => setRestoreOpen(true) },
+        { id: "shortcuts", section: "Help", title: "Keyboard shortcuts", hint: "?", run: () => setShortcutsOpen(true) }
+      ]
+    : [];
+
   return (
     <main className={classNames("app-shell", homeOpen && "home-mode", !leftPaneOpen && "left-pane-hidden", !rightPaneOpen && "right-pane-hidden")} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
       <header className="topbar">
@@ -1154,23 +1791,53 @@ export function App() {
             </div>
 
             <div className="toolbar-group" aria-label="Canvas tools">
-              <IconButton label="Select" active onClick={() => setStatus("Select tool active")}>
+              <IconButton label="Select tool (V)" active={tool === "select"} onClick={() => (setTool("select"), setConnectFromId(null), setStatus("Select tool"))}>
                 <MousePointer2 size={18} />
               </IconButton>
-              <IconButton label="Undo" onClick={undoBoard}>
+              <IconButton label="Connector tool — click two shapes" active={tool === "connect"} onClick={() => (setTool("connect"), setStatus("Connector: click a shape or frame to start"))}>
+                <Spline size={18} />
+              </IconButton>
+              <IconButton label="Ink / freehand tool" active={tool === "ink"} onClick={() => (setTool("ink"), setStatus("Ink: draw inside a frame"))}>
+                <PenTool size={18} />
+              </IconButton>
+            </div>
+
+            <div className="toolbar-group" aria-label="Edit">
+              <IconButton label="Undo (⌘Z)" onClick={undoBoard}>
                 <Undo2 size={18} />
               </IconButton>
-              <IconButton label="Redo" onClick={redoBoard}>
+              <IconButton label="Redo (⌘⇧Z)" onClick={redoBoard}>
                 <Redo2 size={18} />
               </IconButton>
-              <IconButton label="Group" onClick={groupSelection} disabled={selectedIds.length < 2}>
+              <IconButton label="Group (⌘G)" onClick={groupSelection} disabled={selectedIds.length < 2}>
                 <Group size={18} />
               </IconButton>
-              <IconButton label="Duplicate" onClick={duplicateSelection} disabled={!selectedIds.length}>
+              <IconButton label="Duplicate (⌘D)" onClick={duplicateSelection} disabled={!selectedIds.length}>
                 <Copy size={18} />
               </IconButton>
-              <IconButton label="Delete" onClick={deleteSelection} disabled={!canDeleteSelection}>
+              <IconButton label="Delete (⌫)" onClick={deleteSelection} disabled={!canDeleteSelection}>
                 <Trash2 size={18} />
+              </IconButton>
+            </div>
+
+            <div className="toolbar-group" aria-label="Align and layout">
+              <IconButton label="Align left" onClick={() => runLayout("align-left")} disabled={selectedIds.length < 2}>
+                <AlignStartVertical size={18} />
+              </IconButton>
+              <IconButton label="Align center" onClick={() => runLayout("align-center-x")} disabled={selectedIds.length < 2}>
+                <AlignCenterVertical size={18} />
+              </IconButton>
+              <IconButton label="Align right" onClick={() => runLayout("align-right")} disabled={selectedIds.length < 2}>
+                <AlignEndVertical size={18} />
+              </IconButton>
+              <IconButton label="Distribute horizontally" onClick={() => runLayout("distribute-horizontal")} disabled={selectedIds.length < 3}>
+                <AlignHorizontalDistributeCenter size={18} />
+              </IconButton>
+              <IconButton label="Tree layout (org chart)" onClick={() => runLayout("tree")}>
+                <Network size={18} />
+              </IconButton>
+              <IconButton label="Flow layout (left→right)" onClick={() => runLayout("flow")}>
+                <Workflow size={18} />
               </IconButton>
             </div>
 
@@ -1185,6 +1852,9 @@ export function App() {
               </select>
               <button className="text-button" onClick={addArtboard}>
                 <Plus size={16} /> Frame
+              </button>
+              <button className="text-button" onClick={addDiagramCanvas} title="Add a frameless canvas for diagrams">
+                <GitBranch size={16} /> Canvas
               </button>
             </div>
 
@@ -1210,11 +1880,32 @@ export function App() {
               <IconButton label="Export PNG" onClick={exportSelectedPng}>
                 <Download size={18} />
               </IconButton>
-              <IconButton label="Export spec" onClick={exportImplementationSpec}>
+              <IconButton label="Export spec (Markdown)" onClick={exportImplementationSpec}>
                 <FileText size={18} />
               </IconButton>
-              <IconButton label="Export React Tailwind" onClick={exportCode}>
+              <IconButton label="Export React + Tailwind" onClick={exportCode}>
                 <FileCode2 size={18} />
+              </IconButton>
+              <IconButton label="Export page SVG" onClick={() => exportDiagram("svg")}>
+                <Shapes size={18} />
+              </IconButton>
+              <IconButton label="Export page PDF" onClick={() => exportDiagram("pdf")}>
+                <FileText size={18} />
+              </IconButton>
+              <IconButton label="Export Mermaid diagram" onClick={() => exportDiagram("mermaid")}>
+                <Workflow size={18} />
+              </IconButton>
+            </div>
+
+            <div className="toolbar-group">
+              <IconButton label="Command palette (⌘K)" onClick={() => setCommandOpen(true)}>
+                <LayoutTemplate size={18} />
+              </IconButton>
+              <IconButton label="Keyboard shortcuts (?)" onClick={() => setShortcutsOpen(true)}>
+                <Keyboard size={18} />
+              </IconButton>
+              <IconButton label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}>
+                {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
               </IconButton>
             </div>
           </>
@@ -1229,15 +1920,63 @@ export function App() {
         <>
       {leftPaneOpen ? (
         <aside className="left-panel">
-        <CollapsiblePanel id="app-kit" icon={<Component size={16} />} title="App Kit" collapsed={Boolean(collapsedPanels["app-kit"])} onToggle={togglePanel}>
-          <div className="component-grid">
-            {componentTypes.map((type) => (
-              <button key={type} onClick={() => addComponent(type)}>
-                {labelFor(type)}
+        <div className="palette-mode-switch" role="tablist" aria-label="Palette mode">
+          <button role="tab" aria-selected={paletteMode === "mockup"} className={paletteMode === "mockup" ? "active" : ""} onClick={() => setPaletteMode("mockup")}>
+            <Component size={14} /> Mockup
+          </button>
+          <button role="tab" aria-selected={paletteMode === "diagram"} className={paletteMode === "diagram" ? "active" : ""} onClick={() => setPaletteMode("diagram")}>
+            <Shapes size={14} /> Diagram
+          </button>
+        </div>
+
+        {paletteMode === "mockup" ? (
+          <CollapsiblePanel id="app-kit" icon={<Component size={16} />} title="App Kit" collapsed={Boolean(collapsedPanels["app-kit"])} onToggle={togglePanel}>
+            <div className="component-grid">
+              {componentTypes.map((type) => (
+                <button key={type} onClick={() => addComponent(type)}>
+                  {labelFor(type)}
+                </button>
+              ))}
+            </div>
+          </CollapsiblePanel>
+        ) : (
+          <>
+            <CollapsiblePanel id="shapes" icon={<Shapes size={16} />} title="Shapes" collapsed={Boolean(collapsedPanels.shapes)} onToggle={togglePanel}>
+              <div className="shape-grid">
+                {DIAGRAM_SHAPES.map(({ kind, label }) => (
+                  <button key={kind} className="shape-tile" onClick={() => addShape(kind, label)} title={label}>
+                    <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                      <ShapeOutline kind={kind} fill="var(--shape-tile-fill)" stroke="var(--accent)" strokeWidth={4} />
+                    </svg>
+                    <span>{label}</span>
+                  </button>
+                ))}
+              </div>
+            </CollapsiblePanel>
+            <CollapsiblePanel id="diagram-tools" icon={<Workflow size={16} />} title="Diagram tools" collapsed={Boolean(collapsedPanels["diagram-tools"])} onToggle={togglePanel}>
+              <button className="wide-action" onClick={addDiagramCanvas}>
+                <GitBranch size={16} /> New diagram canvas
               </button>
-            ))}
-          </div>
-        </CollapsiblePanel>
+              <button className="wide-action" onClick={() => (setTool("connect"), setStatus("Connector: click a shape to start"))}>
+                <Spline size={16} /> Connector tool
+              </button>
+              <button className="wide-action" onClick={() => (setTool("ink"), setStatus("Ink: draw inside a frame"))}>
+                <PenTool size={16} /> Freehand ink
+              </button>
+              <button className="wide-action" onClick={() => addComponent("sticky")}>
+                <StickyNote size={16} /> Sticky note
+              </button>
+              <div className="segmented-row">
+                <button onClick={() => runLayout("tree")}>
+                  <Network size={15} /> Tree
+                </button>
+                <button onClick={() => runLayout("flow")}>
+                  <Workflow size={15} /> Flow
+                </button>
+              </div>
+            </CollapsiblePanel>
+          </>
+        )}
 
         <CollapsiblePanel id="assets" icon={<Upload size={16} />} title="Assets" collapsed={Boolean(collapsedPanels.assets)} onToggle={togglePanel}>
           <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={(event) => event.target.files?.[0] && uploadImage("image", event.target.files[0])} />
@@ -1291,15 +2030,15 @@ export function App() {
 
       <section
         ref={viewportRef}
-        className={classNames("canvas-viewport", pan && "panning", spaceDown && "space-pan")}
+        className={classNames("canvas-viewport", pan && "panning", spaceDown && "space-pan", tool !== "select" && `tool-${tool}`, connectFromId && "connect-armed")}
         onPointerDownCapture={onCanvasPointerDownCapture}
         onPointerMove={rememberViewportPointFromReact}
-        onPointerDown={() => select([])}
+        onPointerDown={onViewportPointerDown}
       >
         <div className="canvas-space">
           <div ref={canvasPlaneRef} className="canvas-plane" style={{ transform: cameraTransform(cameraRef.current), width: CANVAS_WIDTH, height: CANVAS_HEIGHT }}>
             <div className="canvas-grid" />
-            <ConnectorLayer project={project} selectedIds={selectedIds} agentActiveIds={agentActiveIds} />
+            <ConnectorLayer project={project} selectedIds={selectedIds} agentActiveIds={agentActiveIds} onSelect={select} />
             {project.artboards
               .filter((artboard) => artboard.visible)
               .map((artboard) => (
@@ -1310,10 +2049,24 @@ export function App() {
                   indexes={elementIndexes}
                   selectedIds={selectedIds}
                   agentActiveIds={agentActiveIds}
+                  tool={tool}
+                  connectFromId={connectFromId}
+                  editingTextId={editingTextId}
                   onSelect={(ids, additive) => select(ids, additive)}
                   onDragStart={beginDrag}
+                  onConnectTap={onConnectTap}
+                  onBeginTextEdit={setEditingTextId}
+                  onCommitText={commitTextEdit}
                 />
               ))}
+            {inkDraft ? <InkDraftLayer draft={inkDraft} project={project} /> : null}
+            {snapGuides.vertical.map((x) => (
+              <div key={`v-${x}`} className="snap-guide vertical" style={{ left: x }} />
+            ))}
+            {snapGuides.horizontal.map((y) => (
+              <div key={`h-${y}`} className="snap-guide horizontal" style={{ top: y }} />
+            ))}
+            {marquee ? <div className="marquee-box" style={{ left: marquee.x, top: marquee.y, width: marquee.width, height: marquee.height }} /> : null}
           </div>
         </div>
       </section>
@@ -1322,40 +2075,56 @@ export function App() {
         <aside className="right-panel">
         <CollapsiblePanel id="inspector" icon={<Save size={16} />} title="Inspector" collapsed={Boolean(collapsedPanels.inspector)} onToggle={togglePanel}>
           {selectedIds.length > 1 ? (
-            <SelectionInspector project={project} selectedIds={selectedIds} onFocus={focusSelection} onGroup={groupSelection} onDuplicate={duplicateSelection} onDelete={deleteSelection} />
+            <SelectionInspector project={project} selectedIds={selectedIds} onFocus={focusSelection} onGroup={groupSelection} onDuplicate={duplicateSelection} onDelete={deleteSelection} onLayout={runLayout} />
+          ) : selectedConnector ? (
+            <ConnectorInspector
+              project={project}
+              connector={selectedConnector}
+              onChange={(patch) => runOperation({ type: "update_connector", connectorId: selectedConnector.id, patch })}
+              onDelete={() => runOperation({ type: "delete_connector", connectorId: selectedConnector.id })}
+            />
           ) : selectedElement ? (
             <ElementInspector project={project} element={selectedElement} onChange={updateSelectedElement} onReorder={(delta) => updateSelectedElement({ zIndex: selectedElement.zIndex + delta })} />
           ) : selectedArtboard ? (
-            <ArtboardInspector artboard={selectedArtboard} onChange={updateArtboard} />
+            <ArtboardInspector artboard={selectedArtboard} onChange={updateArtboard} onDelete={() => runOperation({ type: "delete_artboard", artboardId: selectedArtboard.id })} />
           ) : (
             <div className="empty-inspector">
               <MousePointer2 size={22} />
-              <p>Select a frame or element.</p>
+              <p>Select a frame, element, or connector.</p>
+              <small>Double-click text to edit it. Press ? for shortcuts.</small>
             </div>
           )}
         </CollapsiblePanel>
 
-        <CollapsiblePanel id="flows" icon={<Send size={16} />} title="Flows" collapsed={Boolean(collapsedPanels.flows)} onToggle={togglePanel}>
+        <CollapsiblePanel id="agent-activity" icon={<Bot size={16} />} title="Agent activity" collapsed={Boolean(collapsedPanels["agent-activity"])} onToggle={togglePanel}>
+          <AgentFeed entries={agentFeed} onFocusTargets={focusAgentTargets} />
+        </CollapsiblePanel>
+
+        <CollapsiblePanel id="flows" icon={<Send size={16} />} title="Flows & connectors" collapsed={Boolean(collapsedPanels.flows)} onToggle={togglePanel}>
           <button className="wide-action" onClick={connectArtboards}>
-            <ArrowRight size={16} /> Connect screens
+            <ArrowRight size={16} /> Connect two frames
           </button>
           <div className="flow-list">
             {project.connectors.length ? (
               project.connectors.map((connector) => {
-                const from = project.artboards.find((artboard) => artboard.id === connector.fromArtboardId)?.name ?? connector.fromArtboardId;
-                const to = project.artboards.find((artboard) => artboard.id === connector.toArtboardId)?.name ?? connector.toArtboardId;
+                const from = connectorEndName(project, connector, "from");
+                const to = connectorEndName(project, connector, "to");
                 return (
-                  <div key={connector.id} className="flow-row">
+                  <button key={connector.id} className={classNames("flow-row", selectedIds.includes(connector.id) && "selected")} onClick={() => select([connector.id])} title={connector.label ?? `${from} → ${to}`}>
                     <span>{from}</span>
                     <ArrowRight size={14} />
                     <span>{to}</span>
-                  </div>
+                  </button>
                 );
               })
             ) : (
-              <p className="muted">No flows yet.</p>
+              <p className="muted">No flows yet. Use the connector tool or “Connect two frames”.</p>
             )}
           </div>
+        </CollapsiblePanel>
+
+        <CollapsiblePanel id="backup" icon={<ArchiveRestore size={16} />} title="Backup" collapsed={Boolean(collapsedPanels.backup)} onToggle={togglePanel}>
+          <BackupPanel status={storageStatus?.backup} onBackupNow={backupAllNow} onOpenRestore={() => setRestoreOpen(true)} />
         </CollapsiblePanel>
         </aside>
       ) : null}
@@ -1385,8 +2154,16 @@ export function App() {
         </div>
       ) : null}
 
+      <CommandPalette open={commandOpen} commands={paletteCommands} onClose={() => setCommandOpen(false)} />
+      <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      {project ? <RestoreDialog boardId={project.id} open={restoreOpen} onClose={() => setRestoreOpen(false)} onRestored={setStatus} /> : null}
+
       <footer className="statusbar">
         <span className="status-message">{status}</span>
+        <span className="statusbar-spacer" />
+        {!homeOpen && connectFromId ? <span className="status-hint">Connector armed — click a target</span> : null}
+        {!homeOpen && tool !== "select" ? <span className="status-hint">{tool === "connect" ? "Connector tool" : "Ink tool"} · Esc to exit</span> : null}
+        {!homeOpen ? <BackupBadge status={storageStatus?.backup} /> : null}
         {lastAgentEditedAtIso ? (
           <time className="agent-edit-stamp" dateTime={lastAgentEditedAtIso} title={`Last AI edit: ${formatAgentEditedAt(lastAgentEditedAtIso, true)}`}>
             AI edited {formatAgentEditedAt(lastAgentEditedAtIso)}
@@ -1394,6 +2171,46 @@ export function App() {
         ) : null}
       </footer>
     </main>
+  );
+}
+
+function BackupBadge({ status }: { status?: ApiHealth["backup"] }) {
+  if (!status) return null;
+  if (!status.healthy) {
+    return (
+      <span className="backup-badge failed" title={status.lastError ?? "Backup failed"}>
+        ⚠ Backup failed
+      </span>
+    );
+  }
+  return (
+    <span className="backup-badge ok" title={status.lastBackupAt ? `Last backup: ${formatAgentEditedAt(status.lastBackupAt, true)}` : "Backups on"}>
+      {status.lastBackupAt ? `Backed up ${formatAgentEditedAt(status.lastBackupAt)}` : "Backups on"}
+    </span>
+  );
+}
+
+function BackupPanel({ status, onBackupNow, onOpenRestore }: { status?: ApiHealth["backup"]; onBackupNow: () => void; onOpenRestore: () => void }) {
+  return (
+    <div className="backup-panel">
+      {status ? (
+        <div className={classNames("backup-status", status.healthy ? "ok" : "failed")}>
+          <strong>{status.healthy ? "Backups healthy" : "Backup failed"}</strong>
+          <small>{status.lastError ? status.lastError : status.lastBackupAt ? `Last: ${formatAgentEditedAt(status.lastBackupAt, true)}` : "No backup yet this session"}</small>
+        </div>
+      ) : (
+        <p className="muted">Backup status unavailable in this mode.</p>
+      )}
+      <div className="segmented-row">
+        <button onClick={onBackupNow}>
+          <ArchiveRestore size={15} /> Back up now
+        </button>
+        <button onClick={onOpenRestore}>
+          <Undo2 size={15} /> Restore…
+        </button>
+      </div>
+      <p className="muted backup-dir">Snapshots write automatically ~15s after each change and on quit.</p>
+    </div>
   );
 }
 
@@ -1565,16 +2382,28 @@ function ArtboardView({
   indexes,
   selectedIds,
   agentActiveIds,
+  tool,
+  connectFromId,
+  editingTextId,
   onSelect,
-  onDragStart
+  onDragStart,
+  onConnectTap,
+  onBeginTextEdit,
+  onCommitText
 }: {
   artboard: Artboard;
   project: BoardProject;
   indexes: ElementIndexes;
   selectedIds: string[];
   agentActiveIds: Set<string>;
+  tool: CanvasTool;
+  connectFromId: string | null;
+  editingTextId: string | null;
   onSelect: (ids: string[], additive?: boolean) => void;
   onDragStart: (state: DragState) => void;
+  onConnectTap: (id: string) => void;
+  onBeginTextEdit: (id: string) => void;
+  onCommitText: (id: string, value: string) => void;
 }) {
   const elements = indexes.canvasRootsByArtboard.get(artboard.id) ?? [];
   const selectedElements = project.elements
@@ -1587,10 +2416,12 @@ function ArtboardView({
     .filter((item): item is { element: BoardElement; position: { x: number; y: number } } => Boolean(item.position));
   const selected = selectedIds.includes(artboard.id);
   const agentActive = agentActiveIds.has(artboard.id);
+  const connectSource = connectFromId === artboard.id;
   const bitmapOnly = isBitmapOnlyArtboard(artboard, elements);
+  const surfaceRadius = artboard.frameless ? 12 : artboard.type === "mobile" ? 42 : artboard.type === "tablet" ? 30 : 18;
   return (
     <div
-      className={classNames("artboard-frame", selected && "selected", agentActive && "agent-active")}
+      className={classNames("artboard-frame", selected && "selected", agentActive && "agent-active", artboard.frameless && "frameless", connectSource && "connect-source")}
       style={{ left: CANVAS_ORIGIN_X + artboard.x, top: CANVAS_ORIGIN_Y + artboard.y, width: artboard.width, height: artboard.height }}
       data-board-artboard={artboard.id}
       data-board-name={artboard.name}
@@ -1600,6 +2431,10 @@ function ArtboardView({
         className="artboard-label"
         onPointerDown={(event) => {
           event.stopPropagation();
+          if (tool === "connect") {
+            onConnectTap(artboard.id);
+            return;
+          }
           onSelect([artboard.id], event.shiftKey);
           if (!artboard.locked && !event.shiftKey) {
             capturePointer(event.currentTarget, event.pointerId);
@@ -1610,9 +2445,37 @@ function ArtboardView({
         <span>{artboard.name}</span>
         {bitmapOnly ? <em>Image-only</em> : null}
       </button>
-      <div className="artboard-surface" style={{ background: artboard.background, borderRadius: artboard.type === "mobile" ? 42 : artboard.type === "tablet" ? 30 : 18 }} onPointerDown={(event) => (event.stopPropagation(), onSelect([artboard.id], event.shiftKey))}>
+      <div
+        className="artboard-surface"
+        style={{ background: artboard.background, borderRadius: surfaceRadius }}
+        onPointerDown={(event) => {
+          if (tool === "connect") {
+            event.stopPropagation();
+            onConnectTap(artboard.id);
+            return;
+          }
+          if (tool === "ink") return; // let the ink pointer pipeline on the viewport handle it
+          event.stopPropagation();
+          onSelect([artboard.id], event.shiftKey);
+        }}
+      >
         {elements.map((element) => (
-          <ElementView key={element.id} element={element} project={project} indexes={indexes} selectedIds={selectedIds} agentActiveIds={agentActiveIds} onSelect={onSelect} onDragStart={onDragStart} />
+          <ElementView
+            key={element.id}
+            element={element}
+            project={project}
+            indexes={indexes}
+            selectedIds={selectedIds}
+            agentActiveIds={agentActiveIds}
+            tool={tool}
+            connectFromId={connectFromId}
+            editingTextId={editingTextId}
+            onSelect={onSelect}
+            onDragStart={onDragStart}
+            onConnectTap={onConnectTap}
+            onBeginTextEdit={onBeginTextEdit}
+            onCommitText={onCommitText}
+          />
         ))}
       </div>
       {activeElements.length ? (
@@ -1662,32 +2525,57 @@ function ElementView({
   indexes,
   selectedIds,
   agentActiveIds,
+  tool,
+  connectFromId,
+  editingTextId,
   onSelect,
-  onDragStart
+  onDragStart,
+  onConnectTap,
+  onBeginTextEdit,
+  onCommitText
 }: {
   element: BoardElement;
   project: BoardProject;
   indexes: ElementIndexes;
   selectedIds: string[];
   agentActiveIds: Set<string>;
+  tool: CanvasTool;
+  connectFromId: string | null;
+  editingTextId: string | null;
   onSelect: (ids: string[], additive?: boolean) => void;
   onDragStart: (state: DragState) => void;
+  onConnectTap: (id: string) => void;
+  onBeginTextEdit: (id: string) => void;
+  onCommitText: (id: string, value: string) => void;
 }) {
   const selected = selectedIds.includes(element.id);
   const agentActive = agentActiveIds.has(element.id);
+  const connectSource = connectFromId === element.id;
   const children = indexes.canvasChildrenByParent.get(element.id) ?? [];
   const selectedAncestor = children.some((child) => selectedIds.includes(child.id) || hasSelectedDescendant(child.id, project, selectedIds));
   const style = elementToStyle(element);
   const asset = typeof element.props.assetId === "string" ? project.assets.find((candidate) => candidate.id === element.props.assetId) : undefined;
+  const editing = editingTextId === element.id;
+  const textEditable = ["text", "button", "badge", "sticky", "shape"].includes(element.type);
 
   return (
     <div
-      className={classNames("board-element", `kind-${element.type}`, selected && "selected", selectedAncestor && "selected-ancestor", agentActive && "agent-active", element.locked && "locked")}
+      className={classNames("board-element", `kind-${element.type}`, selected && "selected", selectedAncestor && "selected-ancestor", agentActive && "agent-active", element.locked && "locked", connectSource && "connect-source")}
       style={style}
       data-board-element={element.id}
       data-board-name={element.name}
       title={`${element.name} · ${element.type} · ${element.id}`}
       onPointerDown={(event) => {
+        if (tool === "ink") return; // ink draws through elements
+        if (tool === "connect") {
+          event.stopPropagation();
+          onConnectTap(element.id);
+          return;
+        }
+        if (editing) {
+          event.stopPropagation();
+          return;
+        }
         event.stopPropagation();
         onSelect([element.id], event.shiftKey);
         if (!element.locked && !event.shiftKey) {
@@ -1695,12 +2583,36 @@ function ElementView({
           onDragStart({ id: element.id, target: "element", mode: "move", startX: event.clientX, startY: event.clientY, original: element, latest: element });
         }
       }}
+      onDoubleClick={(event) => {
+        if (!textEditable || element.locked) return;
+        event.stopPropagation();
+        onBeginTextEdit(element.id);
+      }}
     >
-      <ElementContent element={element} assetSrc={asset?.src} />
+      {editing ? (
+        <InlineTextEditor element={element} onCommit={(value) => onCommitText(element.id, value)} />
+      ) : (
+        <ElementContent element={element} assetSrc={asset?.src} />
+      )}
       {children.map((child) => (
-        <ElementView key={child.id} element={child} project={project} indexes={indexes} selectedIds={selectedIds} agentActiveIds={agentActiveIds} onSelect={onSelect} onDragStart={onDragStart} />
+        <ElementView
+          key={child.id}
+          element={child}
+          project={project}
+          indexes={indexes}
+          selectedIds={selectedIds}
+          agentActiveIds={agentActiveIds}
+          tool={tool}
+          connectFromId={connectFromId}
+          editingTextId={editingTextId}
+          onSelect={onSelect}
+          onDragStart={onDragStart}
+          onConnectTap={onConnectTap}
+          onBeginTextEdit={onBeginTextEdit}
+          onCommitText={onCommitText}
+        />
       ))}
-      {selected && !element.locked ? (
+      {selected && !element.locked && !editing ? (
         <button
           className="resize-handle"
           aria-label="Resize"
@@ -1712,6 +2624,51 @@ function ElementView({
         />
       ) : null}
     </div>
+  );
+}
+
+function InlineTextEditor({ element, onCommit }: { element: BoardElement; onCommit: (value: string) => void }) {
+  const [value, setValue] = useState(() => readString(element.props.text, ""));
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    node.focus();
+    node.select();
+  }, []);
+  return (
+    <textarea
+      ref={ref}
+      className="inline-text-editor"
+      value={value}
+      onChange={(event) => setValue(event.target.value)}
+      onPointerDown={(event) => event.stopPropagation()}
+      onBlur={() => onCommit(value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          onCommit(value);
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          onCommit(readString(element.props.text, ""));
+        }
+      }}
+      style={{ color: element.style.color, fontSize: element.style.fontSize, fontWeight: element.style.fontWeight as number | undefined, textAlign: element.style.textAlign }}
+    />
+  );
+}
+
+function InkDraftLayer({ draft, project }: { draft: InkDraft; project: BoardProject }) {
+  const artboard = project.artboards.find((candidate) => candidate.id === draft.artboardId);
+  if (!artboard || draft.points.length < 2) return null;
+  const path = draft.points
+    .map(([x, y], index) => `${index === 0 ? "M" : "L"} ${round2(CANVAS_ORIGIN_X + artboard.x + x)} ${round2(CANVAS_ORIGIN_Y + artboard.y + y)}`)
+    .join(" ");
+  return (
+    <svg className="ink-draft-layer" width={CANVAS_WIDTH} height={CANVAS_HEIGHT} viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`} aria-hidden="true">
+      <path d={path} fill="none" stroke="#334155" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 
@@ -1818,12 +2775,86 @@ function ElementContent({ element, assetSrc }: { element: BoardElement; assetSrc
           <p>{readString(element.props.body, "Create something to begin.")}</p>
         </div>
       );
+    case "shape":
+      return <ShapePrimitive element={element} />;
+    case "ink": {
+      const points = readPointArray(element.props.points);
+      if (points.length < 2) return null;
+      const path = points.map(([x, y], index) => `${index === 0 ? "M" : "L"} ${round2(x * 100)} ${round2(y * 100)}`).join(" ");
+      return (
+        <svg className="ink-primitive" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <path d={path} fill="none" stroke={readString(element.style.stroke, "#334155")} strokeWidth={element.style.strokeWidth ?? 2.5} vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    }
     case "image":
     case "screenshotOverlay":
       return assetSrc ? <img src={assetSrc} alt={readString(element.props.alt, element.name)} /> : <span>{element.type === "screenshotOverlay" ? "Screenshot overlay" : "Image"}</span>;
     default:
       return <span>{element.name}</span>;
   }
+}
+
+function ShapePrimitive({ element }: { element: BoardElement }) {
+  const kind = readString(element.props.shape, "rectangle");
+  const fill = readString(element.style.fill, "#EFF6FF");
+  const stroke = readString(element.style.stroke, "#2563EB");
+  const strokeWidth = element.style.strokeWidth ?? 1.5;
+  const text = readString(element.props.text, "");
+  return (
+    <div className="shape-primitive">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        <ShapeOutline kind={kind} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />
+      </svg>
+      {text ? <span className="shape-label" style={{ color: element.style.color ?? "#1E3A5F" }}>{text}</span> : null}
+    </div>
+  );
+}
+
+function ShapeOutline({ kind, fill, stroke, strokeWidth }: { kind: string; fill: string; stroke: string; strokeWidth: number }) {
+  const common = { fill, stroke, strokeWidth, vectorEffect: "non-scaling-stroke" as const, strokeLinejoin: "round" as const };
+  const poly = (points: Array<[number, number]>) => <polygon points={points.map(([x, y]) => `${x},${y}`).join(" ")} {...common} />;
+  switch (kind) {
+    case "ellipse":
+      return <ellipse cx={50} cy={50} rx={49} ry={49} {...common} />;
+    case "diamond":
+      return poly([[50, 1], [99, 50], [50, 99], [1, 50]]);
+    case "parallelogram":
+      return poly([[22, 2], [99, 2], [78, 98], [1, 98]]);
+    case "triangle":
+      return poly([[50, 2], [98, 98], [2, 98]]);
+    case "hexagon":
+      return poly([[25, 2], [75, 2], [99, 50], [75, 98], [25, 98], [1, 50]]);
+    case "star":
+      return poly(starPolyPoints());
+    case "arrow-right":
+      return poly([[2, 28], [62, 28], [62, 2], [98, 50], [62, 98], [62, 72], [2, 72]]);
+    case "cylinder":
+      return (
+        <>
+          <path d="M2 16 A48 15 0 0 1 98 16 L98 84 A48 15 0 0 1 2 84 Z" {...common} />
+          <path d="M2 16 A48 15 0 0 0 98 16" fill="none" stroke={stroke} strokeWidth={strokeWidth} vectorEffect="non-scaling-stroke" />
+        </>
+      );
+    case "document":
+      return <path d="M2 2 L98 2 L98 84 Q74 70 50 84 Q26 98 2 84 Z" {...common} />;
+    case "cloud":
+      return <path d="M25 82 A22 22 0 1 1 30 40 A25 25 0 0 1 72 38 A22 22 0 1 1 78 82 Z" {...common} />;
+    case "rounded":
+      return <rect x={1} y={1} width={98} height={98} rx={40} {...common} />;
+    default:
+      return <rect x={1} y={1} width={98} height={98} rx={6} {...common} />;
+  }
+}
+
+function starPolyPoints(): Array<[number, number]> {
+  const points: Array<[number, number]> = [];
+  for (let index = 0; index < 10; index++) {
+    const angle = -Math.PI / 2 + (index * Math.PI) / 5;
+    const radius = index % 2 === 0 ? 49 : 21;
+    points.push([round2(50 + radius * Math.cos(angle)), round2(50 + radius * Math.sin(angle))]);
+  }
+  return points;
 }
 
 function MockTable({ element }: { element: BoardElement }) {
@@ -1845,32 +2876,67 @@ function MockTable({ element }: { element: BoardElement }) {
   );
 }
 
-function ConnectorLayer({ project, selectedIds, agentActiveIds }: { project: BoardProject; selectedIds: string[]; agentActiveIds: Set<string> }) {
+function connectorWorldRect(project: BoardProject, artboardId: string, elementId: string | undefined): Rect | null {
+  const artboard = project.artboards.find((candidate) => candidate.id === artboardId);
+  if (!artboard) return null;
+  if (!elementId) {
+    return { x: CANVAS_ORIGIN_X + artboard.x, y: CANVAS_ORIGIN_Y + artboard.y, width: artboard.width, height: artboard.height };
+  }
+  const element = project.elements.find((candidate) => candidate.id === elementId);
+  if (!element) return null;
+  let x = CANVAS_ORIGIN_X + artboard.x + element.x;
+  let y = CANVAS_ORIGIN_Y + artboard.y + element.y;
+  let parentId = element.parentId;
+  const seen = new Set<string>([element.id]);
+  while (parentId && !seen.has(parentId)) {
+    seen.add(parentId);
+    const parent = project.elements.find((candidate) => candidate.id === parentId);
+    if (!parent) break;
+    x += parent.x;
+    y += parent.y;
+    parentId = parent.parentId;
+  }
+  return { x, y, width: element.width, height: element.height };
+}
+
+function ConnectorLayer({ project, selectedIds, agentActiveIds, onSelect }: { project: BoardProject; selectedIds: string[]; agentActiveIds: Set<string>; onSelect: (ids: string[], additive?: boolean) => void }) {
   return (
     <svg className="connector-layer" width={CANVAS_WIDTH} height={CANVAS_HEIGHT} viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}>
-      <defs>
-        <marker id="arrow-head" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
-          <path d="M0,0 L0,6 L9,3 z" fill="#2563EB" />
-        </marker>
-      </defs>
       {project.connectors.map((connector) => {
-        const from = project.artboards.find((artboard) => artboard.id === connector.fromArtboardId);
-        const to = project.artboards.find((artboard) => artboard.id === connector.toArtboardId);
-        if (!from || !to) return null;
-        const x1 = CANVAS_ORIGIN_X + from.x + from.width;
-        const y1 = CANVAS_ORIGIN_Y + from.y + from.height / 2;
-        const x2 = CANVAS_ORIGIN_X + to.x;
-        const y2 = CANVAS_ORIGIN_Y + to.y + to.height / 2;
-        const mid = x1 + Math.max(80, (x2 - x1) / 2);
+        const fromRect = connectorWorldRect(project, connector.fromArtboardId, connector.fromElementId);
+        const toRect = connectorWorldRect(project, connector.toArtboardId, connector.toElementId);
+        if (!fromRect || !toRect) return null;
+        const geometry = connectorGeometry(fromRect, toRect, connector);
+        const stroke = String(connector.style.stroke ?? "#2563EB");
         const selected = selectedIds.includes(connector.id);
         const agentActive = agentActiveIds.has(connector.id);
+        const strokeWidth = (connector.style.strokeWidth ?? 2) + (selected ? 1.5 : 0);
+        const endHead = arrowheadPath(geometry.end, geometry.endAngle, connector.arrowEnd);
+        const startHead = connector.arrowStart !== "none" ? arrowheadPath(geometry.start, geometry.startAngle + Math.PI, connector.arrowStart) : "";
         return (
           <g key={connector.id} className={classNames("connector", selected && "selected", agentActive && "agent-active")}>
-            <path d={`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`} stroke={String(connector.style.stroke ?? "#2563EB")} strokeWidth={selected ? 4 : 2.5} fill="none" markerEnd="url(#arrow-head)" />
+            {/* Wide invisible hit target for easy selection. */}
+            <path
+              d={geometry.d}
+              stroke="transparent"
+              strokeWidth={Math.max(16, strokeWidth + 12)}
+              fill="none"
+              style={{ cursor: "pointer", pointerEvents: "stroke" }}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                onSelect([connector.id], event.shiftKey);
+              }}
+            />
+            <path className="connector-spine" d={geometry.d} stroke={stroke} strokeWidth={strokeWidth} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+            {endHead ? <path d={endHead} stroke={stroke} strokeWidth={strokeWidth} fill={arrowheadIsFilled(connector.arrowEnd) ? stroke : "none"} strokeLinejoin="round" /> : null}
+            {startHead ? <path d={startHead} stroke={stroke} strokeWidth={strokeWidth} fill={arrowheadIsFilled(connector.arrowStart) ? stroke : "none"} strokeLinejoin="round" /> : null}
             {connector.label ? (
-              <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 10} textAnchor="middle">
-                {connector.label}
-              </text>
+              <g className="connector-label">
+                <rect x={geometry.labelPoint.x - connector.label.length * 3.6 - 8} y={geometry.labelPoint.y - 11} width={connector.label.length * 7.2 + 16} height={22} rx={11} />
+                <text x={geometry.labelPoint.x} y={geometry.labelPoint.y + 4} textAnchor="middle">
+                  {connector.label}
+                </text>
+              </g>
             ) : null}
           </g>
         );
@@ -1885,7 +2951,8 @@ function SelectionInspector({
   onFocus,
   onGroup,
   onDuplicate,
-  onDelete
+  onDelete,
+  onLayout
 }: {
   project: BoardProject;
   selectedIds: string[];
@@ -1893,6 +2960,7 @@ function SelectionInspector({
   onGroup: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  onLayout: (layout: "tree" | "flow" | "distribute-horizontal" | "distribute-vertical" | "align-left" | "align-center-x" | "align-right" | "align-top" | "align-center-y" | "align-bottom") => void;
 }) {
   const selectedElements = selectedIds.map((id) => project.elements.find((element) => element.id === id)).filter((element): element is BoardElement => Boolean(element));
   const selectedArtboards = selectedIds.map((id) => project.artboards.find((artboard) => artboard.id === id)).filter((artboard): artboard is Artboard => Boolean(artboard));
@@ -1915,6 +2983,25 @@ function SelectionInspector({
         </button>
         <button onClick={onDelete} disabled={!selectedElements.length}>
           <Trash2 size={15} /> Delete
+        </button>
+      </div>
+      <p className="inspector-subhead">Align</p>
+      <div className="align-grid">
+        <button title="Align left" onClick={() => onLayout("align-left")}><AlignStartVertical size={15} /></button>
+        <button title="Align center X" onClick={() => onLayout("align-center-x")}><AlignCenterVertical size={15} /></button>
+        <button title="Align right" onClick={() => onLayout("align-right")}><AlignEndVertical size={15} /></button>
+        <button title="Align top" onClick={() => onLayout("align-top")}><AlignStartHorizontal size={15} /></button>
+        <button title="Align middle Y" onClick={() => onLayout("align-center-y")}><AlignCenterHorizontal size={15} /></button>
+        <button title="Align bottom" onClick={() => onLayout("align-bottom")}><AlignEndHorizontal size={15} /></button>
+        <button title="Distribute horizontally" onClick={() => onLayout("distribute-horizontal")} disabled={selectedElements.length < 3}><AlignHorizontalDistributeCenter size={15} /></button>
+        <button title="Distribute vertically" onClick={() => onLayout("distribute-vertical")} disabled={selectedElements.length < 3}><AlignVerticalDistributeCenter size={15} /></button>
+      </div>
+      <div className="segmented-row">
+        <button onClick={() => onLayout("tree")}>
+          <Network size={15} /> Tree
+        </button>
+        <button onClick={() => onLayout("flow")}>
+          <Workflow size={15} /> Flow
         </button>
       </div>
       <div className="selection-list">
@@ -1961,6 +3048,18 @@ function ElementInspector({
         <NumberField label="Height" value={element.height} min={12} max={3000} onChange={(height) => onChange({ height: Math.round(height) })} />
       </div>
       {"text" in element.props || ["button", "badge", "sticky", "text"].includes(element.type) ? <Field label="Text" value={readString(element.props.text, "")} onChange={(text) => onChange({ props: { text } })} /> : null}
+      {element.type === "shape" ? (
+        <label className="field">
+          <span>Shape</span>
+          <select value={readString(element.props.shape, "rectangle")} onChange={(event) => onChange({ props: { shape: event.target.value } })}>
+            {shapeKinds.map((kind) => (
+              <option key={kind} value={kind}>
+                {labelFor(kind.replace(/-/g, " "))}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
       {element.type === "icon" ? <Field label="Material icon" value={readString(element.props.materialIcon ?? element.props.icon, "add_circle")} onChange={(materialIcon) => onChange({ props: { materialIcon } })} /> : null}
       {element.type === "line" ? <Field label="Direction" value={readString(element.props.direction, "horizontal")} onChange={(direction) => onChange({ props: { direction } })} /> : null}
       {element.type === "sparkline" ? <Field label="Values" value={formatNumberList(readNumberArray(element.props.values, []))} onChange={(values) => onChange({ props: { values: parseNumberList(values) } })} /> : null}
@@ -1991,7 +3090,7 @@ function ElementInspector({
   );
 }
 
-function ArtboardInspector({ artboard, onChange }: { artboard: Artboard; onChange: (patch: Partial<Artboard>) => void }) {
+function ArtboardInspector({ artboard, onChange, onDelete }: { artboard: Artboard; onChange: (patch: Partial<Artboard>) => void; onDelete: () => void }) {
   return (
     <div className="inspector-fields">
       <ReadOnlyField label="Internal ID" value={artboard.id} copyable />
@@ -2003,13 +3102,110 @@ function ArtboardInspector({ artboard, onChange }: { artboard: Artboard; onChang
         <NumberField label="Width" value={artboard.width} min={240} max={2400} onChange={(width) => onChange({ width: Math.round(width) })} />
         <NumberField label="Height" value={artboard.height} min={240} max={2400} onChange={(height) => onChange({ height: Math.round(height) })} />
       </div>
+      <label className="toggle-row">
+        <input type="checkbox" checked={artboard.frameless} onChange={(event) => onChange({ frameless: event.target.checked })} />
+        <span>Frameless (diagram canvas — no device chrome)</span>
+      </label>
       <div className="segmented-row">
         <button onClick={() => onChange({ locked: !artboard.locked })}>{artboard.locked ? <Lock size={15} /> : <LockOpen size={15} />} {artboard.locked ? "Locked" : "Unlocked"}</button>
         <button onClick={() => onChange({ visible: !artboard.visible })}>{artboard.visible ? <Eye size={15} /> : <EyeOff size={15} />} {artboard.visible ? "Visible" : "Hidden"}</button>
       </div>
+      <button className="wide-action danger" onClick={onDelete}>
+        <Trash2 size={15} /> Delete frame
+      </button>
       <p className="muted">{artboard.type} · {Math.round(artboard.width)} x {Math.round(artboard.height)}</p>
     </div>
   );
+}
+
+function ConnectorInspector({
+  project,
+  connector,
+  onChange,
+  onDelete
+}: {
+  project: BoardProject;
+  connector: BoardConnector;
+  onChange: (patch: Record<string, unknown>) => void;
+  onDelete: () => void;
+}) {
+  const routings: BoardConnector["routing"][] = ["curved", "orthogonal", "straight"];
+  const arrowheads: BoardConnector["arrowEnd"][] = ["none", "arrow", "triangle", "dot", "diamond"];
+  return (
+    <div className="inspector-fields">
+      <ReadOnlyField label="Connector" value={`${connectorEndName(project, connector, "from")} → ${connectorEndName(project, connector, "to")}`} />
+      <Field label="Label" value={connector.label ?? ""} onChange={(label) => onChange({ label })} />
+      <label className="field">
+        <span>Routing</span>
+        <select value={connector.routing} onChange={(event) => onChange({ routing: event.target.value })}>
+          {routings.map((routing) => (
+            <option key={routing} value={routing}>
+              {routing[0]!.toUpperCase() + routing.slice(1)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="field-grid two-col">
+        <label className="field">
+          <span>Start arrow</span>
+          <select value={connector.arrowStart} onChange={(event) => onChange({ arrowStart: event.target.value })}>
+            {arrowheads.map((head) => (
+              <option key={head} value={head}>
+                {head}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>End arrow</span>
+          <select value={connector.arrowEnd} onChange={(event) => onChange({ arrowEnd: event.target.value })}>
+            {arrowheads.map((head) => (
+              <option key={head} value={head}>
+                {head}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="field-grid two-col">
+        <label className="field">
+          <span>From port</span>
+          <select value={connector.fromPort} onChange={(event) => onChange({ fromPort: event.target.value })}>
+            {["auto", "n", "s", "e", "w"].map((port) => (
+              <option key={port} value={port}>
+                {port}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>To port</span>
+          <select value={connector.toPort} onChange={(event) => onChange({ toPort: event.target.value })}>
+            {["auto", "n", "s", "e", "w"].map((port) => (
+              <option key={port} value={port}>
+                {port}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <ColorField label="Stroke" value={connector.style.stroke ?? "#2563EB"} onChange={(stroke) => onChange({ style: { stroke } })} />
+      <NumberField label="Stroke width" value={connector.style.strokeWidth ?? 2} min={1} max={8} step={0.5} onChange={(strokeWidth) => onChange({ style: { strokeWidth } })} />
+      <button className="wide-action danger" onClick={onDelete}>
+        <Trash2 size={15} /> Delete connector
+      </button>
+    </div>
+  );
+}
+
+function connectorEndName(project: BoardProject, connector: BoardConnector, end: "from" | "to"): string {
+  const elementId = end === "from" ? connector.fromElementId : connector.toElementId;
+  const artboardId = end === "from" ? connector.fromArtboardId : connector.toArtboardId;
+  if (elementId) {
+    const element = project.elements.find((candidate) => candidate.id === elementId);
+    if (element) return compactName(element.name);
+  }
+  return project.artboards.find((candidate) => candidate.id === artboardId)?.name ?? artboardId;
 }
 
 function ReadOnlyField({ label, value, copyable = false }: { label: string; value: string; copyable?: boolean }) {
@@ -2139,18 +3335,20 @@ function elementPositionInArtboard(element: BoardElement, project: BoardProject)
 }
 
 function elementToStyle(element: BoardElement): React.CSSProperties {
+  // Shape and ink render their own vector fill/stroke inside an SVG, so the wrapper stays clear.
+  const vectorPrimitive = element.type === "shape" || element.type === "ink";
   return {
     left: element.x,
     top: element.y,
     width: element.width,
     height: element.height,
     zIndex: element.zIndex,
-    background: element.style.fill,
+    background: vectorPrimitive ? undefined : element.style.fill,
     color: element.style.color,
-    borderColor: element.style.stroke,
-    borderWidth: element.style.strokeWidth,
-    borderStyle: element.style.stroke ? "solid" : undefined,
-    borderRadius: element.style.radius,
+    borderColor: vectorPrimitive ? undefined : element.style.stroke,
+    borderWidth: vectorPrimitive ? undefined : element.style.strokeWidth,
+    borderStyle: !vectorPrimitive && element.style.stroke ? "solid" : undefined,
+    borderRadius: vectorPrimitive ? undefined : element.style.radius,
     boxShadow: element.style.shadow,
     opacity: element.style.opacity,
     fontFamily: element.style.fontFamily,
@@ -2310,7 +3508,15 @@ function agentOperationVerb(operationType?: string): string {
     case "group_elements":
       return "grouped elements";
     case "add_connector":
-      return "connected frames";
+      return "added a connector";
+    case "update_connector":
+      return "edited a connector";
+    case "delete_connector":
+      return "removed a connector";
+    case "delete_artboard":
+      return "deleted a frame";
+    case "apply_layout":
+      return "arranged the layout";
     default:
       return "edited the board";
   }
@@ -2524,6 +3730,41 @@ function uniqueElementName(project: BoardProject, artboardId: string, baseName: 
   let index = 2;
   while (names.has(`${baseName} ${index}`)) index += 1;
   return `${baseName} ${index}`;
+}
+
+function uniqueArtboardName(project: BoardProject, baseName: string): string {
+  const names = new Set(project.artboards.map((artboard) => artboard.name));
+  if (!names.has(baseName)) return baseName;
+  let index = 2;
+  while (names.has(`${baseName} ${index}`)) index += 1;
+  return `${baseName} ${index}`;
+}
+
+function boundsIntersect(a: Bounds, b: Bounds): boolean {
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+function boundsContain(outer: Bounds, inner: Bounds): boolean {
+  // Marquee selects anything it substantially overlaps (not full containment) — feels right for canvases.
+  const overlapX = Math.max(0, Math.min(outer.x + outer.width, inner.x + inner.width) - Math.max(outer.x, inner.x));
+  const overlapY = Math.max(0, Math.min(outer.y + outer.height, inner.y + inner.height) - Math.max(outer.y, inner.y));
+  const overlapArea = overlapX * overlapY;
+  const innerArea = Math.max(1, inner.width * inner.height);
+  return overlapArea / innerArea > 0.5;
+}
+
+function round2(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
+function readStoredTheme(): Theme {
+  try {
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === "dark" || stored === "light") return stored;
+  } catch {
+    // Ignore storage failures; default below.
+  }
+  return "light";
 }
 
 function groupNameForSelection(project: BoardProject, artboardId: string, elements: BoardElement[]): string {

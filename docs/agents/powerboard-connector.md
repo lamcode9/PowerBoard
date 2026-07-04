@@ -1,32 +1,48 @@
 # PowerBoard Connector Snippet
 
-Paste this into another project's `AGENTS.md` / `CLAUDE.md` when that project should use PowerBoard for app mockups.
+Paste this into another project's `AGENTS.md` / `CLAUDE.md` when that project should use PowerBoard for app mockups **or diagrams** (flowcharts, org charts, process flows, schematics).
 
 ---
 
 ## PowerBoard Design Board
 
-Use PowerBoard as the shared design workspace for high-fidelity app mockups, screenshot tracing, hierarchy inspection, and React/Tailwind export.
+Use PowerBoard as the shared visual workspace for high-fidelity app mockups, screenshot tracing, hierarchy inspection, React/Tailwind export, **and diagramming** (Miro × Visio × Excalidraw, one canvas and one object model — genesis is a copy of paper.design).
 
-- Cloud app: `https://lamper-server.vercel.app`
-- Cloud API: `https://lamper-server.vercel.app/api`
-- Cloud health check: `https://lamper-server.vercel.app/api/health`
-- Local MCP transport (live agent editing): `http://127.0.0.1:4318/mcp`
-- Local checkout: `/Users/km/Developer/PowerBoard`
-- Prefer MCP tools over direct JSON edits: `list_boards`, `read_board`, `summarize_board`, `inspect_board_hierarchy`, `inspect_selection`, `create_artboard`, `add_element`, `preview_operation`, `update_element`, `move_resize_element`, `set_selection`, `export_selection_handoff`, `export_react_tailwind`, `validate_board`.
-- Before broad edits, call `inspect_board_hierarchy`; before detailed implementation handoff, call `inspect_selection` or `export_selection_handoff`; before risky writes, call `preview_operation`; after edits, call `validate_board` and fix hierarchy or primitive diagnostics before exporting.
-- Treat Supabase / PowerBoard Cloud as the source of truth. Do not edit `boards/*/board.json` or other local board files directly.
-- For cloud-direct MCP work, the running PowerBoard server must report `cloudStore: "supabase-postgres"` and `storageMode: "cloud"` at `http://127.0.0.1:4318/api/health`.
-- For live browser updates through local MCP/WebSocket, run PowerBoard with `npm run dev` in `/Users/km/Developer/PowerBoard`.
+PowerBoard is **desktop-first and offline-first**: the installed macOS app embeds the server and serves MCP itself, so the endpoint below reaches the exact board the human is looking at, live. There is no cloud dependency for editing.
 
-For stdio MCP clients:
+- Local MCP transport (live agent editing): `http://127.0.0.1:4318/mcp` — served by the installed PowerBoard app (or `npm run dev`).
+- Health/heartbeat: `http://127.0.0.1:4318/api/health` (also the `get_board_status` MCP tool).
+- Local checkout: `/Users/km/Developer/PowerBoard`.
+- Storage is local JSON files (source of truth) with versioned backup snapshots. Do **not** edit `boards/*/board.json`, history, or backups directly — every change goes through an operation.
+
+### Etiquette (do this in order)
+
+1. `inspect_board_hierarchy` before broad edits; `get_board_status` to confirm the server + board are live before a long session.
+2. `preview_operation` before risky writes; `inspect_selection` / `export_selection_handoff` before an implementation handoff.
+3. Prefer `batch_operations` for multi-step edits — it is **atomic** (all-or-nothing, one undo entry) and takes `expectedUpdatedAt` (the board `metadata.updatedAt` you last read) for conflict detection against the human editing simultaneously.
+4. Pass an `idempotencyKey` on mutating tools when you might retry — the same key replays the first result for 10 minutes instead of double-applying.
+5. After edits, `validate_board` and fix hierarchy/primitive diagnostics before exporting.
+6. Treat tool errors as data: every error is `{ code, tool, message, hint, details }` (codes: `validation_failed`, `not_found`, `missing_input`, `conflict`, `internal_error`). Read `hint`; don't retry blind.
+
+### MCP tools (36)
+
+- **Read/inspect:** `list_boards`, `read_board`, `summarize_board`, `inspect_board_hierarchy`, `inspect_selection`, `describe_selection`, `get_selection`, `get_board_status`, `read_oplog`, `preview_operation`, `validate_board`.
+- **Mockup edits:** `create_board`, `create_artboard`, `update_artboard`, `delete_artboard`, `create_variant`, `add_element`, `update_element`, `move_resize_element`, `delete_element`, `group_elements`, `set_selection`, `import_screenshot_overlay`.
+- **Diagram edits (same object model):** `add_element` with `presetType: "shape"` (12 kinds: rectangle, rounded, ellipse, diamond, parallelogram, cylinder, hexagon, triangle, star, cloud, document, arrow-right — `props.shape` + `props.text`) or `"ink"`; `add_connector` / `update_connector` / `delete_connector` (element anchoring, `fromPort`/`toPort` = auto|n|s|e|w, `routing` = straight|orthogonal|curved, `arrowStart`/`arrowEnd` = none|arrow|triangle|dot|diamond, `waypoints`, `label`, `labelPosition`); `apply_layout` (`tree` for org charts, `flow` for left→right process, `align-*`, `distribute-*`).
+- **Batch + history:** `batch_operations`, `board_undo`, `board_redo`.
+- **Export:** `export_react_tailwind`, `export_board_spec`, `export_artboard_png`, `export_selection_handoff` (mockups); `export_page_svg`, `export_page_pdf`, `export_mermaid` (diagrams — Mermaid is shape-aware: diamonds → `{}`, cylinders → `[()]`, etc.).
+
+### Mockup vs diagram
+
+One model, two palettes (decision D5). A diagram shape is an element type; a connector is the same connector system with element anchoring + routing. Frameless artboards (`frameless: true`) render diagram canvases without device chrome. Don't add a parallel "diagram object" — extend the existing element/connector.
+
+### stdio MCP client (headless)
 
 ```toml
 [mcp_servers.powerboard]
 command = "npm"
 args = ["run", "mcp", "--prefix", "/Users/km/Developer/PowerBoard"]
-
-[mcp_servers.powerboard.env]
-POWERBOARD_CLOUD_DRIVER = "supabase"
-POWERBOARD_STORAGE_MODE = "cloud"
+# Defaults to local-file storage (offline-first). Omit env for the desktop/local world.
 ```
+
+> Legacy cloud sync (Supabase at `https://lamper-server.vercel.app`) still exists as an optional target but is demoted — the desktop app is local-first. Only set `POWERBOARD_STORAGE_MODE=cloud` + `POWERBOARD_CLOUD_DRIVER=supabase` for explicit cloud-direct work.

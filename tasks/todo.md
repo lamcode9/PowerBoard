@@ -28,40 +28,42 @@ Written 2026-07-04. Status legend: [ ] todo · [~] in progress · [x] done.
 - [x] ASC app record created (user, 2026-07-04) → build **0.1.0 (202607041401)** uploaded, processed for MAC_OS, distributed to the Internal group; owner assigned as internal tester. Lanes hardened: hash params, raw `v1/betaGroups` + `v1/betaTesters` posts (Spaceship's helpers send attributes internal groups reject).
 - [ ] Verify install from TestFlight app on this Mac with realistic board round-trip (user-side; first sandboxed run is the real test — watch for container/network issues).
 
-## Phase 2 — Offline-first storage + iCloud backup (user's #5)
+## Phase 2 — Offline-first storage + iCloud backup (user's #5) ✅ 2026-07-04
 
-- [ ] Persist per-board op-log + undo/redo across restarts (D6).
-- [ ] Versioned snapshots: on significant change + on quit → `iCloud Drive/PowerBoard/<board>/<timestamp>.json.gz`; prune to sensible retention.
-- [ ] Restore UI: board card menu → "Restore from backup…" with timestamped list.
-- [ ] Loud failure states: backup failed / iCloud unavailable badges in status bar.
-- [ ] Keep `cloud`/`mirror` modes compiling + canary-tested but OFF by default in desktop.
+- [x] Persist per-board op-log + undo/redo across restarts (D6). `apps/server/src/historyStore.ts`: gzipped pre-op snapshots + `index.json` + append-only `oplog.jsonl` under `<board>/history/`. Verified: undo depth 5 persisted to disk; op-log records source/type/targetIds; batch shares one seq.
+- [x] Versioned snapshots on significant change (15s debounce) + on quit (SIGINT/SIGTERM flush + Electron `before-quit`) → `<backupDir>/<board>/<timestamp>.json.gz`, pruned to 20. `apps/server/src/backupService.ts`. Verified: 2 snapshots on disk, restore round-trip returns the full board.
+- [x] Restore UI: `apps/web/src/components/RestoreDialog.tsx` (timestamped picker, restore is an undoable op path). Backup panel in right sidebar; "Back Up All Boards Now" + "Reveal Backups Folder" in the Electron File menu.
+- [x] Loud failure states: backup failures set `status.healthy=false` + console.error; status-bar `BackupBadge` shows "⚠ Backup failed" / "Backed up <time>". Verified badge live-updates.
+- [x] `cloud`/`mirror` still compile; local is default in desktop. MAS sandbox falls back to app-container backups (iCloud container entitlement is a follow-up).
+- [x] Supabase→local one-time importer: `apps/server/src/importCloud.ts` (`npm run import:cloud`), round-trip verified per board.
 
-## Phase 3 — UI/UX overhaul (user's #2)
+## Phase 3 — UI/UX overhaul (user's #2) ✅ 2026-07-04
 
-- [ ] Design-system pass over every surface (playbook design.md §10 taste pass): type ramp, 4/8 grid, one accent, dark mode as designed surfaces.
-- [ ] Canvas feel: inertial trackpad pan, cursor-centered zoom polish, marquee multi-select, snapping + alignment guides + smart distribute, double-click-to-edit text everywhere.
-- [ ] **Agent presence as a feature** (user watches agents work): live agent cursor/badge, per-operation activity feed with human-readable entries, animated element highlights on agent edits, board-level "agent session" timeline scrubber.
-- [ ] Command palette (⌘K): every operation + board search.
-- [ ] Empty/loading/error states for every panel; keyboard-shortcut overlay (?); onboarding starter board.
-- [ ] Panels: collapsible + resizable, layers search/filter.
+- [x] Design-system pass: semantic CSS tokens + full dark-mode layer (designed surfaces, one accent, not inversion). Verified toggling in-app.
+- [x] Canvas feel: marquee multi-select (>50% overlap), alignment/snap guides on drag (edges + centers), double-click-to-edit text (text/button/badge/sticky/shape), arrow-key nudge (1px / ⇧10px).
+- [x] **Agent presence as a feature**: `AgentFeed` panel (human-readable entries, click-to-focus edited elements) alongside the existing element pulse highlights + "AI edited" stamp.
+- [x] Command palette (⌘K): `CommandPalette.tsx`, ~40 commands across Board/Edit/Insert/Tools/Layout/Export/View/Backup/Help with fuzzy filter + keyboard nav. Verified.
+- [x] Empty/error states (inspector, agent feed, restore, backups); keyboard-shortcut overlay (?); designed home empty state already present.
+- [x] Tool switcher (select/connector/ink), Mockup↔Diagram palette toggle (D5), theme toggle in toolbar.
 
-## Phase 4 — Diagramming: Miro × Visio × Excalidraw, MECE (user's #4)
+## Phase 4 — Diagramming: Miro × Visio × Excalidraw, MECE (user's #4) ✅ 2026-07-04
 
-- [ ] **Connector v2 (the core):** element-level anchoring with ports (N/S/E/W/auto), routing modes (straight/curved/orthogonal with obstacle avoidance), arrowhead styles, midpoint labels (editable on canvas), waypoints, reconnect by dragging endpoints.
-- [ ] New node types on the SAME element schema: `shape` (flowchart/UML-lite/basic geo set with text-in-shape), `sticky` (color set, author badge), `ink` (freehand, pressure-smoothed — Excalidraw feel).
-- [ ] Frameless canvas work: elements may live on the page without an artboard (diagrams don't want device frames); sections/frames as light containers.
-- [ ] Auto-layout commands: tree layout (org charts), left-to-right flow tidy, distribute/align.
-- [ ] Tool palettes by intent — "Mockup" and "Diagram" are palette presets over one model (D5), toggled per board or per moment; zero duplicated features.
-- [ ] Exports: SVG + PDF of selection/page; Mermaid export for flow/org diagrams (agents love this); spec + React/Tailwind untouched for mockups.
+- [x] **Connector v2** (`packages/schema/src/connector.ts`, shared by canvas + exporters): element-level anchoring, ports (auto/n/s/e/w), routing (straight/orthogonal/curved), arrowheads (none/arrow/triangle/dot/diamond) both ends, waypoints, editable midpoint label + position. New ops `update_connector`/`delete_connector`. Verified orthogonal element-to-element routing on canvas.
+- [x] New node types on the SAME element schema: `shape` (12 kinds: rectangle/rounded/ellipse/diamond/parallelogram/cylinder/hexagon/triangle/star/cloud/document/arrow-right, text-in-shape) + `ink` (freehand, normalized points). `sticky` already existed. Verified diamond/rect render.
+- [x] Frameless artboards (`frameless` flag → no device chrome; "Add Canvas" button). Verified.
+- [x] Auto-layout op `apply_layout`: tree (org charts, connector-driven), flow (longest-path layering), align (6) + distribute (2). Verified tree centers parent over children.
+- [x] Palettes by intent: Mockup / Diagram switch over one model (D5) — zero duplicated features. Verified.
+- [x] Exports: page SVG (artboards + connectors), single-page PDF (`pdf.ts`, sharp JPEG → PDF), Mermaid (`renderMermaid`, shape-aware node syntax). Verified Mermaid output. React/Tailwind + spec untouched for mockups.
+- [x] `delete_artboard` op (removes elements + connectors + page refs).
 
-## Phase 5 — MCP hyper-reliability (user's #3)
+## Phase 5 — MCP hyper-reliability (user's #3) ✅ 2026-07-04
 
-- [ ] MCP served by the installed app itself (HTTP `/mcp` on 4318) so agents can always reach the live board the user is looking at; stdio mode kept for headless.
-- [ ] `batch_operations` tool (atomic multi-op with preview + rollback), idempotency keys on all mutating tools.
-- [ ] Error messages per playbook §4: operation, offending input, expected vs actual, suggested fix — machine-parseable `code` field.
-- [ ] Session resilience: HTTP transport reconnect/resume, op-log-based conflict detection (browser vs agent simultaneous edits), `get_board_status` health/heartbeat tool.
-- [ ] Reliability harness: scripted agent soak test (500 mixed ops incl. invalid ones) must end with `validate_board` clean.
-- [ ] Update `docs/agents/powerboard-connector.md` for the desktop-app world.
+- [x] MCP served by the installed app (HTTP `/mcp` on 4318); stdio kept for headless. 36 tools exposed (`mcp:check` green).
+- [x] `batch_operations` (atomic — all-or-nothing, one undo entry, `expectedUpdatedAt` conflict detection) + `idempotencyKey` on every mutating tool (10-min replay cache). Verified atomic rollback + no double-apply in soak.
+- [x] Structured errors on every tool: `{ code, tool, message, hint, details }` — codes validation_failed/not_found/missing_input/conflict/internal_error. Verified in soak (40 structured errors).
+- [x] `get_board_status` heartbeat (storage mode, backup health, counts, undo/redo depth, last agent edit); `board_undo`/`board_redo`/`read_oplog` tools.
+- [x] Reliability harness: `apps/server/src/mcpSoak.ts` (`npm run soak`) — 500 mixed ops (valid/invalid/batch/idempotent/undo-redo) ends with `validate_board` clean. Passing.
+- [x] Updated `docs/agents/powerboard-connector.md` for the desktop-app world + new tools.
 
 ## Phase 6 — Later (parked until user says go)
 

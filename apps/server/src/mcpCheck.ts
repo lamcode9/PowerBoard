@@ -29,7 +29,19 @@ const REQUIRED_TOOLS = [
   "export_artboard_png",
   "export_react_tailwind",
   "export_board_spec",
-  "validate_board"
+  "validate_board",
+  "update_connector",
+  "delete_connector",
+  "delete_artboard",
+  "apply_layout",
+  "batch_operations",
+  "get_board_status",
+  "board_undo",
+  "board_redo",
+  "read_oplog",
+  "export_page_svg",
+  "export_page_pdf",
+  "export_mermaid"
 ] as const;
 
 async function main(): Promise<void> {
