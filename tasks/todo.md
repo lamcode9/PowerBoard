@@ -25,8 +25,8 @@ Written 2026-07-04. Status legend: [ ] todo · [~] in progress · [x] done.
 - [x] App icon (SVG → icns, mockup-artboard + diagram-nodes motif).
 - [x] `electron-builder` mas config + sandbox entitlements; app signed (Apple Distribution), pkg signed (3rd Party Mac Developer Installer — cert minted headless via ASC API).
 - [x] `fastlane/`: `prepare_signing` (bundle id ✓, installer cert ✓, MAS profile ✓), `beta`, `upload_only`, `await_app_and_upload` (polls for the app record, uploads, sets up internal TestFlight group).
-- [ ] **BLOCKED on the one manual step:** ASC app record (Apple's public API can't create app records — Apple-ID session only). ASC → Apps → + → New App: macOS · PowerBoard · com.lamonade.powerboard · SKU powerboard-mac. Watcher lane uploads automatically once it exists.
-- [ ] Verify install from TestFlight on this Mac with realistic board round-trip.
+- [x] ASC app record created (user, 2026-07-04) → build **0.1.0 (202607041401)** uploaded, processed for MAC_OS, distributed to the Internal group; owner assigned as internal tester. Lanes hardened: hash params, raw `v1/betaGroups` + `v1/betaTesters` posts (Spaceship's helpers send attributes internal groups reject).
+- [ ] Verify install from TestFlight app on this Mac with realistic board round-trip (user-side; first sandboxed run is the real test — watch for container/network issues).
 
 ## Phase 2 — Offline-first storage + iCloud backup (user's #5)
 

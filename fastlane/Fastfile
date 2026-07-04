@@ -66,7 +66,7 @@ platform :mac do
     sh("cd #{REPO_ROOT.shellescape} && npm run build")
     sh("cd #{DESKTOP_DIR.shellescape} && npm run bundle")
     sh("cd #{DESKTOP_DIR.shellescape} && npx electron-builder --mac mas -c.buildVersion=#{build_number}")
-    upload_pkg(latest_pkg)
+    upload_pkg(pkg: latest_pkg)
   end
 
   desc "Poll until the ASC app record exists (one-time manual UI step), then upload + enable internal testing"
@@ -82,23 +82,54 @@ platform :mac do
       sleep 90
     end
     UI.success("App record found: #{app.name} (#{app.id}). Uploading…")
-    upload_pkg(latest_pkg)
-    ensure_internal_testing(app)
+    upload_pkg(pkg: latest_pkg)
+    ensure_internal_testing(app_id: app.id)
   end
 
-  private_lane :ensure_internal_testing do |app|
+  desc "Ensure the Internal TestFlight group exists with the owner assigned"
+  lane :internal_setup do
     Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.from(hash: @api_key)
+    app = Spaceship::ConnectAPI::App.find(APP_IDENTIFIER)
+    UI.user_error!("No ASC app record for #{APP_IDENTIFIER}.") unless app
+    ensure_internal_testing(app_id: app.id)
+  end
+
+  private_lane :ensure_internal_testing do |options|
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.from(hash: @api_key)
+    app = Spaceship::ConnectAPI::App.get(app_id: options[:app_id])
     group = app.get_beta_groups.find { |g| g.is_internal_group }
-    group ||= app.create_beta_group(group_name: "Internal", is_internal_group: true, has_access_to_all_builds: true)
-    group.post_bulk_beta_tester_assignments(beta_testers: [{ email: "7amonad3@gmail.com", firstName: "Kah Mun", lastName: "Lam" }])
+    unless group
+      # Spaceship's create_beta_group always sends publicLinkLimitEnabled, which the API
+      # rejects for internal groups — post the minimal body through the raw client instead.
+      client = Spaceship::ConnectAPI::TestFlight::Client.new(token: Spaceship::ConnectAPI.token)
+      client.post("v1/betaGroups", {
+        data: {
+          type: "betaGroups",
+          attributes: { name: "Internal", isInternalGroup: true, hasAccessToAllBuilds: true },
+          relationships: { app: { data: { type: "apps", id: app.id } } }
+        }
+      })
+      group = app.get_beta_groups.find { |g| g.is_internal_group }
+    end
+    client = Spaceship::ConnectAPI::TestFlight::Client.new(token: Spaceship::ConnectAPI.token)
+    client.post("v1/betaTesters", {
+      data: {
+        type: "betaTesters",
+        attributes: { email: "7amonad3@gmail.com", firstName: "Kah Mun", lastName: "Lam" },
+        relationships: { betaGroups: { data: [{ type: "betaGroups", id: group.id }] } }
+      }
+    })
     UI.success("Internal TestFlight group ready; 7amonad3@gmail.com assigned.")
   rescue StandardError => e
     UI.important("Build uploaded, but internal-group setup needs a manual touch in ASC → TestFlight → Internal Testing: #{e.message.lines.first&.strip}")
   end
 
-  desc "Upload an already-built pkg (pkg:<path>, defaults to the newest in release/)"
+  desc "Upload an already-built pkg (pkg:<path>, defaults to the newest in release/) and set up internal testing"
   lane :upload_only do |options|
-    upload_pkg(options[:pkg] || latest_pkg)
+    upload_pkg(pkg: options[:pkg] || latest_pkg)
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.from(hash: @api_key)
+    app = Spaceship::ConnectAPI::App.find(APP_IDENTIFIER)
+    ensure_internal_testing(app_id: app.id) if app
   end
 
   # produce() needs an Apple ID session; the ASC API (token auth) can do everything headless.
@@ -169,7 +200,8 @@ platform :mac do
     UI.success("Mac Installer Distribution certificate installed in the login keychain.")
   end
 
-  private_lane :upload_pkg do |pkg|
+  private_lane :upload_pkg do |options|
+    pkg = options[:pkg]
     UI.user_error!("No .pkg found — run `fastlane mac beta` first.") unless pkg && File.exist?(pkg)
     upload_to_testflight(
       pkg: pkg,
