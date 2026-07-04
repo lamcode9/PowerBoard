@@ -1,0 +1,26 @@
+appId: com.lamonade.powerboard
+productName: PowerBoard
+copyright: © 2026 Kah Mun Lam
+directories:
+  buildResources: build
+  output: release
+files:
+  - main.js
+  - dist/**
+  - package.json
+asarUnpack:
+  - "**/node_modules/sharp/**"
+  - "**/node_modules/@img/**"
+mac:
+  category: public.app-category.graphics-design
+  icon: build/icon.icns
+  darkModeSupport: true
+  extendInfo:
+    ITSAppUsesNonExemptEncryption: false
+mas:
+  type: distribution
+  category: public.app-category.graphics-design
+  entitlements: build/entitlements.mas.plist
+  entitlementsInherit: build/entitlements.mas.inherit.plist
+  provisioningProfile: build/PowerBoard_MAS.provisionprofile
+  hardenedRuntime: false

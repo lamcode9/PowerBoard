@@ -1,74 +1,110 @@
-# PowerBoard
+# PowerBoard — Agent Brief
 
-Single canonical, platform-agnostic agent brief for PowerBoard — a cloud-first, agent-first design tool for high-fidelity app mockups (not a generic Figma clone). Authoritative for every agent (Claude, Codex, Cursor, and any future tool). `CLAUDE.md` in this folder is a thin wrapper that imports this file. Global rules in `~/.claude/CLAUDE.md` and workspace rules in `/Users/km/Developer/AGENTS.md` also apply.
+Single canonical, platform-agnostic brief for PowerBoard. Authoritative for every agent (Claude, Codex, Cursor, any future tool). `CLAUDE.md` here symlinks to this file. Layers under `~/.claude/CLAUDE.md` (global) and `/Users/km/Developer/AGENTS.md` (workspace); project rules here win on conflict. Read this whole file before changing product behavior, storage, schema, MCP tools, canvas interactions, or exports.
 
-## File format rule
+## Mission
 
-Always create new docs as `.html`, never `.md`. Applies to plans, audits, reports, summaries, briefs, handoffs, brainstorms, mockups, and any new deliverable file. Exception: canonical files referenced by name (CLAUDE.md, AGENTS.md, README.md, MEMORY.md, lessons.md, RELEASE_NOTES.md, package metadata, and any pre-existing `.md` already wired into the workflow or imported by code). Edits to existing `.md` files keep their format.
+PowerBoard is a **desktop-first, offline-first, agent-first visual workspace** for two jobs sharing one canvas and one object model:
 
-## Active Goal
+1. **Hi-fi app mockups** — device artboards, semantic elements, screenshot tracing, React/Tailwind + spec exports.
+2. **Diagrams** — flowcharts, org charts, process flows, schematics, stickies, freehand ink; the useful core of Miro + Visio + Excalidraw, merged MECE (one canvas, one connector system, palettes differ — features never duplicate).
 
-Build PowerBoard into a polished cloud-first, agent-first design tool for creating high-fidelity app mockups. It is not a generic Figma clone — it is a practical workspace where the user and any capable agent can design, inspect, iterate, export, and cloud-sync detailed app screens with semantic object structure.
+It ships as a signed macOS app (Electron, MAS/TestFlight), works fully offline with local file storage and iCloud snapshot backup, and treats agents as first-class co-editors: every browser edit and every MCP edit flows through the same validated operation model, and the human should *enjoy watching* agents work (live activity, readable feeds, animated highlights).
 
-## Project-specific lenses
+**Not** a generic Figma clone, and no longer cloud-first: Supabase is a demoted, optional sync target for the future online/sharing phase. **Genesis:** PowerBoard began as a copy of **paper.design** — when benchmarking or comparing (Miro, Visio, Excalidraw, Figma), paper.design is the primary reference point and its gap plan lives in `docs/` (see `paper-design` gap doc).
 
-Embody these perspectives as one synthesised mind for any product, design, or engineering decision:
+## Current state vs destination
 
-- **Design-tool product lead**: fast iteration, inspectable structure, reliable exports, practical app-mockup workflows over broad whiteboard features.
-- **Senior product designer**: keep UI modern, minimal, accessible, direct, and consistent with canvas-tool conventions.
-- **Senior engineer & architect**: clean, performant, scalable, maintainable changes that fit the existing codebase.
-- **Cloud/security**: Supabase storage, access boundaries, env vars, MCP/API writes are production concerns.
-- **Agent-workflow designer**: browser edits, MCP edits, validation, hierarchy inspection, exports stay aligned through the same operation model.
+The v2 pivot is phased — check `tasks/todo.md` (locked decisions D1–D6 + phase checklists) and `docs/powerboard-desktop-roadmap.html` before assuming which world you're in:
 
-## Core rules
+- **Today:** React 19 + Vite web app, Node/Express server (`127.0.0.1:4318`) with WS live-sync + MCP, storage modes `local` (JSON files) / `cloud` (Supabase, schema `powerboard`) / `mirror`. Cloud app at `https://lamper-server.vercel.app`.
+- **Destination:** Electron app (`com.lamonade.powerboard`, Team `R5Z99F8UNV`) embedding that same server; boards live in app user-data as JSON; iCloud Drive snapshot backups; MCP served by the installed app; TestFlight via fastlane `beta` lane (modeled on Habeat/Vellum; ASC API key `998DV58D4V`).
+- Don't re-litigate locked decisions D1–D6 without the user; do flag evidence that one is wrong.
 
-- Production-grade quality only; think from first principles and justify meaningful choices.
-- Simplicity first: the smallest change that fully solves the problem. Find root causes instead of adding temporary fixes.
-- For non-trivial work, pause long enough to ask whether there is a cleaner design that avoids over-engineering.
-- Do not copy CentsCheck-only mobile, finance, App Store, or Flutter UI rules into PowerBoard work.
-- Read this file before changing product behavior, cloud behavior, schema shape, MCP tools, canvas interactions, or exports. If a user correction reveals a reusable PowerBoard rule, record it here.
+## Architecture map
+
+npm-workspaces monorepo, ~8k lines TS:
+
+- `packages/schema/` — Zod schemas: `BoardProject` → `pages` / `artboards` / `elements` (typed, nestable via `parentId`, `semanticRole`, `style`, `layout`, `props`) / `connectors` / `assets` / `tokens`; the operations discriminated union; `validateBoardStructure`, hierarchy inspection. **The data model is the product — change it first, carefully, with migration.**
+- `packages/renderers/` — React/Tailwind, spec-markdown, SVG export generators.
+- `apps/server/` — `boardService.ts` (operation application, undo/redo stacks), `mcpServer.ts` (24 MCP tools, stdio + HTTP `/mcp`), `cloudStore.ts`, Express API (`/api/boards`, operations, exports), WS broadcast (`board.changed` + `agentActivity`).
+- `apps/web/` — `App.tsx` (being split into `canvas/`/`panels/`/`inspector/`/`state/`), DOM canvas (CSS `translate3d`+`scale` camera, SVG connector layer), `api.ts` (server + browser-local fallback).
+- `apps/desktop/` — Electron shell (Phase 1): main process runs the server in-process, loads the built web bundle, owns native menus + storage paths.
+
+## Core engineering rules (first-principles — inherits `~/.claude/CLAUDE.md`)
+
+Restated here for visibility; the global rules stay authoritative and project-specific rules win on conflict.
+
+- **First-principles thinking.** Justify non-obvious choices; fix root causes, never hacky or temporary patches.
+- **Simplicity first, minimal impact.** Smallest change that solves the problem — no speculative code, abstractions, or configurability that wasn't asked for.
+- **Surgical changes.** Touch only what the task requires; match existing conventions; don't refactor or "improve" code that isn't broken.
+- **Read before write.** Scan exports, callers, and shared utilities before adding code.
+- **Goal-driven & verified.** Define success criteria and prove it works before calling it done — skipped tests are not passing.
+- **Fail loud.** Surface uncertainty and conflicting patterns; never hide skipped work behind "completed."
+
+## Playbooks — read before non-trivial work
+
+Cross-project operating doctrine at `/Users/km/Developer/playbooks/`, written by Claude
+Fable 5 to raise the execution bar of any model working here — lean on it hardest when a
+smaller model is running. Before planning, read the matching playbook(s) in full, pick
+the three rules most likely to bite on this task, then apply silently (don't recite):
+
+- `thinking.md` — complex/ambiguous/multi-step work; debugging that resists the first fix.
+- `engineering.md` — architecture, non-trivial coding, refactors, performance, security.
+- `design.md` — anything the user sees: screens, components, pages, assets, microcopy.
+- `product.md` — pricing, monetization, growth, launch, positioning, business decisions.
+
+Full routing + bootstrap rule: `/Users/km/Developer/AGENTS.md` §Playbooks.
+
+## The operation model is sacred
+
+- **Every mutation** — browser, MCP, script, migration — goes through the operations union in `packages/schema` and `applyAgentOperation`/`applyOperation`. Never hand-edit board JSON, never write the DB directly, never add a side door "just for this feature." New capability = new operation (or extended op) + Zod schema + validation + undo entry + WS broadcast + MCP exposure, together.
+- **Schema changes ship with**: `schemaVersion` handling or migration, updated `validateBoardStructure`, updated renderers/exports if shape-visible, updated MCP tool descriptions, tests in `packages/schema`.
+- **Mockups and diagrams share the model** (decision D5). A diagram shape is an element type; a connector is one connector system with anchoring/routing options. If you're about to add a parallel "diagram object," stop — extend the existing one.
+
+## MCP etiquette (for agents editing boards)
+
+- Before broad edits: `inspect_board_hierarchy`. Before implementation handoff: `inspect_selection` / `export_selection_handoff`. Before risky writes: `preview_operation`. After edits: `validate_board` — fix hierarchy/primitive diagnostics before exporting.
+- Prefer small reversible operations over full-board `PUT`s; batch related ops when the batch tool exists.
+- MCP endpoints: stdio `npm run mcp --prefix /Users/km/Developer/PowerBoard`; HTTP `http://127.0.0.1:4318/mcp`. Exposure check: `npm run mcp:check`. Treat tool errors as data — they name the offending input; don't retry blind.
+- Keep live canaries compatible with the currently deployed runtime unless a branch-only fixture flag (e.g. `--include-primitives`) is explicitly intended.
+
+## Persistence safety (workspace P0 rule — it has destroyed real user data twice elsewhere)
+
+- Never store board data in `localStorage` (the browser fallback in `apps/web/src/api.ts` is a known P0 being replaced with IndexedDB — don't extend it).
+- A failed save/backup must fail LOUD: visible status-bar state + console error. No `catch {}` on any write path.
+- Verify save→quit→relaunch→restore with a realistic payload (imported screenshot, full board) before calling any persistence work done.
+- Local `boards/` in the repo is migration/cache only — don't hand-edit `board.json`, `assets/`, `exports/` outside an explicit migration/recovery task.
+
+## Design bar (the user sees everything)
+
+- Follow `playbooks/design.md`; run its §10 taste pass before showing work. Canvas-tool conventions (Figma/Sketch/Excalidraw muscle memory) are load-bearing: ⌘Z/⌘⇧Z, space-pan, cursor-centered zoom, ⌘0/⌘1, marquee select.
+- Every visible control works, explains its disabled state, or shows status. Every panel has designed empty/loading/error states.
+- Agent activity is a designed surface, not a log dump: human-readable feed entries, element pulse highlights, live badges.
+- One accent color; 4/8 grid; dark mode is designed surfaces, not inversion.
+
+## Verification & Definition of Done
+
+- Interactions verified in the running app (browser or Electron), console clean.
+- `npm run typecheck`, `npm run build`, `npm test` pass when code warrants; exports (PNG/spec/React-Tailwind, later SVG/PDF/Mermaid) re-tested when export behavior changes.
+- Persistence changes: round-trip verified per §Persistence safety. Release changes: build installs and launches from TestFlight.
+- Meaningful changes committed and pushed. Cloud-touching work: `npm run cloud:safety -- --mode=canary --verify-exports`.
+- Would a staff engineer + a senior designer both approve? If either wouldn't, it isn't done.
 
 ## Project rules
 
-- **Work journal:** Fires on observable intra-session triggers — (a) a meaningful work block completes (feature shipped, fix landed, plan/audit written, commit/push), or (b) the user signals wrap-up ("alright", "ship it", "thanks", "done", "what's next"). When either fires, run `/lamonade-auto-work-journal --project "PowerBoard" --content "..."` **before closing the response**. One entry per day (appends on repeat). Same triggering style as the `tasks/lessons.md` / `tasks/todo.md` rules. Full rule: `/Users/km/Developer/CLAUDE.md` §"Work journal rule".
-- Visible controls either work, explain their disabled state, or show useful status feedback.
-- Fix root causes (canvas math, sync, exports, schema drift) — not symptoms.
-- Don't import rules from other projects unless they serve PowerBoard's design-tool goal.
-- For UX-sensitive or architectural changes: propose intended behavior first when ambiguous.
-- Verify in browser for interaction work; check console; run `npm run typecheck`, `npm run build`, `npm test` when warranted.
+- **Work journal:** fires on observable intra-session triggers — (a) a meaningful work block completes (feature shipped, fix landed, plan/audit written, commit/push), or (b) the user signals wrap-up ("alright", "ship it", "thanks", "done", "what's next"). Run `/lamonade-auto-work-journal --project "PowerBoard" --content "..."` **before closing the response**. One entry per day (appends on repeat). Full rule: `/Users/km/Developer/CLAUDE.md` §"Work journal rule".
+- **File format:** new deliverable docs are `.html` in `docs/`, registered via `lamonade-doc-register` immediately. Canonical `.md` files (this file, README, tasks/todo.md, tasks/lessons.md) stay `.md`.
+- For UX-sensitive or architectural changes: propose intended behavior first when ambiguous. If a user correction reveals a reusable PowerBoard rule, record it here (and in `tasks/lessons.md`).
 - Preserve unrelated worktree edits and live board edits unless the user asks to reset.
-- Before broad edits, call `inspect_board_hierarchy`; before detailed implementation handoff, call `inspect_selection` or `export_selection_handoff`; before risky writes, call `preview_operation`; after edits, call `validate_board` and fix hierarchy or primitive diagnostics before exporting.
-- Keep live canaries compatible with the currently deployed runtime unless `--include-primitives` or another branch-only fixture flag is explicitly intended.
+- Don't import other projects' rules (mobile/finance/Flutter/store) unless they serve PowerBoard's goal.
 
-## Product priorities
+## Release & credentials (macOS)
 
-- Excellent canvas: cursor-centered zoom, trackpad pan, selection, drag, resize, group, hierarchy, undo/redo.
-- Every UI control works clearly with empty/disabled/status states.
-- Every object & artboard has name, id, semantic role, inspectable hierarchy path.
-- React + Tailwind export: readable, implementation-ready, aligned with semantic board model.
-- Screenshot-assisted tracing: imported screenshots = locked overlays, recreatable as editable semantic objects.
-- Supabase cloud = working source of truth for boards/assets/exports.
-- MCP and agent control first-class — browser edits and agent edits go through the same operation model.
-
-## Definition of Done
-
-- Browser-tested interactions, no console errors.
-- `npm run typecheck`, `npm run build`, `npm test` pass when code warrants.
-- PNG, spec, React/Tailwind exports tested when export behavior changes.
-- Meaningful changes committed and pushed.
-
-## Cloud source of truth
-
-- App: `https://lamper-server.vercel.app`
-- API: `https://lamper-server.vercel.app/api` (health: `/api/health`, boards: `/api/boards`)
-- DB: Supabase Postgres, schema `powerboard`
-- Local cloud-direct server (when needed): `http://127.0.0.1:4318` (MCP at `/mcp`)
-- Stdio MCP: `npm run mcp --prefix /Users/km/Developer/Board`
-- MCP exposure check: `npm --prefix /Users/km/Developer/Board run mcp:check`
-- Cloud safety check: `npm --prefix /Users/km/Developer/Board run cloud:safety -- --mode=canary --verify-exports`
-- Required env: `POWERBOARD_STORAGE_MODE=cloud` + `SUPABASE_DB_URL` — writes go directly to Supabase.
-- Local `boards/` is migration/cache only. Don't edit `boards/<id>/board.json`, `assets/`, or `exports/` directly without an explicit migration/recovery task.
+- Team `R5Z99F8UNV` (Kah Mun Lam); Apple Distribution cert in login keychain; ASC API key `998DV58D4V` — `.p8` at `Habeat/.secrets/appstoreconnect/`, issuer id in that project's `scripts/.env` (never print/commit key contents; pipe via stdin/env).
+- Pipeline shape: `fastlane beta` per `Habeat_app/fastlane/Fastfile` + `electron-builder` `mas` target. Mac Installer Distribution cert mintable via fastlane + API key.
+- TestFlight = MAS build = App Sandbox: keep entitlements minimal (network client+server for localhost, user-selected files, iCloud container). If sandbox hard-blocks a feature, escalate with the Developer ID + notarized DMG fallback rather than weakening the feature silently.
 
 ## Connector snippet for other projects
 
-Other projects that want to use PowerBoard for mockups should reference `docs/agents/powerboard-connector.md` (or paste it into their own `AGENTS.md`).
+Other projects that want to use PowerBoard for mockups/diagrams should reference `docs/agents/powerboard-connector.md` (or paste it into their own `AGENTS.md`).

@@ -12,3 +12,8 @@ boards/*/board.json
 !boards/.gitkeep
 .vercel
 .claude/
+.secrets/
+apps/desktop/release/
+fastlane/report.xml
+fastlane/README.md
+*.provisionprofile

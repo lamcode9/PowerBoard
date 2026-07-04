@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PowerBoard v2 — Desktop-First Roadmap</title>
+<style>
+  :root{
+    --ink:#101828; --sub:#475467; --faint:#98A2B3; --line:#E4E7EC;
+    --bg:#FCFCFD; --card:#FFFFFF; --accent:#2563EB; --accent-soft:#EFF4FF;
+    --warn:#B42318; --warn-soft:#FEF3F2; --ok:#067647; --ok-soft:#ECFDF3;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font:16px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,sans-serif;color:var(--ink);background:var(--bg);padding:48px 24px 96px}
+  main{max-width:880px;margin:0 auto}
+  h1{font-size:30px;line-height:1.2;letter-spacing:-.02em;margin-bottom:8px}
+  .sub{color:var(--sub);font-size:16px;max-width:64ch}
+  .meta{color:var(--faint);font-size:13px;margin-top:12px}
+  h2{font-size:21px;letter-spacing:-.01em;margin:56px 0 16px;padding-top:24px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:24px 0 8px}
+  p{margin:0 0 12px;color:var(--sub)}
+  p strong,li strong{color:var(--ink)}
+  ul,ol{margin:0 0 16px 22px;color:var(--sub)}
+  li{margin-bottom:6px}
+  code{font:13px var(--mono);background:#F2F4F7;border-radius:5px;padding:1px 5px;color:var(--ink)}
+  .brief{background:var(--accent-soft);border:1px solid #D1DFFF;border-radius:12px;padding:20px 24px;margin:24px 0;font-size:17px;line-height:1.6;color:var(--ink)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 22px;margin-bottom:14px}
+  .card h3{margin-top:0;display:flex;gap:10px;align-items:baseline}
+  .tag{display:inline-block;font:600 11px/1 var(--mono);letter-spacing:.04em;color:var(--accent);background:var(--accent-soft);border-radius:99px;padding:5px 10px;text-transform:uppercase}
+  .tag.warn{color:var(--warn);background:var(--warn-soft)}
+  .tag.ok{color:var(--ok);background:var(--ok-soft)}
+  table{width:100%;border-collapse:collapse;font-size:14px;margin:16px 0 8px}
+  th{text-align:left;font-weight:600;color:var(--ink);border-bottom:2px solid var(--line);padding:8px 10px}
+  td{border-bottom:1px solid var(--line);padding:9px 10px;color:var(--sub);vertical-align:top}
+  td:first-child{color:var(--ink);font-weight:500;white-space:nowrap}
+  .scroll{overflow-x:auto}
+  .phase{display:flex;gap:16px;margin-bottom:14px}
+  .phase .num{flex:0 0 34px;height:34px;border-radius:10px;background:var(--ink);color:#fff;font:600 15px/34px var(--mono);text-align:center}
+  .phase .body{flex:1}
+  .phase h3{margin:4px 0 4px}
+  .phase p{margin-bottom:4px;font-size:15px}
+  .footnote{color:var(--faint);font-size:13px;margin-top:40px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<main>
+  <h1>PowerBoard v2 — Desktop-First Roadmap</h1>
+  <p class="sub">The corrected, upgraded version of the six-point brief: what PowerBoard becomes, every architecture decision locked with rationale, what the original prompt was missing, and the phased path to a TestFlight-installed macOS app.</p>
+  <p class="meta">2026-07-04 · Prepared by Claude (Fable) · Execution checklist lives in <code>tasks/todo.md</code> · Agent brief: <code>AGENTS.md</code></p>
+
+  <h2>The corrected brief (the upgraded prompt)</h2>
+  <div class="brief">
+    PowerBoard is a <strong>desktop-first, offline-first, agent-first visual workspace</strong> for one person + their agents. One canvas and one object model serve two jobs: <strong>hi-fi app mockups</strong> (device artboards, semantic elements, screenshot tracing, React/Tailwind export) and <strong>diagrams</strong> (flowcharts, org charts, process flows, schematics, stickies, freehand ink — the useful core of Miro, Visio, and Excalidraw merged MECE). It ships as a signed macOS app via TestFlight, stores boards as local files with versioned iCloud backups, exposes a hyper-reliable MCP served by the installed app itself, and treats agents as first-class co-editors whose work is a designed, delightful surface to watch. Supabase cloud is demoted to an optional sync target for a later online/sharing phase.
+  </div>
+  <p>Two corrections to the original wording. First, "convert to a macOS app" and "offline desktop first" are <strong>one workstream, not two</strong> — the desktop shell is only trustworthy if storage goes local-first in the same move, so points 1 and 5 merge. Second, "also like Miro/Visio/Excalidraw" is not a second product bolted on: the existing schema (elements, connectors, semantic roles) already generalizes, so diagramming is an <em>extension of the connector + element model</em>, never a parallel canvas. That's what keeps the feature set MECE.</p>
+
+  <h2>What the original prompt was missing</h2>
+  <div class="card"><h3><span class="tag warn">P0</span> A live data-loss bug in the browser fallback</h3>
+  <p>The browser-local mode stores <em>all projects, including base64 screenshot assets</em>, in a single <code>localStorage</code> key (<code>apps/web/src/api.ts</code>). That's the exact ~5&nbsp;MB-quota pattern that destroyed real user data in Lamonade and Shotapp. One realistic screenshot import can silently kill saving. Fixed first (IndexedDB + loud failure states) before anything is built on top.</p></div>
+  <div class="card"><h3><span class="tag warn">Gap</span> Undo/history dies on restart</h3>
+  <p>Undo stacks are in-memory only. An offline-first desktop app needs a persisted per-board operation log — which is also the cheap door-opener for the future sharing/sync phase and the unit the iCloud backups snapshot. Designed in now (decision D6), so "later online" doesn't require a rewrite.</p></div>
+  <div class="card"><h3><span class="tag warn">Gap</span> Migration of existing cloud boards</h3>
+  <p>Boards currently live in Supabase. The desktop app gets a one-time first-run importer (cloud → local files, read-only against the cloud) so nothing is stranded when the source of truth flips.</p></div>
+  <div class="card"><h3><span class="tag warn">Gap</span> App identity &amp; release plumbing</h3>
+  <p>Bundle id, icon, native menu bar, single-instance behavior, entitlements, and a Mac Installer Distribution certificate (the one signing asset you don't have yet — mintable via your ASC API key). All specified in Phase 1.</p></div>
+  <div class="card"><h3><span class="tag warn">Gap</span> Diagram-grade exports</h3>
+  <p>PNG/spec/React-Tailwind serve mockups; diagrams want <strong>SVG, PDF, and Mermaid</strong> export (Mermaid especially — it lets agents round-trip your diagrams as text). Added in Phase 4.</p></div>
+  <div class="card"><h3><span class="tag ok">Good news</span> Credentials &amp; pipeline are fully in place</h3>
+  <p>ASC API key <code>998DV58D4V</code> (issuer id in Habeat's <code>scripts/.env</code>, iCloud backups of keys exist), Team <code>R5Z99F8UNV</code>, Apple Distribution certificate already in the keychain, and two proven fastlane TestFlight pipelines (Habeat, Vellum) to model PowerBoard's <code>beta</code> lane on. Nothing to hunt down.</p></div>
+
+  <h2>Locked decisions</h2>
+  <div class="scroll"><table>
+    <tr><th>#</th><th>Decision</th><th>Why (and what was rejected)</th></tr>
+    <tr><td>D1</td><td>Electron shell, Mac App Store build → TestFlight</td><td>The existing Node server (Express + WebSocket + MCP + sharp PNG export) runs <em>unmodified</em> in Electron's main process — the installed app becomes the single daemon that serves UI, storage, and MCP together. Tauri or a native Swift shell would mean porting ~2.2k lines of server logic or smuggling a Node sidecar past the App Sandbox. Fallback if MAS sandbox fights back: Developer ID + notarized DMG (still one-click installable; loses TestFlight only).</td></tr>
+    <tr><td>D2</td><td><code>com.lamonade.powerboard</code>, Team R5Z99F8UNV, fastlane <code>beta</code> lane</td><td>Matches the CentsCheck bundle-id convention and reuses the proven Habeat/Vellum lane shape with the shared ASC API key.</td></tr>
+    <tr><td>D3</td><td>Local files become the source of truth</td><td>Boards as JSON in the app's user-data dir via the <em>existing</em> <code>local</code> storage mode — the pivot reuses shipped code. Supabase drops to optional sync (<code>mirror</code> mode is the bridge when the online phase arrives).</td></tr>
+    <tr><td>D4</td><td>iCloud <em>backup</em>, not iCloud <em>sync</em></td><td>Versioned, pruned snapshots to iCloud Drive on quit + debounced autosave, with an in-app restore picker. True multi-device sync is deferred to the online phase — doing it now buys conflict bugs with no second device to justify them.</td></tr>
+    <tr><td>D5</td><td>One object model for mockups and diagrams</td><td>A diagram shape is an element type; there is exactly one connector system. "Mockup" vs "Diagram" is a tool-palette preset, never a document fork. This single rule is what keeps Miro/Visio/Excalidraw merging MECE.</td></tr>
+    <tr><td>D6</td><td>Persist the operation log now; sharing later</td><td>Fixes undo-across-restarts today, gives backups a clean unit, and leaves the door open for share links / co-editing without committing to a CRDT before there's a second user.</td></tr>
+  </table></div>
+
+  <h2>Feature merge matrix — Miro × Visio × Excalidraw, MECE</h2>
+  <p>Every capability maps to exactly one PowerBoard mechanism. Nothing appears twice.</p>
+  <div class="scroll"><table>
+    <tr><th>Capability</th><th>Comes from</th><th>PowerBoard mechanism (single home)</th></tr>
+    <tr><td>Infinite canvas, zoom/pan</td><td>All three</td><td>Existing camera — polish pass in Phase 3 (inertia, snapping, marquee)</td></tr>
+    <tr><td>Shapes with text inside</td><td>Visio / Miro</td><td>New <code>shape</code> element type on the existing element schema; flowchart + basic-geo + UML-lite libraries as palette presets</td></tr>
+    <tr><td>Smart connectors (anchor, route, reconnect)</td><td>Visio</td><td><strong>Connector v2</strong> — the one connector system, upgraded: ports, orthogonal/curved/straight routing, arrowheads, editable midpoint labels, waypoints</td></tr>
+    <tr><td>Screen-flow arrows between mockups</td><td>PowerBoard today</td><td>Same Connector v2 — an artboard is just a big node</td></tr>
+    <tr><td>Sticky notes</td><td>Miro</td><td>New <code>sticky</code> element type (color set, author badge)</td></tr>
+    <tr><td>Freehand drawing</td><td>Excalidraw</td><td>New <code>ink</code> element type, pressure-smoothed strokes</td></tr>
+    <tr><td>Org charts / tree layout</td><td>Visio / Miro</td><td>Auto-layout <em>commands</em> (tree, flow-tidy, distribute) acting on plain nodes+connectors — layout is an operation, not an object type</td></tr>
+    <tr><td>Frames / sections / containers</td><td>Miro / Figma</td><td>Existing artboards (device-preset for mockups) + light frameless sections for diagrams; elements may live without an artboard</td></tr>
+    <tr><td>Hand-drawn aesthetic</td><td>Excalidraw</td><td>A <em>style token preset</em> (roughness/font), not a mode — any shape can wear it</td></tr>
+    <tr><td>Text-as-diagram round-trip</td><td>Mermaid ecosystem</td><td>Mermaid export (and later import) — agents manipulate diagrams as text through MCP</td></tr>
+    <tr><td>Realtime multi-user</td><td>Miro</td><td>Deferred to online phase (D6 keeps it cheap); today's "multi-user" is you + agents over WS, which already works</td></tr>
+  </table></div>
+
+  <h2>Phases</h2>
+  <div class="phase"><div class="num">0</div><div class="body"><h3>Foundation &amp; P0 fixes</h3><p>Kill the localStorage data-loss pattern (IndexedDB + loud save failures). Split the 2.6k-line <code>App.tsx</code> into modules. Extract design tokens to CSS variables with a dark-mode layer. No visible behavior change; everything after builds on this.</p></div></div>
+  <div class="phase"><div class="num">1</div><div class="body"><h3>macOS app on TestFlight <em>(your #1)</em></h3><p>Electron shell running the existing server in-process, native menus, app icon, local file storage in user-data, first-run cloud-board importer, <code>electron-builder mas</code> + entitlements, fastlane <code>beta</code> lane, TestFlight install verified end-to-end with a realistic board round-trip.</p></div></div>
+  <div class="phase"><div class="num">2</div><div class="body"><h3>Offline-first storage + iCloud backup <em>(your #5)</em></h3><p>Persisted op-log (undo survives restarts), versioned iCloud Drive snapshots with pruning, in-app restore picker, loud backup-failure states. Cloud modes stay compiled + canary-tested but off by default.</p></div></div>
+  <div class="phase"><div class="num">3</div><div class="body"><h3>UI/UX overhaul <em>(your #2)</em></h3><p>Full taste pass (type ramp, 4/8 grid, one accent, designed dark mode). Canvas feel: inertial pan, snapping + alignment guides, marquee select, inline text editing. <strong>Agent presence as a designed feature</strong> — live agent cursor, human-readable activity feed, animated edit highlights, session timeline — so watching agents work is the delight you asked for. ⌘K command palette, shortcut overlay, designed empty/loading/error states everywhere, onboarding starter board.</p></div></div>
+  <div class="phase"><div class="num">4</div><div class="body"><h3>Diagramming <em>(your #4)</em></h3><p>Connector v2, then <code>shape</code>/<code>sticky</code>/<code>ink</code> element types, frameless sections, auto-layout commands, palette presets ("Mockup" / "Diagram"), SVG + PDF + Mermaid export.</p></div></div>
+  <div class="phase"><div class="num">5</div><div class="body"><h3>MCP hyper-reliability <em>(your #3)</em></h3><p>MCP served by the installed app (agents always reach the board you're looking at), atomic <code>batch_operations</code> with preview/rollback, idempotency keys, 2am-quality error messages with machine-readable codes, reconnect/resume, health/heartbeat tool, and a 500-operation agent soak test that must end <code>validate_board</code>-clean.</p></div></div>
+  <div class="phase"><div class="num">6</div><div class="body"><h3>Online &amp; sharing <em>(parked until you say go)</em></h3><p>Supabase sync replaying the persisted op-log, share links, human presence. The conflict strategy (CRDT vs single-writer lease) gets decided at that design moment — not paid for now.</p></div></div>
+
+  <h2>Risks worth naming</h2>
+  <ul>
+    <li><strong>MAS sandbox × Electron</strong> is the riskiest single step (entitlements, signing sharp's native dylibs, localhost server inside the sandbox). It's well-trodden but fiddly; the Developer ID + notarized DMG fallback is explicitly held ready (D1) so "installed on your Mac" is guaranteed even if TestFlight specifically fights back.</li>
+    <li><strong>DOM canvas performance</strong> is fine at mockup scale; big diagrams (500+ nodes) may eventually want canvas-layer rendering for connectors. Measured before optimized — no speculative rewrite.</li>
+    <li><strong>Scope gravity:</strong> Miro/Visio/Excalidraw are three funded products. The matrix above is the fence: anything not in it (video chat, voting, infinite template galleries) is out until you ask.</li>
+  </ul>
+
+  <p class="footnote">Execution checklist: <code>tasks/todo.md</code> · Agent brief (rewritten this session): <code>AGENTS.md</code> · Credentials recon and architecture recon performed 2026-07-04. Recommended green-light order: Phase 0+1 together (one work block, ends with PowerBoard installed from TestFlight), then 2, then 3, then 4, then 5 — with TestFlight builds cut at every phase boundary.</p>
+</main>
+</body>
+</html>

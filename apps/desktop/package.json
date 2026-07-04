@@ -1,0 +1,26 @@
+{
+  "name": "@powerboard/desktop",
+  "productName": "PowerBoard",
+  "private": true,
+  "version": "0.1.0",
+  "description": "PowerBoard — the agent-native design and diagram board",
+  "author": "Kah Mun Lam",
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "bundle": "node scripts/bundle.mjs",
+    "start": "npm run bundle && electron .",
+    "icon": "node scripts/makeIcon.mjs",
+    "dist:dir": "npm run bundle && electron-builder --mac dir",
+    "dist:mas": "npm run bundle && electron-builder --mac mas"
+  },
+  "dependencies": {
+    "pg": "^8.20.0",
+    "sharp": "^0.34.5"
+  },
+  "devDependencies": {
+    "electron": "^39.0.0",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.27.0"
+  }
+}

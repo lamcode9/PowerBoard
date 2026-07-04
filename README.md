@@ -54,7 +54,7 @@ For stdio-based MCP clients, use:
 ```toml
 [mcp_servers.powerboard]
 command = "npm"
-args = ["run", "mcp", "--prefix", "/Users/km/Developer/Board"]
+args = ["run", "mcp", "--prefix", "/Users/km/Developer/PowerBoard"]
 [mcp_servers.powerboard.env]
 POWERBOARD_CLOUD_DRIVER = "supabase"
 POWERBOARD_STORAGE_MODE = "cloud"

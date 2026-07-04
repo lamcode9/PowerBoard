@@ -1,0 +1,186 @@
+# PowerBoard macOS (Mac App Store / TestFlight) pipeline.
+# Modeled on Habeat_app/fastlane/Fastfile; uses the team's shared ASC API key.
+#   fastlane mac prepare_signing   # one-time: app record, installer cert, MAS profile
+#   fastlane mac beta              # build web + Electron MAS pkg, upload to TestFlight
+#   fastlane mac upload_only pkg:<path>  # retry an upload without rebuilding
+
+default_platform(:mac)
+
+require "base64"
+require "fileutils"
+require "openssl"
+require "tmpdir"
+
+REPO_ROOT = File.expand_path("..", __dir__)
+DESKTOP_DIR = File.join(REPO_ROOT, "apps/desktop")
+PROFILE_PATH = File.join(DESKTOP_DIR, "build/PowerBoard_MAS.provisionprofile")
+APP_IDENTIFIER = "com.lamonade.powerboard"
+TEAM_ID = "R5Z99F8UNV"
+
+def load_secrets
+  candidates = [
+    File.join(REPO_ROOT, "scripts/.env"),
+    "/Users/km/Developer/Habeat/Habeat_app/scripts/.env" # shared-team ASC fallback (issuer id)
+  ]
+  candidates.each do |env_path|
+    next unless File.exist?(env_path)
+    File.readlines(env_path, encoding: "UTF-8").each do |line|
+      next unless line.chomp =~ /\A([A-Z0-9_]+)=(.*)\z/
+      key = Regexp.last_match(1)
+      value = Regexp.last_match(2).strip
+      ENV[key] = value if ENV[key].nil? || ENV[key].empty?
+    end
+  end
+end
+
+platform :mac do
+  before_all do
+    load_secrets
+    @api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_filepath: ENV.fetch("ASC_PRIVATE_KEY_PATH"),
+      duration: 1200,
+      in_house: false
+    )
+  end
+
+  desc "One-time signing setup: ASC app record, Mac Installer cert, MAS provisioning profile"
+  lane :prepare_signing do
+    ensure_app_record
+    ensure_installer_cert
+    get_provisioning_profile(
+      app_identifier: APP_IDENTIFIER,
+      platform: "macos",
+      output_path: File.dirname(PROFILE_PATH)
+    )
+    downloaded = lane_context[SharedValues::SIGH_PROFILE_PATH]
+    FileUtils.mv(downloaded, PROFILE_PATH) unless downloaded == PROFILE_PATH
+    UI.success("Signing ready: profile at #{PROFILE_PATH}")
+  end
+
+  desc "Build the Electron MAS package and upload it to TestFlight"
+  lane :beta do
+    UI.user_error!("Run `fastlane mac prepare_signing` first — missing #{PROFILE_PATH}") unless File.exist?(PROFILE_PATH)
+    build_number = Time.now.strftime("%Y%m%d%H%M")
+    sh("cd #{REPO_ROOT.shellescape} && npm run build")
+    sh("cd #{DESKTOP_DIR.shellescape} && npm run bundle")
+    sh("cd #{DESKTOP_DIR.shellescape} && npx electron-builder --mac mas -c.buildVersion=#{build_number}")
+    upload_pkg(latest_pkg)
+  end
+
+  desc "Poll until the ASC app record exists (one-time manual UI step), then upload + enable internal testing"
+  lane :await_app_and_upload do
+    deadline = Time.now + (24 * 3600)
+    app = nil
+    loop do
+      Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.from(hash: @api_key) # refresh (20-min JWT)
+      app = Spaceship::ConnectAPI::App.find(APP_IDENTIFIER)
+      break if app
+      UI.user_error!("Timed out after 24h waiting for the ASC app record for #{APP_IDENTIFIER}.") if Time.now > deadline
+      UI.message("App record for #{APP_IDENTIFIER} not there yet — next check in 90s.")
+      sleep 90
+    end
+    UI.success("App record found: #{app.name} (#{app.id}). Uploading…")
+    upload_pkg(latest_pkg)
+    ensure_internal_testing(app)
+  end
+
+  private_lane :ensure_internal_testing do |app|
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.from(hash: @api_key)
+    group = app.get_beta_groups.find { |g| g.is_internal_group }
+    group ||= app.create_beta_group(group_name: "Internal", is_internal_group: true, has_access_to_all_builds: true)
+    group.post_bulk_beta_tester_assignments(beta_testers: [{ email: "7amonad3@gmail.com", firstName: "Kah Mun", lastName: "Lam" }])
+    UI.success("Internal TestFlight group ready; 7amonad3@gmail.com assigned.")
+  rescue StandardError => e
+    UI.important("Build uploaded, but internal-group setup needs a manual touch in ASC → TestFlight → Internal Testing: #{e.message.lines.first&.strip}")
+  end
+
+  desc "Upload an already-built pkg (pkg:<path>, defaults to the newest in release/)"
+  lane :upload_only do |options|
+    upload_pkg(options[:pkg] || latest_pkg)
+  end
+
+  # produce() needs an Apple ID session; the ASC API (token auth) can do everything headless.
+  private_lane :ensure_app_record do
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.from(hash: @api_key)
+    bundle_id = Spaceship::ConnectAPI::BundleId.all(filter: { identifier: APP_IDENTIFIER }).find { |b| b.identifier == APP_IDENTIFIER }
+    if bundle_id
+      UI.message("Bundle ID #{APP_IDENTIFIER} already registered.")
+    else
+      Spaceship::ConnectAPI::BundleId.create(name: "PowerBoard", identifier: APP_IDENTIFIER, platform: "MAC_OS")
+      UI.success("Registered bundle ID #{APP_IDENTIFIER}.")
+    end
+    app = Spaceship::ConnectAPI::App.find(APP_IDENTIFIER)
+    if app
+      UI.message("ASC app record already exists: #{app.name}")
+    else
+      names = [ENV["POWERBOARD_ASC_NAME"], "PowerBoard", "PowerBoard Studio", "Lamonade PowerBoard"].compact
+      created = nil
+      names.each do |name|
+        begin
+          created = Spaceship::ConnectAPI::App.create(
+            name: name, version_string: "0.1.0", sku: "powerboard-mac",
+            primary_locale: "en-US", bundle_id: APP_IDENTIFIER, platforms: ["MAC_OS"]
+          )
+          UI.success("Created ASC app record: #{name}")
+          break
+        rescue StandardError => e
+          raise unless e.message =~ /name/i
+          UI.important("App name \"#{name}\" unavailable (#{e.message.lines.first&.strip}); trying the next candidate…")
+        end
+      end
+      UI.user_error!("Could not create the ASC app record — all candidate names rejected.") unless created
+    end
+  rescue StandardError => e
+    if e.message.include?("does not allow 'CREATE'")
+      # Apple's public ASC API cannot create app records (Apple-ID-session only).
+      # Certs + profiles still work headless; the record is a one-time 2-minute UI step.
+      UI.important("ASC app record must be created manually at appstoreconnect.apple.com → Apps → + → New App")
+      UI.important("(macOS · Name: PowerBoard · Bundle ID: #{APP_IDENTIFIER} · SKU: powerboard-mac). Continuing with certs + profile…")
+    else
+      raise
+    end
+  end
+
+  private_lane :ensure_installer_cert do
+    installed = sh("security find-identity -v -p basic", log: false)
+    if installed.include?("Mac Installer Distribution") || installed.include?("3rd Party Mac Developer Installer")
+      UI.message("Installer certificate already in keychain.")
+      next
+    end
+    UI.message("Creating a Mac Installer Distribution certificate via the ASC API…")
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.from(hash: lane_context[SharedValues::APP_STORE_CONNECT_API_KEY])
+    key = OpenSSL::PKey::RSA.new(2048)
+    csr = OpenSSL::X509::Request.new
+    csr.version = 0
+    csr.subject = OpenSSL::X509::Name.new([["CN", "PowerBoard Mac Installer", OpenSSL::ASN1::UTF8STRING]])
+    csr.public_key = key.public_key
+    csr.sign(key, OpenSSL::Digest::SHA256.new)
+    certificate = Spaceship::ConnectAPI::Certificate.create(certificate_type: "MAC_INSTALLER_DISTRIBUTION", csr_content: csr.to_pem)
+    Dir.mktmpdir do |dir|
+      cer_path = File.join(dir, "installer.cer")
+      key_path = File.join(dir, "installer.key")
+      File.binwrite(cer_path, Base64.decode64(certificate.certificate_content))
+      File.write(key_path, key.to_pem)
+      sh("security import #{key_path.shellescape} -k #{Dir.home}/Library/Keychains/login.keychain-db -T /usr/bin/productbuild -T /usr/bin/productsign -T /usr/bin/codesign")
+      sh("security import #{cer_path.shellescape} -k #{Dir.home}/Library/Keychains/login.keychain-db")
+    end
+    UI.success("Mac Installer Distribution certificate installed in the login keychain.")
+  end
+
+  private_lane :upload_pkg do |pkg|
+    UI.user_error!("No .pkg found — run `fastlane mac beta` first.") unless pkg && File.exist?(pkg)
+    upload_to_testflight(
+      pkg: pkg,
+      app_platform: "osx",
+      skip_waiting_for_build_processing: false,
+      distribute_external: false
+    )
+    UI.success("Uploaded #{File.basename(pkg)} to TestFlight.")
+  end
+
+  def latest_pkg
+    Dir[File.join(DESKTOP_DIR, "release/**/*.pkg")].max_by { |f| File.mtime(f) }
+  end
+end

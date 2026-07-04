@@ -174,6 +174,16 @@ app.get("/mcp", (_req, res) => {
   res.status(405).json({ error: "Use POST /mcp for streamable HTTP MCP." });
 });
 
+// Desktop shell: serve the built web app from the same origin so /api, /boards and /ws
+// all resolve without CORS. POWERBOARD_WEB_DIST points at apps/web/dist (set by Electron).
+const webDist = process.env.POWERBOARD_WEB_DIST;
+if (webDist) {
+  app.use(express.static(webDist));
+  app.get(/^\/(?!api\/|boards\/|mcp$|ws$).*/, (_req, res) => {
+    res.sendFile(path.join(webDist, "index.html"));
+  });
+}
+
 app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {
   res.status(400).json({ error: error.message });
 });
@@ -203,6 +213,15 @@ wss.on("connection", (socket, request) => {
   });
 
   socket.on("close", () => sockets.delete(boardSocket));
+});
+
+httpServer.on("error", (error: NodeJS.ErrnoException) => {
+  if (error.code === "EADDRINUSE") {
+    console.error(`PowerBoard server could not start: port ${port} is already in use (another PowerBoard instance or dev server?).`);
+  } else {
+    console.error(`PowerBoard server failed to start: ${error.message}`);
+  }
+  process.exitCode = 1;
 });
 
 httpServer.listen(port, host, () => {

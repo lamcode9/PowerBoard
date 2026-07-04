@@ -159,8 +159,8 @@ function shouldUseLocalFallback(error: unknown): boolean {
   return ENABLE_BROWSER_LOCAL_FALLBACK && error instanceof ApiRequestError && error.canUseLocalFallback;
 }
 
-function localListBoards(): BoardSummary[] {
-  return localProjects()
+async function localListBoards(): Promise<BoardSummary[]> {
+  return (await localProjects())
     .map((project) => ({
       id: project.id,
       name: project.name,
@@ -171,62 +171,61 @@ function localListBoards(): BoardSummary[] {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-function localCreateBoard(name = "PowerBoard Starter Board"): BoardProject {
-  const projects = localProjects();
+async function localCreateBoard(name = "PowerBoard Starter Board"): Promise<BoardProject> {
+  const projects = await localProjects();
   const base = createDefaultProject(name);
   const project = validateBoardProject({ ...base, id: projects.some((candidate) => candidate.id === base.id) ? createId("board") : base.id, name });
-  writeLocalProjects([...projects, project]);
+  await writeLocalProjects([project]);
   return project;
 }
 
-function localReadBoard(boardId: string): BoardProject {
-  const project = localProjects().find((candidate) => candidate.id === boardId);
+async function localReadBoard(boardId: string): Promise<BoardProject> {
+  const project = (await localProjects()).find((candidate) => candidate.id === boardId);
   if (!project) throw new Error(`Board not found: ${boardId}`);
   return project;
 }
 
-function localSaveBoard(project: BoardProject): BoardProject {
+async function localSaveBoard(project: BoardProject): Promise<BoardProject> {
   const valid = validateBoardProject(project);
-  const projects = localProjects().filter((candidate) => candidate.id !== valid.id);
-  writeLocalProjects([...projects, valid]);
+  await writeLocalProjects([valid]);
   return valid;
 }
 
-function localApplyOperation(boardId: string, operation: BoardOperation): BoardProject {
-  const current = localReadBoard(boardId);
+async function localApplyOperation(boardId: string, operation: BoardOperation): Promise<BoardProject> {
+  const current = await localReadBoard(boardId);
   const next = applyBoardOperation(current, operation);
   pushLocalUndo(boardId, current);
   localRedoStacks.set(boardId, []);
   return localSaveBoard(next);
 }
 
-function localUndo(boardId: string): BoardProject {
+async function localUndo(boardId: string): Promise<BoardProject> {
   const stack = localUndoStacks.get(boardId) ?? [];
   const previous = stack.pop();
   if (!previous) return localReadBoard(boardId);
   localUndoStacks.set(boardId, stack);
-  const current = localReadBoard(boardId);
+  const current = await localReadBoard(boardId);
   pushLocalRedo(boardId, current);
   return localSaveBoard(previous);
 }
 
-function localRedo(boardId: string): BoardProject {
+async function localRedo(boardId: string): Promise<BoardProject> {
   const stack = localRedoStacks.get(boardId) ?? [];
   const next = stack.pop();
   if (!next) return localReadBoard(boardId);
   localRedoStacks.set(boardId, stack);
-  pushLocalUndo(boardId, localReadBoard(boardId));
+  pushLocalUndo(boardId, await localReadBoard(boardId));
   return localSaveBoard(next);
 }
 
-function localSetSelection(boardId: string, selection: string[]): { selection: string[] } {
-  const project = localReadBoard(boardId);
-  localSaveBoard({ ...project, selection, metadata: { ...project.metadata, updatedAt: new Date().toISOString() } });
+async function localSetSelection(boardId: string, selection: string[]): Promise<{ selection: string[] }> {
+  const project = await localReadBoard(boardId);
+  await localSaveBoard({ ...project, selection, metadata: { ...project.metadata, updatedAt: new Date().toISOString() } });
   return { selection };
 }
 
-function localUploadAsset(boardId: string, file: File, dataUrl: string): { project: BoardProject; assetId: string } {
-  const project = localReadBoard(boardId);
+async function localUploadAsset(boardId: string, file: File, dataUrl: string): Promise<{ project: BoardProject; assetId: string }> {
+  const project = await localReadBoard(boardId);
   const assetId = createId("asset");
   const asset: BoardAsset = {
     id: assetId,
@@ -236,7 +235,7 @@ function localUploadAsset(boardId: string, file: File, dataUrl: string): { proje
     size: file.size,
     src: dataUrl
   };
-  const next = localSaveBoard({
+  const next = await localSaveBoard({
     ...project,
     assets: [...project.assets, asset],
     metadata: { ...project.metadata, updatedAt: new Date().toISOString() }
@@ -244,8 +243,8 @@ function localUploadAsset(boardId: string, file: File, dataUrl: string): { proje
   return { project: next, assetId };
 }
 
-function localExportSpec(boardId: string): { markdownPath: string; jsonPath: string; markdown: string } {
-  const project = localReadBoard(boardId);
+async function localExportSpec(boardId: string): Promise<{ markdownPath: string; jsonPath: string; markdown: string }> {
+  const project = await localReadBoard(boardId);
   const markdown = `# ${project.name} Implementation Spec
 
 Generated in browser-local mode.
@@ -257,8 +256,8 @@ Generated in browser-local mode.
   return { markdownPath: "browser-local://implementation-spec.md", jsonPath: "browser-local://board-summary.json", markdown };
 }
 
-function localExportReactTailwind(boardId: string): { dir: string; summary: string; files: { path: string; contents: string }[] } {
-  const project = localReadBoard(boardId);
+async function localExportReactTailwind(boardId: string): Promise<{ dir: string; summary: string; files: { path: string; contents: string }[] }> {
+  const project = await localReadBoard(boardId);
   return {
     dir: "browser-local://react-tailwind",
     summary: "Browser-local mode can preview boards. Run the local server for full React/Tailwind file export.",
@@ -266,46 +265,102 @@ function localExportReactTailwind(boardId: string): { dir: string; summary: stri
   };
 }
 
-function localProjects(): BoardProject[] {
-  if (!hasLocalStorage()) return [createDefaultProject("PowerBoard App Mockups")];
-  const raw = window.localStorage.getItem(LOCAL_STORAGE_KEY);
-  if (!raw) {
-    const legacyProjects = readLegacyLocalProjects();
-    if (legacyProjects.length > 0) {
-      writeLocalProjects(legacyProjects);
-      return legacyProjects;
-    }
-    const project = createDefaultProject("PowerBoard App Mockups");
-    writeLocalProjects([project]);
-    return [project];
+// Browser-local persistence lives in IndexedDB (one record per board, keyed by id).
+// localStorage is quota-cliffed (~5 MB, synchronous) and previously held every board —
+// including base64 screenshot assets — in a single key; existing data migrates on first read.
+const IDB_NAME = "powerboard.local";
+const IDB_STORE = "projects";
+let localDbPromise: Promise<IDBDatabase> | null = null;
+
+function openLocalDb(): Promise<IDBDatabase> {
+  if (!localDbPromise) {
+    localDbPromise = new Promise((resolve, reject) => {
+      if (typeof indexedDB === "undefined") {
+        reject(new Error("IndexedDB is unavailable in this browser."));
+        return;
+      }
+      const request = indexedDB.open(IDB_NAME, 1);
+      request.onupgradeneeded = () => {
+        request.result.createObjectStore(IDB_STORE, { keyPath: "id" });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error("Failed to open the local board database."));
+    });
+    localDbPromise.catch(() => {
+      localDbPromise = null;
+    });
   }
-  return parseLocalProjects(raw);
+  return localDbPromise;
 }
 
-function readLegacyLocalProjects(): BoardProject[] {
-  if (!hasLocalStorage()) return [];
-  for (const key of LEGACY_LOCAL_STORAGE_KEYS) {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) continue;
-    const projects = parseLocalProjects(raw);
-    if (projects.length > 0) return projects;
+async function localProjects(): Promise<BoardProject[]> {
+  const stored = await readLocalProjects();
+  if (stored.length > 0) return stored;
+  const migrated = readLegacyLocalStorageProjects();
+  if (migrated.length > 0) {
+    await writeLocalProjects(migrated);
+    clearLegacyLocalStorage();
+    return migrated;
+  }
+  const project = createDefaultProject("PowerBoard App Mockups");
+  await writeLocalProjects([project]);
+  return [project];
+}
+
+async function readLocalProjects(): Promise<BoardProject[]> {
+  const db = await openLocalDb();
+  const rows = await new Promise<unknown[]>((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, "readonly");
+    const request = tx.objectStore(IDB_STORE).getAll();
+    request.onsuccess = () => resolve(request.result as unknown[]);
+    request.onerror = () => reject(request.error ?? new Error("Failed to read local boards."));
+  });
+  return rows.map((row) => validateBoardProject(row));
+}
+
+async function writeLocalProjects(projects: BoardProject[]): Promise<void> {
+  try {
+    const db = await openLocalDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      for (const project of projects) tx.objectStore(IDB_STORE).put(project);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("Local board write failed."));
+      tx.onabort = () => reject(tx.error ?? new Error("Local board write was aborted."));
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`PowerBoard: board save FAILED in browser-local mode — your latest changes are NOT persisted. ${message}`);
+    throw new Error(`Board not saved: ${message}`);
+  }
+}
+
+function readLegacyLocalStorageProjects(): BoardProject[] {
+  if (typeof window === "undefined" || !window.localStorage) return [];
+  for (const key of [LOCAL_STORAGE_KEY, ...LEGACY_LOCAL_STORAGE_KEYS]) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) continue;
+      const projects = parsed.map((project) => validateBoardProject(project));
+      if (projects.length > 0) {
+        console.info(`PowerBoard: migrating ${projects.length} board(s) from localStorage ("${key}") to IndexedDB.`);
+        return projects;
+      }
+    } catch (error) {
+      console.error(`PowerBoard: could not migrate legacy localStorage boards from "${key}":`, error);
+    }
   }
   return [];
 }
 
-function parseLocalProjects(raw: string): BoardProject[] {
-  const parsed = JSON.parse(raw) as unknown;
-  if (!Array.isArray(parsed)) return [];
-  return parsed.map((project) => validateBoardProject(project));
-}
-
-function writeLocalProjects(projects: BoardProject[]): void {
-  if (!hasLocalStorage()) return;
-  window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(projects, null, 2));
-}
-
-function hasLocalStorage(): boolean {
-  return typeof window !== "undefined" && Boolean(window.localStorage);
+function clearLegacyLocalStorage(): void {
+  try {
+    for (const key of [LOCAL_STORAGE_KEY, ...LEGACY_LOCAL_STORAGE_KEYS]) window.localStorage.removeItem(key);
+  } catch (error) {
+    console.warn("PowerBoard: legacy localStorage cleanup failed (data already migrated to IndexedDB):", error);
+  }
 }
 
 function pushLocalUndo(boardId: string, project: BoardProject): void {
