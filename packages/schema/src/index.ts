@@ -416,7 +416,49 @@ export function nowIso(): string {
   return new Date().toISOString();
 }
 
-export function createDefaultProject(name = "PowerBoard Starter Board"): BoardProject {
+export const boardTemplates = ["blank", "mobile", "web", "diagram", "starter"] as const;
+export type BoardTemplate = (typeof boardTemplates)[number];
+
+const DEFAULT_TOKENS = {
+  colors: {
+    canvas: "#EEF2F7",
+    ink: "#101828",
+    accent: "#2563EB",
+    success: "#059669",
+    warning: "#D97706"
+  },
+  fonts: { sans: "Inter, ui-sans-serif, system-ui" },
+  radii: { sm: 8, md: 14, lg: 22 },
+  shadows: { panel: "0 18px 50px rgba(15, 23, 42, 0.10)" },
+  spacing: { xs: 4, sm: 8, md: 16, lg: 24 }
+} as const;
+
+/** Build a minimal board: one artboard (or diagram canvas), no seeded content. */
+function createMinimalProject(name: string, template: Exclude<BoardTemplate, "starter">): BoardProject {
+  const createdAt = nowIso();
+  const artboard: Artboard =
+    template === "mobile"
+      ? { id: createId("art"), name: "Screen", type: "mobile", x: 160, y: 120, width: 393, height: 852, background: "#FFFFFF", devicePreset: "iphone-15", frameless: false, locked: false, visible: true }
+      : template === "web"
+        ? { id: createId("art"), name: "Page", type: "web", x: 160, y: 120, width: 1440, height: 900, background: "#FFFFFF", devicePreset: "web-landing", frameless: false, locked: false, visible: true }
+        : { id: createId("art"), name: "Canvas", type: "custom", x: 120, y: 96, width: 1800, height: 1200, background: "#FBFCFE", frameless: true, locked: false, visible: true };
+  return BoardProjectSchema.parse({
+    schemaVersion: POWERBOARD_SCHEMA_VERSION,
+    id: "board_default",
+    name,
+    pages: [{ id: "page_main", name: "Main", artboardIds: [artboard.id] }],
+    artboards: [artboard],
+    elements: [],
+    connectors: [],
+    assets: [],
+    tokens: DEFAULT_TOKENS,
+    selection: [],
+    metadata: { createdAt, updatedAt: createdAt, createdBy: "PowerBoard" }
+  });
+}
+
+export function createDefaultProject(name = "PowerBoard Starter Board", template: BoardTemplate = "starter"): BoardProject {
+  if (template !== "starter") return createMinimalProject(name, template);
   const createdAt = nowIso();
   const mobile: Artboard = {
     id: "art_home_mobile",
@@ -647,19 +689,7 @@ export function createDefaultProject(name = "PowerBoard Starter Board"): BoardPr
     elements,
     connectors: [{ id: "conn_mobile_web", fromArtboardId: mobile.id, toArtboardId: desktop.id, label: "Dashboard handoff", style: { stroke: "#2563EB" } }],
     assets: [],
-    tokens: {
-      colors: {
-        canvas: "#EEF2F7",
-        ink: "#101828",
-        accent: "#2563EB",
-        success: "#059669",
-        warning: "#D97706"
-      },
-      fonts: { sans: "Inter, ui-sans-serif, system-ui" },
-      radii: { sm: 8, md: 14, lg: 22 },
-      shadows: { panel: "0 18px 50px rgba(15, 23, 42, 0.10)" },
-      spacing: { xs: 4, sm: 8, md: 16, lg: 24 }
-    },
+    tokens: DEFAULT_TOKENS,
     selection: [],
     metadata: { createdAt, updatedAt: createdAt, createdBy: "PowerBoard" }
   });

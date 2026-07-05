@@ -65,6 +65,19 @@ Written 2026-07-04. Status legend: [ ] todo · [~] in progress · [x] done.
 - [x] Reliability harness: `apps/server/src/mcpSoak.ts` (`npm run soak`) — 500 mixed ops (valid/invalid/batch/idempotent/undo-redo) ends with `validate_board` clean. Passing.
 - [x] Updated `docs/agents/powerboard-connector.md` for the desktop-app world + new tools.
 
+## Phase 7 — UX overhaul v2 (first-run feedback, 2026-07-05)
+
+User installed TestFlight build 202607042139 and reported 10 problems. Root causes confirmed by reading `apps/web/src/App.tsx` (3.8k lines) + `styles.css`. Design principle for this phase: **the canvas must feel trustworthy and native-Mac** — things appear where you look, never vanish, drag from anywhere sensible, zoom like every other Mac app. Chrome must never truncate. Getting an agent connected must be one obvious click.
+
+- [x] **#4/#8/#10 Canvas trust (core):** new elements land at the viewport center inside the frame you're looking at (`insertionArtboard`+`placementInArtboard`, auto-creates a canvas if none) and are auto-selected; `clampMove` keeps root elements inside their frame so a drag can never lose them; frames drag from their body; selection ring moved to an un-clipped overlay (`.selection-ring`) so it's never cut at the frame edge. Verified in-browser: Card landed at viewport center (X85/Y146), frame dragged 24620→24966px, ring renders.
+- [x] **#9 Native zoom:** `MAX_ZOOM` 2→8, `MIN_ZOOM` 0.25→0.05, dropped the `MAX_INPUT_ZOOM_FACTOR` 1.04 cap → 1.6, sensitivity 0.00125→0.0075, ⌘0=100% / ⌘1=fit, floating bottom-right `ZoomControl` (fit · focus · − % + · focus-mode). Verified plane scale steps 25%/tick.
+- [x] **#1/#2 Chrome:** top bar rebuilt into left/center/right zones with Insert / Arrange / Export dropdown menus (`ToolbarMenu`) — no overflow; zoom moved to the floating control; **focus mode** (F / button) hides panes + slides the bar away with an edge-hover reveal strip. Verified both fit and focus.
+- [x] **#7 Layers panel:** `LayerNode` + artboard rows now carry hover-revealed visibility / lock / delete (+ bring-forward / send-backward for elements). Verified visibility round-trip.
+- [x] **#5 New board flow:** `NewBoardDialog` template picker (Blank / Mobile / Web / Diagram / Starter demo); **Blank is empty**. `createDefaultProject(name, template)` (+`createMinimalProject`, shared `DEFAULT_TOKENS`) threaded through server route + `boardService` + `api.createBoard`. 3 schema tests added.
+- [x] **#3 Connect an agent:** `AgentConnectDialog` — MCP endpoint, board id/name, copy chips, paste-ready stdio config, live health, 3-step guide. Verified "Server live".
+- [x] **#6 Look & feel:** glass tokened toolbar, dot-grid canvas, deeper frame shadows, floating zoom pill, refined dropdown menus, template cards, connect dialog; dark-mode parity via token remap. Verified light + dark.
+- [x] Verified all 10 in-browser; typecheck + build clean; 43/43 tests; mcp:check 36 tools. Ship: commit+push, `fastlane mac beta`.
+
 ## Phase 6 — Later (parked until user says go)
 
 - [ ] Online/shared boards: Supabase sync via persisted op-log; share links; presence for >1 human.

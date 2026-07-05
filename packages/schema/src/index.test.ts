@@ -7,6 +7,34 @@ describe("Board schema", () => {
     expect(BoardProjectSchema.parse(project).id).toBe("board_default");
   });
 
+  it("creates empty boards for non-starter templates", () => {
+    for (const template of ["blank", "diagram"] as const) {
+      const project = createDefaultProject("New", template);
+      expect(project.artboards).toHaveLength(1);
+      expect(project.artboards[0]!.frameless).toBe(true);
+      expect(project.elements).toHaveLength(0);
+      expect(project.connectors).toHaveLength(0);
+      expect(BoardProjectSchema.parse(project).name).toBe("New");
+    }
+  });
+
+  it("creates single-frame device boards for mobile/web templates with no seeded elements", () => {
+    const mobile = createDefaultProject("M", "mobile");
+    expect(mobile.artboards).toHaveLength(1);
+    expect(mobile.artboards[0]!.type).toBe("mobile");
+    expect(mobile.artboards[0]!.frameless).toBe(false);
+    expect(mobile.elements).toHaveLength(0);
+    const web = createDefaultProject("W", "web");
+    expect(web.artboards[0]!.type).toBe("web");
+    expect(web.artboards[0]!.width).toBe(1440);
+    expect(web.elements).toHaveLength(0);
+  });
+
+  it("keeps the starter demo as the default template", () => {
+    expect(createDefaultProject("Demo").elements.length).toBeGreaterThanOrEqual(10);
+    expect(createDefaultProject("Demo", "starter").artboards).toHaveLength(2);
+  });
+
   it("ships a broad set of named frame presets", () => {
     const ids = new Set(DEVICE_PRESETS.map((preset) => preset.id));
     expect(ids.size).toBe(DEVICE_PRESETS.length);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
@@ -9,15 +9,21 @@ import {
   AlignStartVertical,
   AlignVerticalDistributeCenter,
   ArchiveRestore,
+  ArrowDownToLine,
   ArrowRight,
+  ArrowUpToLine,
   Bot,
   BoxSelect,
   BringToFront,
+  Cable,
+  Check,
   ChevronDown,
   ChevronRight,
+  Command as CommandIcon,
   Component,
   Copy,
   Download,
+  Expand,
   Eye,
   EyeOff,
   FileCode2,
@@ -34,6 +40,7 @@ import {
   Lock,
   LockOpen,
   Maximize2,
+  Minimize2,
   Moon,
   MousePointer2,
   Network,
@@ -45,10 +52,12 @@ import {
   Plus,
   Redo2,
   Save,
+  SendToBack,
   Send,
   Shapes,
   Smartphone,
   Spline,
+  Sparkles,
   StickyNote,
   Sun,
   Trash2,
@@ -58,7 +67,7 @@ import {
   ZoomIn,
   ZoomOut
 } from "lucide-react";
-import type { Artboard, BoardConnector, BoardElement, BoardOperation, BoardProject } from "@powerboard/schema";
+import type { Artboard, BoardConnector, BoardElement, BoardOperation, BoardProject, BoardTemplate } from "@powerboard/schema";
 import {
   arrowheadIsFilled,
   arrowheadPath,
@@ -167,15 +176,19 @@ type Bounds = {
   height: number;
 };
 
-const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 2;
-const INITIAL_ZOOM = 0.72;
-const BUTTON_ZOOM_FACTOR = 1.16;
-const WHEEL_ZOOM_SENSITIVITY = 0.00125;
-const MAX_WHEEL_ZOOM_DELTA = 32;
-const GESTURE_ZOOM_DAMPING = 0.42;
+const MIN_ZOOM = 0.05;
+const MAX_ZOOM = 8;
+const INITIAL_ZOOM = 0.8;
+const BUTTON_ZOOM_FACTOR = 1.25;
+// Trackpad pinch on macOS Chromium/Electron arrives as ctrl+wheel; this sensitivity
+// makes one comfortable pinch cover a meaningful zoom range instead of crawling.
+const WHEEL_ZOOM_SENSITIVITY = 0.0075;
+const MAX_WHEEL_ZOOM_DELTA = 48;
+const GESTURE_ZOOM_DAMPING = 0.62;
 const GESTURE_WHEEL_SUPPRESSION_MS = 260;
-const MAX_INPUT_ZOOM_FACTOR = 1.04;
+// Per-event zoom clamp: keeps a single fast flick from teleporting the zoom, but is
+// generous enough that pinch/⌘-scroll feels immediate (was 1.04 — that made zoom feel broken).
+const MAX_INPUT_ZOOM_FACTOR = 1.6;
 const CANVAS_WIDTH = 80000;
 const CANVAS_HEIGHT = 56000;
 const CANVAS_ORIGIN_X = 24000;
@@ -246,6 +259,8 @@ export function App() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
   const [agentFeed, setAgentFeed] = useState<AgentFeedEntry[]>([]);
   const [marquee, setMarquee] = useState<MarqueeState | null>(null);
   const [snapGuides, setSnapGuides] = useState<SnapGuides>(NO_GUIDES);
@@ -388,6 +403,11 @@ export function App() {
           actions.shortcuts?.();
           return;
         }
+        if (event.key.toLowerCase() === "f") {
+          event.preventDefault();
+          actions.focusMode?.();
+          return;
+        }
         if (event.key === "Backspace" || event.key === "Delete") {
           event.preventDefault();
           actions.deleteSelection?.();
@@ -413,9 +433,10 @@ export function App() {
       }
       if (event.key === "0") {
         event.preventDefault();
-        zoomAtViewportCenter(INITIAL_ZOOM);
+        zoomAtViewportCenter(1);
+        setStatus("Zoom 100%");
       }
-      if (event.key === "1") {
+      if (event.key === "1" || event.key === "9") {
         event.preventDefault();
         actions.fitAll?.();
       }
@@ -686,12 +707,11 @@ export function App() {
     setStatus("Name the new board");
   }
 
-  async function submitNewBoard(event?: React.FormEvent<HTMLFormElement>) {
-    event?.preventDefault();
-    const name = newBoardName.trim() || "Untitled PowerBoard Board";
+  async function submitNewBoard(rawName: string, template: BoardTemplate) {
+    const name = rawName.trim() || "Untitled PowerBoard Board";
     const seq = beginNavigation();
     try {
-      const next = await createBoard(name);
+      const next = await createBoard(name, template);
       if (!isCurrentNavigation(seq)) return;
       initialViewportPositionedRef.current = false;
       projectRef.current = next;
@@ -896,7 +916,7 @@ export function App() {
     if (activeDrag.mode === "move") {
       const snapped = computeSnap(activeDrag, Math.round(activeDrag.original.x + dx), Math.round(activeDrag.original.y + dy));
       setGuidesIfChanged(snapped.guides);
-      patch = { x: snapped.x, y: snapped.y };
+      patch = clampMove(activeDrag, snapped.x, snapped.y);
     } else {
       patch = {
         width: Math.max(minSize, Math.round(activeDrag.original.width + dx)),
@@ -906,6 +926,22 @@ export function App() {
     const latest = { ...activeDrag.latest, ...patch };
     dragRef.current = { ...activeDrag, latest };
     scheduleDragPreview({ id: activeDrag.id, target: activeDrag.target, patch: latest });
+  }
+
+  /** Keep root elements fully inside their frame so a drag can never lose them off-canvas. */
+  function clampMove(activeDrag: DragState, x: number, y: number): { x: number; y: number } {
+    if (activeDrag.target !== "element") return { x, y };
+    const current = projectRef.current;
+    const element = current?.elements.find((candidate) => candidate.id === activeDrag.id);
+    if (!element || element.parentId) return { x, y };
+    const artboard = current?.artboards.find((candidate) => candidate.id === element.artboardId);
+    if (!artboard) return { x, y };
+    const width = activeDrag.latest.width;
+    const height = activeDrag.latest.height;
+    return {
+      x: clamp(x, 0, Math.max(0, artboard.width - width)),
+      y: clamp(y, 0, Math.max(0, artboard.height - height))
+    };
   }
 
   function setGuidesIfChanged(guides: SnapGuides) {
@@ -1038,14 +1074,19 @@ export function App() {
   }
 
   async function addComponent(type: BoardElement["type"]) {
-    if (!project || !activeArtboard) {
-      setStatus("Select a frame before adding a component");
+    const artboard = await ensureInsertionArtboard();
+    const current = projectRef.current;
+    if (!current || !artboard) {
+      setStatus("Add a frame or canvas first");
       return;
     }
-    const element = createElementFromPreset(type, activeArtboard.id, 28 + selectedIds.length * 12, 120 + selectedIds.length * 12);
-    element.name = uniqueElementName(project, activeArtboard.id, `${activeArtboard.name} / ${labelFor(type)}`);
-    element.zIndex = Math.max(0, ...project.elements.filter((candidate) => candidate.artboardId === activeArtboard.id).map((candidate) => candidate.zIndex)) + 1;
-    await runOperation({ type: "add_element", element });
+    const element = createElementFromPreset(type, artboard.id, 0, 0);
+    const pos = placementInArtboard(artboard, element.width, element.height);
+    element.x = pos.x;
+    element.y = pos.y;
+    element.name = uniqueElementName(current, artboard.id, `${artboard.name} / ${labelFor(type)}`);
+    element.zIndex = Math.max(0, ...current.elements.filter((candidate) => candidate.artboardId === artboard.id).map((candidate) => candidate.zIndex)) + 1;
+    await insertElement(element);
   }
 
   async function updateSelectedElement(patch: Record<string, unknown>) {
@@ -1195,15 +1236,20 @@ export function App() {
   }
 
   async function addShape(kind: (typeof shapeKinds)[number], label: string) {
-    if (!project || !activeArtboard) {
-      setStatus("Select a frame or canvas before adding a shape");
+    const artboard = await ensureInsertionArtboard();
+    const current = projectRef.current;
+    if (!current || !artboard) {
+      setStatus("Add a canvas first");
       return;
     }
-    const element = createElementFromPreset("shape", activeArtboard.id, 48 + selectedIds.length * 16, 96 + selectedIds.length * 16);
+    const element = createElementFromPreset("shape", artboard.id, 0, 0);
     element.props = { ...element.props, shape: kind, text: label };
-    element.name = uniqueElementName(project, activeArtboard.id, `${activeArtboard.name} / ${label}`);
-    element.zIndex = Math.max(0, ...project.elements.filter((candidate) => candidate.artboardId === activeArtboard.id).map((candidate) => candidate.zIndex)) + 1;
-    await runOperation({ type: "add_element", element });
+    const pos = placementInArtboard(artboard, element.width, element.height);
+    element.x = pos.x;
+    element.y = pos.y;
+    element.name = uniqueElementName(current, artboard.id, `${artboard.name} / ${label}`);
+    element.zIndex = Math.max(0, ...current.elements.filter((candidate) => candidate.artboardId === artboard.id).map((candidate) => candidate.zIndex)) + 1;
+    await insertElement(element);
   }
 
   async function addDiagramCanvas() {
@@ -1302,6 +1348,75 @@ export function App() {
       }
     }
     return null;
+  }
+
+  /** World-plane point (includes CANVAS_ORIGIN) at the center of the visible viewport. */
+  function viewportCenterWorldPoint(): { x: number; y: number } | null {
+    const viewport = viewportRef.current;
+    if (!viewport) return null;
+    const rect = viewport.getBoundingClientRect();
+    return worldPointFromClient(rect.left + rect.width / 2, rect.top + rect.height / 2);
+  }
+
+  /** The frame new content should land in: whatever is under the viewport center, else the active/first frame. */
+  function insertionArtboard(): Artboard | null {
+    const current = projectRef.current;
+    if (!current) return null;
+    const center = viewportCenterWorldPoint();
+    if (center) {
+      const under = artboardAtWorldPoint(center);
+      if (under) return under;
+    }
+    return activeArtboard ?? current.artboards.find((artboard) => artboard.visible && !artboard.locked) ?? current.artboards[0] ?? null;
+  }
+
+  /** Local x/y that places a new element under the viewport center, always fully inside the frame. */
+  function placementInArtboard(artboard: Artboard, width: number, height: number): { x: number; y: number } {
+    const maxX = Math.max(8, artboard.width - width - 8);
+    const maxY = Math.max(8, artboard.height - height - 8);
+    let localX = Math.round((artboard.width - width) / 2);
+    let localY = Math.round((artboard.height - height) / 2);
+    const center = viewportCenterWorldPoint();
+    if (center) {
+      localX = Math.round(center.x - (CANVAS_ORIGIN_X + artboard.x) - width / 2);
+      localY = Math.round(center.y - (CANVAS_ORIGIN_Y + artboard.y) - height / 2);
+    }
+    return { x: clamp(localX, 8, maxX), y: clamp(localY, 8, maxY) };
+  }
+
+  /** Ensure there's a frame to insert into; auto-create a diagram canvas when the board has none. */
+  async function ensureInsertionArtboard(): Promise<Artboard | null> {
+    const existing = insertionArtboard();
+    if (existing) return existing;
+    const current = projectRef.current;
+    if (!current) return null;
+    const artboard: Artboard = {
+      id: createId("art"),
+      name: uniqueArtboardName(current, "Canvas"),
+      type: "custom",
+      x: 120,
+      y: 96,
+      width: 1800,
+      height: 1200,
+      background: theme === "dark" ? "#1B2432" : "#FBFCFE",
+      frameless: true,
+      locked: false,
+      visible: true
+    };
+    const next = await queueOperation(current.id, { type: "create_artboard", artboard });
+    return next ? artboard : null;
+  }
+
+  /** Add an element and select it so it's immediately visible and editable. */
+  async function insertElement(element: BoardElement) {
+    const boardId = projectRef.current?.id;
+    if (!boardId) return;
+    setStatus("Saving...");
+    const next = await queueOperation(boardId, { type: "add_element", element }).catch(() => null);
+    if (next && projectRef.current?.id === boardId) {
+      await select([element.id]).catch(() => undefined);
+      setStatus(`Added ${element.name}`);
+    }
   }
 
   function onViewportPointerDown(event: React.PointerEvent<HTMLDivElement>) {
@@ -1456,7 +1571,13 @@ export function App() {
     if (commandOpen) return setCommandOpen(false);
     if (shortcutsOpen) return setShortcutsOpen(false);
     if (restoreOpen) return setRestoreOpen(false);
+    if (connectOpen) return setConnectOpen(false);
     if (editingTextId) return setEditingTextId(null);
+    if (focusMode) {
+      setFocusMode(false);
+      setStatus("Exited focus mode");
+      return;
+    }
     if (connectFromId) {
       setConnectFromId(null);
       setStatus("Connector cancelled");
@@ -1480,7 +1601,9 @@ export function App() {
     redo: () => void redoBoard(),
     fitAll,
     commandPalette: () => setCommandOpen((current) => !current),
-    shortcuts: () => setShortcutsOpen((current) => !current)
+    shortcuts: () => setShortcutsOpen((current) => !current),
+    focusMode: () => setFocusMode((current) => !current),
+    connectAgent: () => setConnectOpen(true)
   };
   nudgeRef.current = (dx, dy) => void nudgeSelection(dx, dy);
 
@@ -1755,7 +1878,10 @@ export function App() {
         { id: "export-mermaid", section: "Export", title: "Export Mermaid diagram", run: () => void exportDiagram("mermaid") },
         { id: "fit-all", section: "View", title: "Fit all frames", hint: "⌘1", run: fitAll },
         { id: "focus-selection", section: "View", title: "Focus selection", run: focusSelection },
+        { id: "zoom-100", section: "View", title: "Zoom to 100%", hint: "⌘0", run: () => { zoomAtViewportCenter(1); setStatus("Zoom 100%"); } },
+        { id: "focus-mode", section: "View", title: focusMode ? "Exit focus mode" : "Enter focus mode", hint: "F", run: () => setFocusMode((current) => !current) },
         { id: "theme", section: "View", title: theme === "dark" ? "Switch to light mode" : "Switch to dark mode", run: () => setTheme((current) => (current === "dark" ? "light" : "dark")) },
+        { id: "connect-agent", section: "Agent", title: "Connect an agent (MCP)…", run: () => setConnectOpen(true), keywords: "mcp claude cursor endpoint" },
         { id: "backup-now", section: "Backup", title: "Back up all boards now", run: () => void backupAllNow() },
         { id: "restore", section: "Backup", title: "Restore from backup…", run: () => setRestoreOpen(true) },
         { id: "shortcuts", section: "Help", title: "Keyboard shortcuts", hint: "?", run: () => setShortcutsOpen(true) }
@@ -1763,150 +1889,139 @@ export function App() {
     : [];
 
   return (
-    <main className={classNames("app-shell", homeOpen && "home-mode", !leftPaneOpen && "left-pane-hidden", !rightPaneOpen && "right-pane-hidden")} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
+    <main className={classNames("app-shell", homeOpen && "home-mode", !leftPaneOpen && "left-pane-hidden", !rightPaneOpen && "right-pane-hidden", focusMode && !homeOpen && "focus-mode")} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
+      {!homeOpen && focusMode ? <div className="focus-reveal-strip" aria-hidden="true" /> : null}
       <header className="topbar">
-        <div className="brand-block">
-          <div className="brand-mark">PB</div>
-          <div>
-            <h1>PowerBoard</h1>
-            <p>the agent-native design board</p>
-          </div>
-        </div>
-
-        <div className="toolbar-group workspace-nav" aria-label="Workspace navigation">
-          <a className={classNames("nav-button", homeOpen && "active")} href={routeHash({ view: "home" })} aria-current={homeOpen ? "page" : undefined}>
-            <Home size={16} /> Boards
+        <div className="topbar-left">
+          <a className="brand-block" href={routeHash({ view: "home" })} title="All boards">
+            <div className="brand-mark">PB</div>
+            {homeOpen ? (
+              <div className="brand-title">
+                <h1>PowerBoard</h1>
+                <p>the agent-native design board</p>
+              </div>
+            ) : (
+              <div className="brand-title">
+                <h1>{project?.name ?? "PowerBoard"}</h1>
+                <p><Home size={11} /> Boards</p>
+              </div>
+            )}
           </a>
         </div>
 
         {!homeOpen ? (
           <>
-            <div className="toolbar-group pane-controls" aria-label="Pane visibility">
-              <IconButton label={leftPaneOpen ? "Hide left pane" : "Show left pane"} active={leftPaneOpen} onClick={toggleLeftPane}>
-                {leftPaneOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
-              </IconButton>
-              <IconButton label={rightPaneOpen ? "Hide right pane" : "Show right pane"} active={rightPaneOpen} onClick={toggleRightPane}>
-                {rightPaneOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
-              </IconButton>
-            </div>
+            <div className="topbar-center">
+              <div className="toolbar-group segmented tool-switcher" aria-label="Canvas tools">
+                <IconButton label="Select tool (V)" active={tool === "select"} onClick={() => (setTool("select"), setConnectFromId(null), setStatus("Select tool"))}>
+                  <MousePointer2 size={18} />
+                </IconButton>
+                <IconButton label="Connector tool — click two shapes" active={tool === "connect"} onClick={() => (setTool("connect"), setStatus("Connector: click a shape or frame to start"))}>
+                  <Spline size={18} />
+                </IconButton>
+                <IconButton label="Ink / freehand tool" active={tool === "ink"} onClick={() => (setTool("ink"), setStatus("Ink: draw inside a frame"))}>
+                  <PenTool size={18} />
+                </IconButton>
+              </div>
 
-            <div className="toolbar-group" aria-label="Canvas tools">
-              <IconButton label="Select tool (V)" active={tool === "select"} onClick={() => (setTool("select"), setConnectFromId(null), setStatus("Select tool"))}>
-                <MousePointer2 size={18} />
-              </IconButton>
-              <IconButton label="Connector tool — click two shapes" active={tool === "connect"} onClick={() => (setTool("connect"), setStatus("Connector: click a shape or frame to start"))}>
-                <Spline size={18} />
-              </IconButton>
-              <IconButton label="Ink / freehand tool" active={tool === "ink"} onClick={() => (setTool("ink"), setStatus("Ink: draw inside a frame"))}>
-                <PenTool size={18} />
-              </IconButton>
-            </div>
+              <ToolbarMenu id="insert" label="Insert" icon={<Plus size={16} />}>
+                {(close) => (
+                  <>
+                    <label className="menu-field">
+                      <span>Device frame</span>
+                      <select aria-label="Frame preset" value={presetId} onChange={(event) => setPresetId(event.target.value)}>
+                        {DEVICE_PRESETS.map((preset) => (
+                          <option key={preset.id} value={preset.id}>
+                            {preset.name} · {preset.width}×{preset.height}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button className="menu-item" onClick={() => { void addArtboard(); close(); }}><Smartphone size={15} /> Add device frame</button>
+                    <button className="menu-item" onClick={() => { void addDiagramCanvas(); close(); }}><GitBranch size={15} /> Add diagram canvas</button>
+                    <div className="menu-divider" />
+                    <button className="menu-item" onClick={() => { void addComponent("sticky"); close(); }}><StickyNote size={15} /> Sticky note</button>
+                    <button className="menu-item" onClick={() => { void addComponent("text"); close(); }}><FileText size={15} /> Text</button>
+                  </>
+                )}
+              </ToolbarMenu>
 
-            <div className="toolbar-group" aria-label="Edit">
-              <IconButton label="Undo (⌘Z)" onClick={undoBoard}>
-                <Undo2 size={18} />
-              </IconButton>
-              <IconButton label="Redo (⌘⇧Z)" onClick={redoBoard}>
-                <Redo2 size={18} />
-              </IconButton>
-              <IconButton label="Group (⌘G)" onClick={groupSelection} disabled={selectedIds.length < 2}>
-                <Group size={18} />
-              </IconButton>
-              <IconButton label="Duplicate (⌘D)" onClick={duplicateSelection} disabled={!selectedIds.length}>
-                <Copy size={18} />
-              </IconButton>
-              <IconButton label="Delete (⌫)" onClick={deleteSelection} disabled={!canDeleteSelection}>
-                <Trash2 size={18} />
-              </IconButton>
-            </div>
+              <ToolbarMenu id="arrange" label="Arrange" icon={<Network size={16} />}>
+                {(close) => (
+                  <>
+                    <div className="menu-heading">Align</div>
+                    <div className="menu-grid">
+                      <button className="menu-icon" title="Align left" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-left"); close(); }}><AlignStartVertical size={16} /></button>
+                      <button className="menu-icon" title="Align centers" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-center-x"); close(); }}><AlignCenterVertical size={16} /></button>
+                      <button className="menu-icon" title="Align right" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-right"); close(); }}><AlignEndVertical size={16} /></button>
+                      <button className="menu-icon" title="Align top" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-top"); close(); }}><AlignStartHorizontal size={16} /></button>
+                      <button className="menu-icon" title="Align middles" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-center-y"); close(); }}><AlignCenterHorizontal size={16} /></button>
+                      <button className="menu-icon" title="Align bottom" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-bottom"); close(); }}><AlignEndHorizontal size={16} /></button>
+                    </div>
+                    <div className="menu-divider" />
+                    <button className="menu-item" disabled={selectedIds.length < 3} onClick={() => { void runLayout("distribute-horizontal"); close(); }}><AlignHorizontalDistributeCenter size={15} /> Distribute horizontally</button>
+                    <button className="menu-item" disabled={selectedIds.length < 3} onClick={() => { void runLayout("distribute-vertical"); close(); }}><AlignVerticalDistributeCenter size={15} /> Distribute vertically</button>
+                    <div className="menu-divider" />
+                    <button className="menu-item" onClick={() => { void runLayout("tree"); close(); }}><Network size={15} /> Tree layout (org chart)</button>
+                    <button className="menu-item" onClick={() => { void runLayout("flow"); close(); }}><Workflow size={15} /> Flow layout (left→right)</button>
+                  </>
+                )}
+              </ToolbarMenu>
 
-            <div className="toolbar-group" aria-label="Align and layout">
-              <IconButton label="Align left" onClick={() => runLayout("align-left")} disabled={selectedIds.length < 2}>
-                <AlignStartVertical size={18} />
-              </IconButton>
-              <IconButton label="Align center" onClick={() => runLayout("align-center-x")} disabled={selectedIds.length < 2}>
-                <AlignCenterVertical size={18} />
-              </IconButton>
-              <IconButton label="Align right" onClick={() => runLayout("align-right")} disabled={selectedIds.length < 2}>
-                <AlignEndVertical size={18} />
-              </IconButton>
-              <IconButton label="Distribute horizontally" onClick={() => runLayout("distribute-horizontal")} disabled={selectedIds.length < 3}>
-                <AlignHorizontalDistributeCenter size={18} />
-              </IconButton>
-              <IconButton label="Tree layout (org chart)" onClick={() => runLayout("tree")}>
-                <Network size={18} />
-              </IconButton>
-              <IconButton label="Flow layout (left→right)" onClick={() => runLayout("flow")}>
-                <Workflow size={18} />
-              </IconButton>
-            </div>
+              <div className="toolbar-group segmented" aria-label="Edit">
+                <IconButton label="Undo (⌘Z)" onClick={undoBoard}>
+                  <Undo2 size={18} />
+                </IconButton>
+                <IconButton label="Redo (⌘⇧Z)" onClick={redoBoard}>
+                  <Redo2 size={18} />
+                </IconButton>
+              </div>
 
-            <div className="toolbar-group artboard-control">
-              <Smartphone size={16} />
-              <select aria-label="Frame preset" value={presetId} onChange={(event) => setPresetId(event.target.value)}>
-                {DEVICE_PRESETS.map((preset) => (
-                  <option key={preset.id} value={preset.id}>
-                    {preset.name} · {preset.width}x{preset.height}
-                  </option>
-                ))}
-              </select>
-              <button className="text-button" onClick={addArtboard}>
-                <Plus size={16} /> Frame
-              </button>
-              <button className="text-button" onClick={addDiagramCanvas} title="Add a frameless canvas for diagrams">
-                <GitBranch size={16} /> Canvas
-              </button>
+              <ToolbarMenu id="export" label="Export" icon={<Download size={16} />}>
+                {(close) => (
+                  <>
+                    <div className="menu-heading">Mockup</div>
+                    <button className="menu-item" onClick={() => { void exportSelectedPng(); close(); }}><Download size={15} /> PNG image</button>
+                    <button className="menu-item" onClick={() => { void exportImplementationSpec(); close(); }}><FileText size={15} /> Implementation spec</button>
+                    <button className="menu-item" onClick={() => { void exportCode(); close(); }}><FileCode2 size={15} /> React + Tailwind</button>
+                    <div className="menu-divider" />
+                    <div className="menu-heading">Diagram</div>
+                    <button className="menu-item" onClick={() => { void exportDiagram("svg"); close(); }}><Shapes size={15} /> Page SVG</button>
+                    <button className="menu-item" onClick={() => { void exportDiagram("pdf"); close(); }}><FileText size={15} /> Page PDF</button>
+                    <button className="menu-item" onClick={() => { void exportDiagram("mermaid"); close(); }}><Workflow size={15} /> Mermaid</button>
+                  </>
+                )}
+              </ToolbarMenu>
             </div>
 
             <div className="toolbar-spacer" />
 
-            <div className="toolbar-group">
-              <IconButton label="Focus selection" onClick={focusSelection} disabled={!selectedIds.length}>
-                <Focus size={18} />
-              </IconButton>
-              <IconButton label="Fit all" onClick={fitAll}>
-                <Maximize2 size={18} />
-              </IconButton>
-              <IconButton label="Zoom out" onClick={() => zoomAtViewportCenter(cameraRef.current.zoom / BUTTON_ZOOM_FACTOR)}>
-                <ZoomOut size={18} />
-              </IconButton>
-              <span className="zoom-readout">{Math.round(zoom * 100)}%</span>
-              <IconButton label="Zoom in" onClick={() => zoomAtViewportCenter(cameraRef.current.zoom * BUTTON_ZOOM_FACTOR)}>
-                <ZoomIn size={18} />
-              </IconButton>
-            </div>
-
-            <div className="toolbar-group">
-              <IconButton label="Export PNG" onClick={exportSelectedPng}>
-                <Download size={18} />
-              </IconButton>
-              <IconButton label="Export spec (Markdown)" onClick={exportImplementationSpec}>
-                <FileText size={18} />
-              </IconButton>
-              <IconButton label="Export React + Tailwind" onClick={exportCode}>
-                <FileCode2 size={18} />
-              </IconButton>
-              <IconButton label="Export page SVG" onClick={() => exportDiagram("svg")}>
-                <Shapes size={18} />
-              </IconButton>
-              <IconButton label="Export page PDF" onClick={() => exportDiagram("pdf")}>
-                <FileText size={18} />
-              </IconButton>
-              <IconButton label="Export Mermaid diagram" onClick={() => exportDiagram("mermaid")}>
-                <Workflow size={18} />
-              </IconButton>
-            </div>
-
-            <div className="toolbar-group">
-              <IconButton label="Command palette (⌘K)" onClick={() => setCommandOpen(true)}>
-                <LayoutTemplate size={18} />
-              </IconButton>
-              <IconButton label="Keyboard shortcuts (?)" onClick={() => setShortcutsOpen(true)}>
-                <Keyboard size={18} />
-              </IconButton>
-              <IconButton label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}>
-                {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-              </IconButton>
+            <div className="topbar-right">
+              <button className="connect-agent-button" onClick={() => setConnectOpen(true)} title="Connect an AI agent to this board">
+                <Cable size={16} /> Connect agent
+              </button>
+              <div className="toolbar-group segmented">
+                <IconButton label="Command palette (⌘K)" onClick={() => setCommandOpen(true)}>
+                  <CommandIcon size={17} />
+                </IconButton>
+                <IconButton label={focusMode ? "Exit focus mode (F)" : "Focus mode — hide panels (F)"} active={focusMode} onClick={() => setFocusMode((current) => !current)}>
+                  {focusMode ? <Minimize2 size={18} /> : <Expand size={18} />}
+                </IconButton>
+                <IconButton label="Keyboard shortcuts (?)" onClick={() => setShortcutsOpen(true)}>
+                  <Keyboard size={18} />
+                </IconButton>
+                <IconButton label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}>
+                  {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+                </IconButton>
+              </div>
+              <div className="toolbar-group segmented pane-controls" aria-label="Pane visibility">
+                <IconButton label={leftPaneOpen ? "Hide left pane" : "Show left pane"} active={leftPaneOpen} onClick={toggleLeftPane}>
+                  {leftPaneOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+                </IconButton>
+                <IconButton label={rightPaneOpen ? "Hide right pane" : "Show right pane"} active={rightPaneOpen} onClick={toggleRightPane}>
+                  {rightPaneOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+                </IconButton>
+              </div>
             </div>
           </>
         ) : (
@@ -2002,28 +2117,48 @@ export function App() {
         </CollapsiblePanel>
 
         <CollapsiblePanel id="layers" icon={<Layers3 size={16} />} title="Layers" className="layers-section" collapsed={Boolean(collapsedPanels.layers)} onToggle={togglePanel}>
-          <div className="layers-list">
-            {project.artboards.map((artboard) => (
-              <div key={artboard.id} className="layer-group">
-                <button className={selectedIds.includes(artboard.id) ? "layer-row selected" : "layer-row"} title={`${artboard.name} · ${artboard.id}`} onClick={(event) => select([artboard.id], event.shiftKey)}>
-                  <Frame size={13} />
-                  <span>{artboard.name}</span>
-                </button>
-                {(elementIndexes.layerRootsByArtboard.get(artboard.id) ?? []).map((element) => (
-                  <LayerNode
-                    key={element.id}
-                    element={element}
-                    project={project}
-                    indexes={elementIndexes}
-                    depth={0}
-                    selectedIds={selectedIds}
-                    onSelect={select}
-                    onUpdate={(elementId, patch) => runOperation({ type: "update_element", elementId, patch })}
-                  />
-                ))}
-              </div>
-            ))}
-          </div>
+          {project.artboards.length ? (
+            <div className="layers-list">
+              {project.artboards.map((artboard) => (
+                <div key={artboard.id} className="layer-group">
+                  <div className={classNames("layer-row artboard-layer", selectedIds.includes(artboard.id) && "selected", !artboard.visible && "hidden-layer")}>
+                    <button className="layer-name" title={`${artboard.name} · ${artboard.id}`} onClick={(event) => select([artboard.id], event.shiftKey)}>
+                      <Frame size={13} />
+                      <span>{artboard.name}</span>
+                    </button>
+                    <div className="layer-actions">
+                      <button className="layer-act" title={artboard.visible ? "Hide" : "Show"} onClick={() => runOperation({ type: "update_artboard", artboardId: artboard.id, patch: { visible: !artboard.visible } })}>
+                        {artboard.visible ? <Eye size={12} /> : <EyeOff size={12} />}
+                      </button>
+                      <button className="layer-act" title={artboard.locked ? "Unlock" : "Lock"} onClick={() => runOperation({ type: "update_artboard", artboardId: artboard.id, patch: { locked: !artboard.locked } })}>
+                        {artboard.locked ? <Lock size={12} /> : <LockOpen size={12} />}
+                      </button>
+                      <button className="layer-act danger" title="Delete frame" onClick={() => runOperation({ type: "delete_artboard", artboardId: artboard.id })}><Trash2 size={12} /></button>
+                    </div>
+                  </div>
+                  {(elementIndexes.layerRootsByArtboard.get(artboard.id) ?? []).map((element) => (
+                    <LayerNode
+                      key={element.id}
+                      element={element}
+                      project={project}
+                      indexes={elementIndexes}
+                      depth={0}
+                      selectedIds={selectedIds}
+                      onSelect={select}
+                      onUpdate={(elementId, patch) => runOperation({ type: "update_element", elementId, patch })}
+                      onDelete={(elementId) => runOperation({ type: "delete_element", elementId })}
+                      onReorder={(elementId, delta) => {
+                        const target = project.elements.find((candidate) => candidate.id === elementId);
+                        if (target) void runOperation({ type: "update_element", elementId, patch: { zIndex: Math.max(0, target.zIndex + delta) } });
+                      }}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">No frames yet. Add a device frame or diagram canvas from the toolbar.</p>
+          )}
         </CollapsiblePanel>
         </aside>
       ) : null}
@@ -2129,31 +2264,29 @@ export function App() {
         </aside>
       ) : null}
 
+        <ZoomControl
+          zoom={zoom}
+          focusMode={focusMode}
+          onZoomIn={() => zoomAtViewportCenter(cameraRef.current.zoom * BUTTON_ZOOM_FACTOR)}
+          onZoomOut={() => zoomAtViewportCenter(cameraRef.current.zoom / BUTTON_ZOOM_FACTOR)}
+          onReset={() => { zoomAtViewportCenter(1); setStatus("Zoom 100%"); }}
+          onFit={fitAll}
+          onFocusSelection={focusSelection}
+          canFocusSelection={selectedIds.length > 0}
+          onToggleFocusMode={() => setFocusMode((current) => !current)}
+        />
         </>
       ) : null}
 
       {newBoardDialogOpen ? (
-        <div className="dialog-backdrop" role="presentation">
-          <form className="new-board-dialog" role="dialog" aria-modal="true" aria-labelledby="new-board-title" onSubmit={submitNewBoard}>
-            <div>
-              <h2 id="new-board-title">New board</h2>
-            </div>
-            <label className="field">
-              <span>Board name</span>
-              <input value={newBoardName} autoFocus onChange={(event) => setNewBoardName(event.target.value)} />
-            </label>
-            <div className="dialog-actions">
-              <button type="button" onClick={cancelNewBoard}>
-                Cancel
-              </button>
-              <button type="submit">
-                <Plus size={15} /> Create
-              </button>
-            </div>
-          </form>
-        </div>
+        <NewBoardDialog
+          defaultName={newBoardName}
+          onCancel={cancelNewBoard}
+          onCreate={(name, template) => void submitNewBoard(name, template)}
+        />
       ) : null}
 
+      {project ? <AgentConnectDialog open={connectOpen} project={project} health={storageStatus} onClose={() => setConnectOpen(false)} /> : null}
       <CommandPalette open={commandOpen} commands={paletteCommands} onClose={() => setCommandOpen(false)} />
       <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       {project ? <RestoreDialog boardId={project.id} open={restoreOpen} onClose={() => setRestoreOpen(false)} onRestored={setStatus} /> : null}
@@ -2344,7 +2477,9 @@ function LayerNode({
   depth,
   selectedIds,
   onSelect,
-  onUpdate
+  onUpdate,
+  onDelete,
+  onReorder
 }: {
   element: BoardElement;
   project: BoardProject;
@@ -2353,24 +2488,31 @@ function LayerNode({
   selectedIds: string[];
   onSelect: (ids: string[], additive?: boolean) => void;
   onUpdate: (elementId: string, patch: Record<string, unknown>) => void;
+  onDelete: (elementId: string) => void;
+  onReorder: (elementId: string, delta: number) => void;
 }) {
   const children = indexes.layerChildrenByParent.get(element.id) ?? [];
   return (
     <>
-      <div className={selectedIds.includes(element.id) ? "layer-row selected element-layer" : "layer-row element-layer"} style={{ "--indent": `${depth * 12}px` } as React.CSSProperties}>
-        <button onClick={(event) => onSelect([element.id], event.shiftKey)} title={`${element.name} · ${element.id}`}>
+      <div className={classNames("layer-row element-layer", selectedIds.includes(element.id) && "selected", !element.visible && "hidden-layer")} style={{ "--indent": `${depth * 12}px` } as React.CSSProperties}>
+        <button className="layer-name" onClick={(event) => onSelect([element.id], event.shiftKey)} title={`${element.name} · ${element.id}`}>
           {children.length ? <ChevronDown size={11} /> : <span className="layer-spacer" />}
           <span>{element.name}</span>
         </button>
-        <button title={element.visible ? "Hide" : "Show"} onClick={() => onUpdate(element.id, { visible: !element.visible })}>
-          {element.visible ? <Eye size={12} /> : <EyeOff size={12} />}
-        </button>
-        <button title={element.locked ? "Unlock" : "Lock"} onClick={() => onUpdate(element.id, { locked: !element.locked })}>
-          {element.locked ? <Lock size={12} /> : <LockOpen size={12} />}
-        </button>
+        <div className="layer-actions">
+          <button className="layer-act" title="Bring forward" onClick={() => onReorder(element.id, 1)}><ArrowUpToLine size={12} /></button>
+          <button className="layer-act" title="Send backward" onClick={() => onReorder(element.id, -1)}><ArrowDownToLine size={12} /></button>
+          <button className="layer-act" title={element.visible ? "Hide" : "Show"} onClick={() => onUpdate(element.id, { visible: !element.visible })}>
+            {element.visible ? <Eye size={12} /> : <EyeOff size={12} />}
+          </button>
+          <button className="layer-act" title={element.locked ? "Unlock" : "Lock"} onClick={() => onUpdate(element.id, { locked: !element.locked })}>
+            {element.locked ? <Lock size={12} /> : <LockOpen size={12} />}
+          </button>
+          <button className="layer-act danger" title="Delete" onClick={() => onDelete(element.id)}><Trash2 size={12} /></button>
+        </div>
       </div>
       {children.map((child) => (
-        <LayerNode key={child.id} element={child} project={project} indexes={indexes} depth={depth + 1} selectedIds={selectedIds} onSelect={onSelect} onUpdate={onUpdate} />
+        <LayerNode key={child.id} element={child} project={project} indexes={indexes} depth={depth + 1} selectedIds={selectedIds} onSelect={onSelect} onUpdate={onUpdate} onDelete={onDelete} onReorder={onReorder} />
       ))}
     </>
   );
@@ -2455,8 +2597,14 @@ function ArtboardView({
             return;
           }
           if (tool === "ink") return; // let the ink pointer pipeline on the viewport handle it
+          if (event.button !== 0) return;
           event.stopPropagation();
           onSelect([artboard.id], event.shiftKey);
+          // Drag the frame by its empty body (elements stopPropagation, so they still win).
+          if (!artboard.locked && !event.shiftKey) {
+            capturePointer(event.currentTarget, event.pointerId);
+            onDragStart({ id: artboard.id, target: "artboard", mode: "move", startX: event.clientX, startY: event.clientY, original: artboard, latest: artboard });
+          }
         }}
       >
         {elements.map((element) => (
@@ -2498,9 +2646,15 @@ function ArtboardView({
       {selectedElements.length ? (
         <div className="selection-badge-layer" aria-hidden="true">
           {selectedElements.map(({ element, position }) => (
-            <span key={element.id} className="element-name-badge" title={`${element.name} · ${element.id}`} style={{ left: position.x - 2, top: position.y - 24 }}>
-              {element.name}
-            </span>
+            <Fragment key={element.id}>
+              <span
+                className="selection-ring"
+                style={{ left: position.x, top: position.y, width: element.width, height: element.height, borderRadius: (typeof element.style.radius === "number" ? element.style.radius : 6) }}
+              />
+              <span className="element-name-badge" title={`${element.name} · ${element.id}`} style={{ left: position.x, top: position.y - 24 }}>
+                {element.name}
+              </span>
+            </Fragment>
           ))}
         </div>
       ) : null}
@@ -3304,6 +3458,235 @@ function IconButton({ label, active, disabled, onClick, children }: { label: str
     <button className={active ? "icon-button active" : "icon-button"} onClick={onClick} title={label} aria-label={label} disabled={disabled}>
       {children}
     </button>
+  );
+}
+
+/** A toolbar dropdown: click to open, click-away / Esc to close. Keeps the top bar compact. */
+function ToolbarMenu({ label, icon, children }: { id: string; label: string; icon: React.ReactNode; children: (close: () => void) => React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDocPointer = (event: PointerEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDocPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDocPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  return (
+    <div className={classNames("toolbar-menu", open && "open")} ref={ref}>
+      <button className={classNames("toolbar-menu-trigger", open && "active")} onClick={() => setOpen((current) => !current)} aria-haspopup="menu" aria-expanded={open}>
+        {icon}
+        <span>{label}</span>
+        <ChevronDown size={13} className="menu-caret" />
+      </button>
+      {open ? (
+        <div className="toolbar-menu-pop" role="menu">
+          {children(() => setOpen(false))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Floating bottom-right zoom + view control (Figma/Miro convention). */
+function ZoomControl({
+  zoom,
+  focusMode,
+  onZoomIn,
+  onZoomOut,
+  onReset,
+  onFit,
+  onFocusSelection,
+  canFocusSelection,
+  onToggleFocusMode
+}: {
+  zoom: number;
+  focusMode: boolean;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onReset: () => void;
+  onFit: () => void;
+  onFocusSelection: () => void;
+  canFocusSelection: boolean;
+  onToggleFocusMode: () => void;
+}) {
+  return (
+    <div className="zoom-control" role="group" aria-label="Zoom and view">
+      <button className="zoom-seg" title="Fit all frames (⌘1)" aria-label="Fit all frames" onClick={onFit}>
+        <Maximize2 size={16} />
+      </button>
+      <button className="zoom-seg" title="Focus selection" aria-label="Focus selection" onClick={onFocusSelection} disabled={!canFocusSelection}>
+        <Focus size={16} />
+      </button>
+      <span className="zoom-divider" />
+      <button className="zoom-seg" title="Zoom out (⌘−)" aria-label="Zoom out" onClick={onZoomOut}>
+        <ZoomOut size={16} />
+      </button>
+      <button className="zoom-readout-button" title="Reset to 100% (⌘0)" onClick={onReset}>
+        {Math.round(zoom * 100)}%
+      </button>
+      <button className="zoom-seg" title="Zoom in (⌘+)" aria-label="Zoom in" onClick={onZoomIn}>
+        <ZoomIn size={16} />
+      </button>
+      <span className="zoom-divider" />
+      <button className={classNames("zoom-seg", focusMode && "active")} title={focusMode ? "Exit focus mode (F)" : "Focus mode (F)"} aria-label="Toggle focus mode" onClick={onToggleFocusMode}>
+        {focusMode ? <Minimize2 size={16} /> : <Expand size={16} />}
+      </button>
+    </div>
+  );
+}
+
+const BOARD_TEMPLATES: Array<{ id: BoardTemplate; title: string; blurb: string; icon: React.ReactNode }> = [
+  { id: "blank", title: "Blank canvas", blurb: "An empty infinite canvas. Start from nothing.", icon: <Sparkles size={20} /> },
+  { id: "mobile", title: "Mobile app", blurb: "One empty iPhone frame, ready to design.", icon: <Smartphone size={20} /> },
+  { id: "web", title: "Web page", blurb: "One empty 1440×900 desktop frame.", icon: <LayoutTemplate size={20} /> },
+  { id: "diagram", title: "Diagram", blurb: "A frameless canvas for flowcharts & org charts.", icon: <Network size={20} /> },
+  { id: "starter", title: "Starter demo", blurb: "Sample mobile + web screens to explore.", icon: <Component size={20} /> }
+];
+
+function NewBoardDialog({ defaultName, onCancel, onCreate }: { defaultName: string; onCancel: () => void; onCreate: (name: string, template: BoardTemplate) => void }) {
+  const [name, setName] = useState(defaultName);
+  const [template, setTemplate] = useState<BoardTemplate>("blank");
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCancel();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+  return (
+    <div className="dialog-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
+      <form className="new-board-dialog" role="dialog" aria-modal="true" aria-labelledby="new-board-title" onSubmit={(event) => { event.preventDefault(); onCreate(name, template); }}>
+        <div className="dialog-head">
+          <h2 id="new-board-title">New board</h2>
+          <p>Pick a starting point — you can add or change anything later.</p>
+        </div>
+        <div className="template-grid">
+          {BOARD_TEMPLATES.map((option) => (
+            <button
+              type="button"
+              key={option.id}
+              className={classNames("template-card", template === option.id && "selected")}
+              onClick={() => setTemplate(option.id)}
+              aria-pressed={template === option.id}
+            >
+              <span className="template-icon">{option.icon}</span>
+              <span className="template-title">{option.title}</span>
+              <span className="template-blurb">{option.blurb}</span>
+              {template === option.id ? <span className="template-check"><Check size={13} /></span> : null}
+            </button>
+          ))}
+        </div>
+        <label className="field">
+          <span>Board name</span>
+          <input value={name} autoFocus onChange={(event) => setName(event.target.value)} />
+        </label>
+        <div className="dialog-actions">
+          <button type="button" onClick={onCancel}>Cancel</button>
+          <button type="submit" className="primary"><Plus size={15} /> Create board</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function AgentConnectDialog({ open, project, health, onClose }: { open: boolean; project: BoardProject; health: ApiHealth | null; onClose: () => void }) {
+  const [copied, setCopied] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+  if (!open) return null;
+  const origin = typeof window !== "undefined" && window.location.origin.startsWith("http") ? window.location.origin : "http://127.0.0.1:4318";
+  // The dev proxy runs on 5173 but the MCP/server host is always 4318.
+  const serverBase = origin.includes("5173") ? "http://127.0.0.1:4318" : origin;
+  const httpEndpoint = `${serverBase}/mcp`;
+  const stdioConfig = `{
+  "mcpServers": {
+    "powerboard": {
+      "command": "npm",
+      "args": ["run", "mcp", "--prefix", "/Users/km/Developer/PowerBoard"]
+    }
+  }
+}`;
+  const reachable = health?.ok !== false;
+  const copy = async (key: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(key);
+      window.setTimeout(() => setCopied((current) => (current === key ? null : current)), 1600);
+    } catch {
+      setCopied(null);
+    }
+  };
+  const CopyChip = ({ chipKey, text, label = "Copy" }: { chipKey: string; text: string; label?: string }) => (
+    <button type="button" className="copy-chip" onClick={() => void copy(chipKey, text)}>
+      {copied === chipKey ? <Check size={13} /> : <Copy size={13} />} {copied === chipKey ? "Copied" : label}
+    </button>
+  );
+  return (
+    <div className="dialog-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="connect-dialog" role="dialog" aria-modal="true" aria-labelledby="connect-title">
+        <div className="connect-head">
+          <div className="connect-title-row">
+            <span className="connect-icon"><Cable size={18} /></span>
+            <div>
+              <h2 id="connect-title">Connect an agent</h2>
+              <p>Point Claude, Cursor, or any MCP client at this board — edits stream in live.</p>
+            </div>
+          </div>
+          <span className={classNames("connect-health", reachable ? "ok" : "down")}>{reachable ? "Server live" : "Server unreachable"}</span>
+        </div>
+
+        <div className="connect-body">
+          <div className="connect-row">
+            <span className="connect-label">This board</span>
+            <div className="connect-value">
+              <strong>{project.name}</strong>
+              <code>{project.id}</code>
+              <CopyChip chipKey="board" text={project.id} label="Copy id" />
+            </div>
+          </div>
+          <div className="connect-row">
+            <span className="connect-label">MCP endpoint</span>
+            <div className="connect-value">
+              <code>{httpEndpoint}</code>
+              <CopyChip chipKey="http" text={httpEndpoint} />
+            </div>
+          </div>
+
+          <div className="connect-config">
+            <div className="connect-config-head">
+              <span>Add to your MCP client config</span>
+              <CopyChip chipKey="cfg" text={stdioConfig} label="Copy config" />
+            </div>
+            <pre>{stdioConfig}</pre>
+          </div>
+
+          <ol className="connect-steps">
+            <li>Keep PowerBoard open — it serves MCP on <code>127.0.0.1:4318</code>.</li>
+            <li>Paste the config into your agent (Claude Code: <code>claude mcp add</code>, or your client’s MCP settings).</li>
+            <li>Ask it to <code>list_boards</code>, then <code>read_board</code> with the id above to edit this board.</li>
+          </ol>
+        </div>
+
+        <div className="dialog-actions">
+          <button type="button" className="primary" onClick={onClose}>Done</button>
+        </div>
+      </div>
+    </div>
   );
 }
 

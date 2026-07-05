@@ -6,6 +6,7 @@ import {
   BoardOperation,
   BoardProject,
   BoardProjectSchema,
+  BoardTemplate,
   BoardValidationReport,
   createDefaultProject,
   createId,
@@ -197,9 +198,9 @@ export class BoardStore {
     return boards.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
-  async createBoard(name = "PowerBoard Starter Board"): Promise<BoardProject> {
+  async createBoard(name = "PowerBoard Starter Board", template: BoardTemplate = "starter"): Promise<BoardProject> {
     await this.ensureReady();
-    const project = createDefaultProject(name);
+    const project = createDefaultProject(name, template);
     const existing = (!this.isCloudPrimary() && (await this.exists(project.id))) || Boolean(await this.cloud?.readBoard(project.id));
     const id = existing ? createId("board") : project.id;
     const finalProject = BoardProjectSchema.parse({ ...project, id, name });

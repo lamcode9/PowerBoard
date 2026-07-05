@@ -4,7 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { BoardOperation, BoardProjectSchema, OperationSchema } from "@powerboard/schema";
+import { BoardOperation, boardTemplates, BoardProjectSchema, OperationSchema } from "@powerboard/schema";
 import { agentActivityForOperation, BoardStore } from "./boardService.js";
 import { BackupService } from "./backupService.js";
 import { boardRoot } from "./paths.js";
@@ -83,7 +83,9 @@ app.get("/api/boards", asyncHandler(async (_req, res) => {
 }));
 
 app.post("/api/boards", asyncHandler(async (req, res) => {
-  const project = await store.createBoard(typeof req.body?.name === "string" ? req.body.name : undefined);
+  const requestedTemplate = req.body?.template;
+  const template = boardTemplates.find((candidate) => candidate === requestedTemplate);
+  const project = await store.createBoard(typeof req.body?.name === "string" ? req.body.name : undefined, template);
   broadcast(project.id, { type: "board.changed", boardId: project.id, project });
   res.status(201).json(project);
 }));

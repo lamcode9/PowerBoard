@@ -1,4 +1,4 @@
-import { applyBoardOperation, createDefaultProject, createId, validateBoardProject, type BoardAsset, type BoardOperation, type BoardProject } from "@powerboard/schema";
+import { applyBoardOperation, createDefaultProject, createId, validateBoardProject, type BoardAsset, type BoardOperation, type BoardProject, type BoardTemplate } from "@powerboard/schema";
 
 const API_BASE = "";
 const LOCAL_STORAGE_KEY = "powerboard.boards.v1";
@@ -51,8 +51,11 @@ export async function listBoards(): Promise<BoardSummary[]> {
   return withLocalFallback(() => request("/api/boards"), () => localListBoards());
 }
 
-export async function createBoard(name?: string): Promise<BoardProject> {
-  return withLocalFallback(() => request("/api/boards", { method: "POST", body: JSON.stringify({ name }) }), () => localCreateBoard(name));
+export async function createBoard(name?: string, template?: BoardTemplate): Promise<BoardProject> {
+  return withLocalFallback(
+    () => request("/api/boards", { method: "POST", body: JSON.stringify({ name, template }) }),
+    () => localCreateBoard(name, template)
+  );
 }
 
 export async function readBoard(boardId: string): Promise<BoardProject> {
@@ -210,9 +213,9 @@ async function localListBoards(): Promise<BoardSummary[]> {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-async function localCreateBoard(name = "PowerBoard Starter Board"): Promise<BoardProject> {
+async function localCreateBoard(name = "PowerBoard Starter Board", template: BoardTemplate = "starter"): Promise<BoardProject> {
   const projects = await localProjects();
-  const base = createDefaultProject(name);
+  const base = createDefaultProject(name, template);
   const project = validateBoardProject({ ...base, id: projects.some((candidate) => candidate.id === base.id) ? createId("board") : base.id, name });
   await writeLocalProjects([project]);
   return project;
