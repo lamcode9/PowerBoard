@@ -8,11 +8,12 @@ import {
   AlignStartHorizontal,
   AlignStartVertical,
   AlignVerticalDistributeCenter,
+  Activity,
   ArchiveRestore,
-  ArrowDownToLine,
+  ArrowLeftRight,
   ArrowRight,
-  ArrowUpToLine,
   Bot,
+  Box,
   BoxSelect,
   BringToFront,
   Cable,
@@ -41,6 +42,8 @@ import {
   LockOpen,
   Maximize2,
   Minimize2,
+  Minus,
+  Monitor,
   Moon,
   MousePointer2,
   Network,
@@ -52,7 +55,6 @@ import {
   Plus,
   Redo2,
   Save,
-  SendToBack,
   Send,
   Shapes,
   Smartphone,
@@ -60,7 +62,10 @@ import {
   Sparkles,
   StickyNote,
   Sun,
+  Table,
+  Tablet,
   Trash2,
+  Type,
   Undo2,
   Upload,
   Workflow,
@@ -205,6 +210,35 @@ type InkDraft = { artboardId: string; points: Array<[number, number]> };
 const NO_GUIDES: SnapGuides = { vertical: [], horizontal: [] };
 const SNAP_THRESHOLD = 6;
 const THEME_STORAGE_KEY = "powerboard.theme";
+const PANE_PREFS_KEY = "powerboard.panes";
+const LEFT_PANE_MIN = 220;
+const LEFT_PANE_MAX = 400;
+const LEFT_PANE_DEFAULT = 264;
+const RIGHT_PANE_MIN = 252;
+const RIGHT_PANE_MAX = 440;
+const RIGHT_PANE_DEFAULT = 292;
+
+type PanePrefs = { leftWidth: number; rightWidth: number; leftOpen: boolean; rightOpen: boolean };
+
+/** UI-chrome preference only (never board data — see persistence P0 rule). */
+function readPanePrefs(): PanePrefs {
+  const fallback: PanePrefs = { leftWidth: LEFT_PANE_DEFAULT, rightWidth: RIGHT_PANE_DEFAULT, leftOpen: true, rightOpen: true };
+  try {
+    const raw = window.localStorage.getItem(PANE_PREFS_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Partial<PanePrefs>;
+    return {
+      leftWidth: clamp(Number(parsed.leftWidth) || LEFT_PANE_DEFAULT, LEFT_PANE_MIN, LEFT_PANE_MAX),
+      rightWidth: clamp(Number(parsed.rightWidth) || RIGHT_PANE_DEFAULT, RIGHT_PANE_MIN, RIGHT_PANE_MAX),
+      leftOpen: parsed.leftOpen !== false,
+      rightOpen: parsed.rightOpen !== false
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+type ConnectDraft = { fromId: string; startX: number; startY: number; x: number; y: number; moved: boolean };
 const DIAGRAM_SHAPES: Array<{ kind: (typeof shapeKinds)[number]; label: string }> = [
   { kind: "rectangle", label: "Process" },
   { kind: "rounded", label: "Start / End" },
@@ -219,6 +253,12 @@ const DIAGRAM_SHAPES: Array<{ kind: (typeof shapeKinds)[number]; label: string }
   { kind: "star", label: "Star" },
   { kind: "arrow-right", label: "Arrow" }
 ];
+/** Curated frame sizes for the Insert menu — one click each, no buried dropdown. */
+const INSERT_FRAME_PRESET_IDS = ["iphone-15-pro", "iphone-16-pro-max", "pixel-9", "ipad", "ipad-pro-11", "macbook-air", "desktop-1440", "web-dashboard"];
+const INSERT_FRAME_PRESETS = INSERT_FRAME_PRESET_IDS
+  .map((id) => DEVICE_PRESETS.find((preset) => preset.id === id))
+  .filter((preset): preset is (typeof DEVICE_PRESETS)[number] => Boolean(preset));
+
 type ElementIndexes = {
   canvasRootsByArtboard: Map<string, BoardElement[]>;
   canvasChildrenByParent: Map<string, BoardElement[]>;
@@ -251,8 +291,9 @@ export function App() {
   const [status, setStatus] = useState("Starting workspace...");
   const [agentActiveUntilById, setAgentActiveUntilById] = useState<Record<string, number>>({});
   const [collapsedPanels, setCollapsedPanels] = useState<Record<string, boolean>>({});
-  const [leftPaneOpen, setLeftPaneOpen] = useState(true);
-  const [rightPaneOpen, setRightPaneOpen] = useState(true);
+  const [panePrefs, setPanePrefs] = useState<PanePrefs>(readPanePrefs);
+  const leftPaneOpen = panePrefs.leftOpen;
+  const rightPaneOpen = panePrefs.rightOpen;
   const [theme, setTheme] = useState<Theme>(readStoredTheme);
   const [tool, setTool] = useState<CanvasTool>("select");
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("mockup");
@@ -266,7 +307,10 @@ export function App() {
   const [snapGuides, setSnapGuides] = useState<SnapGuides>(NO_GUIDES);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [connectFromId, setConnectFromId] = useState<string | null>(null);
+  const [connectDraft, setConnectDraft] = useState<ConnectDraft | null>(null);
   const [inkDraft, setInkDraft] = useState<InkDraft | null>(null);
+  const connectDraftRef = useRef<ConnectDraft | null>(null);
+  const paneResizeRef = useRef<{ side: "left" | "right"; startX: number; startWidth: number } | null>(null);
   const marqueeRef = useRef<MarqueeState | null>(null);
   const inkDraftRef = useRef<InkDraft | null>(null);
   const toolRef = useRef<CanvasTool>("select");
@@ -594,6 +638,17 @@ export function App() {
     return project.artboards.find((artboard) => artboard.id === selectedArtboardId) ?? project.artboards[0] ?? null;
   }, [project, selectedArtboard, selectedElement, selectedIds]);
 
+  /** World-plane bounds of the selection — anchors the floating selection toolbar. */
+  const selectionBounds = useMemo(() => {
+    if (!project || !selectedIds.length) return null;
+    return boundsForSelection(project, selectedIds);
+  }, [project, selectedIds]);
+
+  const selectedElementCount = useMemo(
+    () => (project ? selectedIds.filter((id) => project.elements.some((element) => element.id === id)).length : 0),
+    [project, selectedIds]
+  );
+
   function flashAgentActivity(activity: AgentActivity) {
     const ids = uniqueStrings(activity.ids);
     if (!ids.length) return;
@@ -902,6 +957,10 @@ export function App() {
       updateMarquee(event);
       return;
     }
+    if (connectDraftRef.current) {
+      updateConnectDraft(event);
+      return;
+    }
     if (inkDraftRef.current) {
       updateInkDraft(event);
       return;
@@ -1016,13 +1075,17 @@ export function App() {
     return { x: snappedX, y: snappedY, guides };
   }
 
-  async function onCanvasPointerUp() {
+  async function onCanvasPointerUp(event: React.PointerEvent<HTMLElement>) {
     if (pan) {
       setPan(null);
       return;
     }
     if (marqueeRef.current) {
       finishMarquee();
+      return;
+    }
+    if (connectDraftRef.current) {
+      finishConnectDraft(event);
       return;
     }
     if (inkDraftRef.current) {
@@ -1052,9 +1115,10 @@ export function App() {
     });
   }
 
-  async function addArtboard() {
+  async function addArtboard(requestedPresetId?: string) {
     if (!project) return;
-    const preset = DEVICE_PRESETS.find((candidate) => candidate.id === presetId) ?? DEVICE_PRESETS[0]!;
+    const preset = DEVICE_PRESETS.find((candidate) => candidate.id === (requestedPresetId ?? presetId)) ?? DEVICE_PRESETS[0]!;
+    if (requestedPresetId) setPresetId(requestedPresetId);
     const position = nextArtboardPosition(project, activeArtboard);
     const artboard: Artboard = {
       id: createId("art"),
@@ -1097,13 +1161,23 @@ export function App() {
   async function deleteSelection() {
     if (!project) return;
     const elementIds = selectedIds.filter((id) => project.elements.some((element) => element.id === id));
-    if (!elementIds.length) {
-      setStatus("Select one or more elements to delete");
+    const connectorIds = selectedIds.filter((id) => project.connectors.some((connector) => connector.id === id));
+    const artboardIds = selectedIds.filter((id) => project.artboards.some((artboard) => artboard.id === id));
+    const total = elementIds.length + connectorIds.length + artboardIds.length;
+    if (!total) {
+      setStatus("Select something to delete");
       return;
     }
     for (const elementId of elementIds) {
       await runOperation({ type: "delete_element", elementId });
     }
+    for (const connectorId of connectorIds) {
+      await runOperation({ type: "delete_connector", connectorId });
+    }
+    for (const artboardId of artboardIds) {
+      await runOperation({ type: "delete_artboard", artboardId });
+    }
+    setStatus(`Deleted ${total} ${pluralize(total, "item")} — ⌘Z to undo`);
   }
 
   async function groupSelection() {
@@ -1272,34 +1346,29 @@ export function App() {
     setStatus("Diagram canvas added — drop shapes and connect them");
   }
 
-  function onConnectTap(targetId: string) {
+  function resolveConnectorEnd(id: string): { artboardId: string; elementId?: string } | null {
     const current = projectRef.current;
-    if (!current) return;
-    const resolve = (id: string): { artboardId: string; elementId?: string } | null => {
-      const artboard = current.artboards.find((candidate) => candidate.id === id);
-      if (artboard) return { artboardId: artboard.id };
-      const element = current.elements.find((candidate) => candidate.id === id);
-      if (element) return { artboardId: element.artboardId, elementId: element.id };
-      return null;
-    };
-    if (!connectFromId) {
-      if (!resolve(targetId)) return;
-      setConnectFromId(targetId);
-      setStatus("Connector: now click the target shape or frame");
-      return;
-    }
-    const from = resolve(connectFromId);
-    const to = resolve(targetId);
-    setConnectFromId(null);
-    if (!from || !to || connectFromId === targetId) {
+    if (!current) return null;
+    const artboard = current.artboards.find((candidate) => candidate.id === id);
+    if (artboard) return { artboardId: artboard.id };
+    const element = current.elements.find((candidate) => candidate.id === id);
+    if (element) return { artboardId: element.artboardId, elementId: element.id };
+    return null;
+  }
+
+  async function createConnectorBetween(fromId: string, toId: string) {
+    const from = resolveConnectorEnd(fromId);
+    const to = resolveConnectorEnd(toId);
+    if (!from || !to || fromId === toId) {
       setStatus("Connector cancelled");
       return;
     }
     const isDiagram = Boolean(from.elementId || to.elementId);
-    void runOperation({
+    const connectorId = createId("conn");
+    await runOperation({
       type: "add_connector",
       connector: {
-        id: createId("conn"),
+        id: connectorId,
         fromArtboardId: from.artboardId,
         toArtboardId: to.artboardId,
         fromElementId: from.elementId,
@@ -1313,7 +1382,74 @@ export function App() {
         labelPosition: 0.5,
         style: { stroke: "#2563EB" }
       }
-    }).then(() => setStatus("Connected — pick endpoints again or press Esc to exit the connector tool"));
+    });
+    await select([connectorId]).catch(() => undefined);
+    setStatus("Connected — drag again for another, or press Esc for the select tool");
+  }
+
+  /** Connector tool pointer-down on a shape/frame: start a live drag, or complete a click-click pair. */
+  function onConnectDown(targetId: string, event: { clientX: number; clientY: number }) {
+    if (!resolveConnectorEnd(targetId)) return;
+    if (connectFromId && connectFromId !== targetId) {
+      const fromId = connectFromId;
+      setConnectFromId(null);
+      void createConnectorBetween(fromId, targetId);
+      return;
+    }
+    const world = worldPointFromClient(event.clientX, event.clientY);
+    if (!world) return;
+    const draft: ConnectDraft = { fromId: targetId, startX: world.x, startY: world.y, x: world.x, y: world.y, moved: false };
+    connectDraftRef.current = draft;
+    setConnectDraft(draft);
+    setConnectFromId(targetId);
+    setStatus("Connector: drag to a target shape (or click it)");
+  }
+
+  function updateConnectDraft(event: React.PointerEvent<HTMLElement>) {
+    const draft = connectDraftRef.current;
+    const world = worldPointFromClient(event.clientX, event.clientY);
+    if (!draft || !world) return;
+    const moved = draft.moved || Math.hypot(world.x - draft.startX, world.y - draft.startY) > 6;
+    const next = { ...draft, x: world.x, y: world.y, moved };
+    connectDraftRef.current = next;
+    setConnectDraft(next);
+  }
+
+  /** Topmost (smallest) visible element under a world point, falling back to the frame. */
+  function connectTargetAtWorldPoint(world: { x: number; y: number }): string | null {
+    const current = projectRef.current;
+    if (!current) return null;
+    let best: { id: string; area: number } | null = null;
+    for (const element of current.elements) {
+      if (!element.visible) continue;
+      const bounds = elementWorldBounds(current, element);
+      if (!bounds) continue;
+      if (world.x < bounds.x || world.x > bounds.x + bounds.width || world.y < bounds.y || world.y > bounds.y + bounds.height) continue;
+      const area = bounds.width * bounds.height;
+      if (!best || area < best.area) best = { id: element.id, area };
+    }
+    if (best) return best.id;
+    return artboardAtWorldPoint(world)?.id ?? null;
+  }
+
+  function finishConnectDraft(event: React.PointerEvent<HTMLElement>) {
+    const draft = connectDraftRef.current;
+    connectDraftRef.current = null;
+    setConnectDraft(null);
+    if (!draft) return;
+    if (!draft.moved) {
+      // A plain click keeps the source armed for click-click connecting.
+      setStatus("Connector: now click or drag to the target shape");
+      return;
+    }
+    const world = worldPointFromClient(event.clientX, event.clientY);
+    const targetId = world ? connectTargetAtWorldPoint(world) : null;
+    setConnectFromId(null);
+    if (!targetId || targetId === draft.fromId) {
+      setStatus("Connector cancelled — drag from one shape to another");
+      return;
+    }
+    void createConnectorBetween(draft.fromId, targetId);
   }
 
   async function commitTextEdit(elementId: string, textValue: string) {
@@ -1578,7 +1714,9 @@ export function App() {
       setStatus("Exited focus mode");
       return;
     }
-    if (connectFromId) {
+    if (connectFromId || connectDraftRef.current) {
+      connectDraftRef.current = null;
+      setConnectDraft(null);
       setConnectFromId(null);
       setStatus("Connector cancelled");
       return;
@@ -1728,18 +1866,50 @@ export function App() {
     setCollapsedPanels((current) => ({ ...current, [panelId]: !current[panelId] }));
   }
 
-  function toggleLeftPane() {
-    setLeftPaneOpen((current) => {
-      setStatus(current ? "Left pane hidden" : "Left pane shown");
-      return !current;
+  function updatePanePrefs(patch: Partial<PanePrefs>) {
+    setPanePrefs((current) => {
+      const next = { ...current, ...patch };
+      try {
+        window.localStorage.setItem(PANE_PREFS_KEY, JSON.stringify(next));
+      } catch (error) {
+        console.error("Failed to persist pane preferences", error);
+      }
+      return next;
     });
   }
 
+  function toggleLeftPane() {
+    setStatus(leftPaneOpen ? "Left panel hidden" : "Left panel shown");
+    updatePanePrefs({ leftOpen: !leftPaneOpen });
+  }
+
   function toggleRightPane() {
-    setRightPaneOpen((current) => {
-      setStatus(current ? "Right pane hidden" : "Right pane shown");
-      return !current;
-    });
+    setStatus(rightPaneOpen ? "Right panel hidden" : "Right panel shown");
+    updatePanePrefs({ rightOpen: !rightPaneOpen });
+  }
+
+  /** Drag the pane's inner edge to resize it; width persists as a UI preference. */
+  function beginPaneResize(side: "left" | "right", event: React.PointerEvent<HTMLElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const startWidth = side === "left" ? panePrefs.leftWidth : panePrefs.rightWidth;
+    paneResizeRef.current = { side, startX: event.clientX, startWidth };
+    const onMove = (move: PointerEvent) => {
+      const active = paneResizeRef.current;
+      if (!active) return;
+      const delta = active.side === "left" ? move.clientX - active.startX : active.startX - move.clientX;
+      const min = active.side === "left" ? LEFT_PANE_MIN : RIGHT_PANE_MIN;
+      const max = active.side === "left" ? LEFT_PANE_MAX : RIGHT_PANE_MAX;
+      const width = clamp(Math.round(active.startWidth + delta), min, max);
+      updatePanePrefs(active.side === "left" ? { leftWidth: width } : { rightWidth: width });
+    };
+    const onUp = () => {
+      paneResizeRef.current = null;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
   }
 
   function focusBounds(bounds: Bounds, message: string) {
@@ -1888,8 +2058,17 @@ export function App() {
       ]
     : [];
 
+  const chromeHidden = homeOpen || focusMode;
   return (
-    <main className={classNames("app-shell", homeOpen && "home-mode", !leftPaneOpen && "left-pane-hidden", !rightPaneOpen && "right-pane-hidden", focusMode && !homeOpen && "focus-mode")} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
+    <main
+      className={classNames("app-shell", homeOpen && "home-mode", !leftPaneOpen && "left-pane-hidden", !rightPaneOpen && "right-pane-hidden", focusMode && !homeOpen && "focus-mode")}
+      style={{
+        ["--left-panel-width" as string]: !chromeHidden && leftPaneOpen ? `${panePrefs.leftWidth}px` : "0px",
+        ["--right-panel-width" as string]: !chromeHidden && rightPaneOpen ? `${panePrefs.rightWidth}px` : "0px"
+      } as React.CSSProperties}
+      onPointerMove={onCanvasPointerMove}
+      onPointerUp={onCanvasPointerUp}
+    >
       {!homeOpen && focusMode ? <div className="focus-reveal-strip" aria-hidden="true" /> : null}
       <header className="topbar">
         <div className="topbar-left">
@@ -1927,21 +2106,23 @@ export function App() {
               <ToolbarMenu id="insert" label="Insert" icon={<Plus size={16} />}>
                 {(close) => (
                   <>
-                    <label className="menu-field">
-                      <span>Device frame</span>
-                      <select aria-label="Frame preset" value={presetId} onChange={(event) => setPresetId(event.target.value)}>
-                        {DEVICE_PRESETS.map((preset) => (
-                          <option key={preset.id} value={preset.id}>
-                            {preset.name} · {preset.width}×{preset.height}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <button className="menu-item" onClick={() => { void addArtboard(); close(); }}><Smartphone size={15} /> Add device frame</button>
-                    <button className="menu-item" onClick={() => { void addDiagramCanvas(); close(); }}><GitBranch size={15} /> Add diagram canvas</button>
+                    <div className="menu-heading">New frame</div>
+                    {INSERT_FRAME_PRESETS.map((preset) => (
+                      <button key={preset.id} className="menu-item preset-item" onClick={() => { void addArtboard(preset.id); close(); }}>
+                        {preset.type === "mobile" ? <Smartphone size={15} /> : preset.type === "tablet" ? <Tablet size={15} /> : <Monitor size={15} />}
+                        <span className="preset-name">{preset.name}</span>
+                        <span className="preset-size">{preset.width}×{preset.height}</span>
+                      </button>
+                    ))}
+                    <button className="menu-item preset-item" onClick={() => { void addDiagramCanvas(); close(); }}>
+                      <GitBranch size={15} />
+                      <span className="preset-name">Diagram canvas</span>
+                      <span className="preset-size">freeform</span>
+                    </button>
                     <div className="menu-divider" />
+                    <div className="menu-heading">Quick add</div>
                     <button className="menu-item" onClick={() => { void addComponent("sticky"); close(); }}><StickyNote size={15} /> Sticky note</button>
-                    <button className="menu-item" onClick={() => { void addComponent("text"); close(); }}><FileText size={15} /> Text</button>
+                    <button className="menu-item" onClick={() => { void addComponent("text"); close(); }}><Type size={15} /> Text</button>
                   </>
                 )}
               </ToolbarMenu>
@@ -2014,14 +2195,6 @@ export function App() {
                   {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
                 </IconButton>
               </div>
-              <div className="toolbar-group segmented pane-controls" aria-label="Pane visibility">
-                <IconButton label={leftPaneOpen ? "Hide left pane" : "Show left pane"} active={leftPaneOpen} onClick={toggleLeftPane}>
-                  {leftPaneOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
-                </IconButton>
-                <IconButton label={rightPaneOpen ? "Hide right pane" : "Show right pane"} active={rightPaneOpen} onClick={toggleRightPane}>
-                  {rightPaneOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
-                </IconButton>
-              </div>
             </div>
           </>
         ) : (
@@ -2035,12 +2208,17 @@ export function App() {
         <>
       {leftPaneOpen ? (
         <aside className="left-panel">
-        <div className="palette-mode-switch" role="tablist" aria-label="Palette mode">
-          <button role="tab" aria-selected={paletteMode === "mockup"} className={paletteMode === "mockup" ? "active" : ""} onClick={() => setPaletteMode("mockup")}>
-            <Component size={14} /> Mockup
-          </button>
-          <button role="tab" aria-selected={paletteMode === "diagram"} className={paletteMode === "diagram" ? "active" : ""} onClick={() => setPaletteMode("diagram")}>
-            <Shapes size={14} /> Diagram
+        <div className="pane-top">
+          <div className="palette-mode-switch" role="tablist" aria-label="Palette mode">
+            <button role="tab" aria-selected={paletteMode === "mockup"} className={paletteMode === "mockup" ? "active" : ""} onClick={() => setPaletteMode("mockup")}>
+              <Component size={14} /> Mockup
+            </button>
+            <button role="tab" aria-selected={paletteMode === "diagram"} className={paletteMode === "diagram" ? "active" : ""} onClick={() => setPaletteMode("diagram")}>
+              <Shapes size={14} /> Diagram
+            </button>
+          </div>
+          <button className="pane-collapse" title="Hide panel" aria-label="Hide left panel" onClick={toggleLeftPane}>
+            <PanelLeftClose size={15} />
           </button>
         </div>
 
@@ -2120,40 +2298,18 @@ export function App() {
           {project.artboards.length ? (
             <div className="layers-list">
               {project.artboards.map((artboard) => (
-                <div key={artboard.id} className="layer-group">
-                  <div className={classNames("layer-row artboard-layer", selectedIds.includes(artboard.id) && "selected", !artboard.visible && "hidden-layer")}>
-                    <button className="layer-name" title={`${artboard.name} · ${artboard.id}`} onClick={(event) => select([artboard.id], event.shiftKey)}>
-                      <Frame size={13} />
-                      <span>{artboard.name}</span>
-                    </button>
-                    <div className="layer-actions">
-                      <button className="layer-act" title={artboard.visible ? "Hide" : "Show"} onClick={() => runOperation({ type: "update_artboard", artboardId: artboard.id, patch: { visible: !artboard.visible } })}>
-                        {artboard.visible ? <Eye size={12} /> : <EyeOff size={12} />}
-                      </button>
-                      <button className="layer-act" title={artboard.locked ? "Unlock" : "Lock"} onClick={() => runOperation({ type: "update_artboard", artboardId: artboard.id, patch: { locked: !artboard.locked } })}>
-                        {artboard.locked ? <Lock size={12} /> : <LockOpen size={12} />}
-                      </button>
-                      <button className="layer-act danger" title="Delete frame" onClick={() => runOperation({ type: "delete_artboard", artboardId: artboard.id })}><Trash2 size={12} /></button>
-                    </div>
-                  </div>
-                  {(elementIndexes.layerRootsByArtboard.get(artboard.id) ?? []).map((element) => (
-                    <LayerNode
-                      key={element.id}
-                      element={element}
-                      project={project}
-                      indexes={elementIndexes}
-                      depth={0}
-                      selectedIds={selectedIds}
-                      onSelect={select}
-                      onUpdate={(elementId, patch) => runOperation({ type: "update_element", elementId, patch })}
-                      onDelete={(elementId) => runOperation({ type: "delete_element", elementId })}
-                      onReorder={(elementId, delta) => {
-                        const target = project.elements.find((candidate) => candidate.id === elementId);
-                        if (target) void runOperation({ type: "update_element", elementId, patch: { zIndex: Math.max(0, target.zIndex + delta) } });
-                      }}
-                    />
-                  ))}
-                </div>
+                <FrameLayerGroup
+                  key={artboard.id}
+                  artboard={artboard}
+                  project={project}
+                  indexes={elementIndexes}
+                  selectedIds={selectedIds}
+                  onSelect={select}
+                  onUpdate={(elementId, patch) => runOperation({ type: "update_element", elementId, patch })}
+                  onDelete={(elementId) => runOperation({ type: "delete_element", elementId })}
+                  onUpdateArtboard={(patch) => runOperation({ type: "update_artboard", artboardId: artboard.id, patch })}
+                  onDeleteArtboard={() => runOperation({ type: "delete_artboard", artboardId: artboard.id })}
+                />
               ))}
             </div>
           ) : (
@@ -2161,6 +2317,9 @@ export function App() {
           )}
         </CollapsiblePanel>
         </aside>
+      ) : null}
+      {!chromeHidden && leftPaneOpen ? (
+        <div className="pane-resize-handle left-handle" title="Drag to resize" onPointerDown={(event) => beginPaneResize("left", event)} />
       ) : null}
 
       <section
@@ -2189,7 +2348,7 @@ export function App() {
                   editingTextId={editingTextId}
                   onSelect={(ids, additive) => select(ids, additive)}
                   onDragStart={beginDrag}
-                  onConnectTap={onConnectTap}
+                  onConnectTap={onConnectDown}
                   onBeginTextEdit={setEditingTextId}
                   onCommitText={commitTextEdit}
                 />
@@ -2202,12 +2361,60 @@ export function App() {
               <div key={`h-${y}`} className="snap-guide horizontal" style={{ top: y }} />
             ))}
             {marquee ? <div className="marquee-box" style={{ left: marquee.x, top: marquee.y, width: marquee.width, height: marquee.height }} /> : null}
+            {connectDraft?.moved
+              ? (() => {
+                  const source = boundsForSelection(project, [connectDraft.fromId]);
+                  if (!source) return null;
+                  const x1 = source.x + source.width / 2;
+                  const y1 = source.y + source.height / 2;
+                  const minX = Math.min(x1, connectDraft.x) - 8;
+                  const minY = Math.min(y1, connectDraft.y) - 8;
+                  const width = Math.abs(connectDraft.x - x1) + 16;
+                  const height = Math.abs(connectDraft.y - y1) + 16;
+                  return (
+                    <svg className="connect-draft-line" style={{ left: minX, top: minY, width, height }} viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
+                      <line x1={x1 - minX} y1={y1 - minY} x2={connectDraft.x - minX} y2={connectDraft.y - minY} strokeWidth={2 / zoom} strokeDasharray={`${6 / zoom} ${5 / zoom}`} />
+                      <circle cx={connectDraft.x - minX} cy={connectDraft.y - minY} r={4 / zoom} />
+                    </svg>
+                  );
+                })()
+              : null}
+            {selectionBounds && !drag && !marquee && !connectDraft && !editingTextId && tool === "select" ? (
+              <div className="selection-actionbar-anchor" style={{ left: selectionBounds.x + selectionBounds.width / 2, top: selectionBounds.y }}>
+                <div className="selection-actionbar" style={{ transform: `scale(${1 / zoom}) translate(-50%, calc(-100% - 14px))` }} onPointerDown={(event) => event.stopPropagation()}>
+                  {selectedIds.length > 1 ? <span className="sel-count">{selectedIds.length}</span> : null}
+                  <button title="Duplicate (⌘D)" onClick={() => void duplicateSelection()}><Copy size={14} /></button>
+                  <button title="Group" disabled={selectedElementCount < 2 || selectedElementCount !== selectedIds.length} onClick={() => void groupSelection()}><Group size={14} /></button>
+                  {selectedIds.length === 2 ? (
+                    <button title="Connect these two" onClick={() => void createConnectorBetween(selectedIds[0]!, selectedIds[1]!)}><Spline size={14} /></button>
+                  ) : null}
+                  <span className="sel-divider" />
+                  <button className="danger" title="Delete (⌫)" onClick={() => void deleteSelection()}><Trash2 size={14} /></button>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
+        {tool !== "select" ? (
+          <div className="mode-pill" role="status">
+            {tool === "connect" ? <Spline size={15} /> : <PenTool size={15} />}
+            <strong>{tool === "connect" ? "Connector" : "Ink"}</strong>
+            <span>{tool === "connect" ? (connectFromId ? "now click or drag to the target" : "drag from one shape to another") : "draw inside a frame"}</span>
+            <button onClick={() => { setTool("select"); setConnectFromId(null); connectDraftRef.current = null; setConnectDraft(null); setStatus("Select tool"); }}>
+              Done <kbd>esc</kbd>
+            </button>
+          </div>
+        ) : null}
       </section>
 
       {rightPaneOpen ? (
         <aside className="right-panel">
+        <div className="pane-top">
+          <button className="pane-collapse" title="Hide panel" aria-label="Hide right panel" onClick={toggleRightPane}>
+            <PanelRightClose size={15} />
+          </button>
+          <span className="pane-top-label">{selectedIds.length ? `${selectedIds.length} selected` : "Nothing selected"}</span>
+        </div>
         <CollapsiblePanel id="inspector" icon={<Save size={16} />} title="Inspector" collapsed={Boolean(collapsedPanels.inspector)} onToggle={togglePanel}>
           {selectedIds.length > 1 ? (
             <SelectionInspector project={project} selectedIds={selectedIds} onFocus={focusSelection} onGroup={groupSelection} onDuplicate={duplicateSelection} onDelete={deleteSelection} onLayout={runLayout} />
@@ -2262,6 +2469,20 @@ export function App() {
           <BackupPanel status={storageStatus?.backup} onBackupNow={backupAllNow} onOpenRestore={() => setRestoreOpen(true)} />
         </CollapsiblePanel>
         </aside>
+      ) : null}
+      {!chromeHidden && rightPaneOpen ? (
+        <div className="pane-resize-handle right-handle" title="Drag to resize" onPointerDown={(event) => beginPaneResize("right", event)} />
+      ) : null}
+
+      {!chromeHidden && !leftPaneOpen ? (
+        <button className="pane-edge-tab left" title="Show left panel" aria-label="Show left panel" onClick={toggleLeftPane}>
+          <PanelLeftOpen size={15} />
+        </button>
+      ) : null}
+      {!chromeHidden && !rightPaneOpen ? (
+        <button className="pane-edge-tab right" title="Show right panel" aria-label="Show right panel" onClick={toggleRightPane}>
+          <PanelRightOpen size={15} />
+        </button>
       ) : null}
 
         <ZoomControl
@@ -2470,6 +2691,154 @@ function HomeView({
   );
 }
 
+/** Small per-type glyph so the layers list is scannable at a glance. */
+function layerIconFor(type: BoardElement["type"]): React.ReactNode {
+  switch (type) {
+    case "text":
+      return <Type size={12} />;
+    case "sticky":
+      return <StickyNote size={12} />;
+    case "image":
+    case "screenshotOverlay":
+      return <ImageIcon size={12} />;
+    case "shape":
+      return <Shapes size={12} />;
+    case "group":
+      return <Group size={12} />;
+    case "ink":
+      return <PenTool size={12} />;
+    case "line":
+      return <Minus size={12} />;
+    case "table":
+    case "list":
+      return <Table size={12} />;
+    case "chart":
+    case "sparkline":
+      return <Activity size={12} />;
+    default:
+      return <Box size={12} />;
+  }
+}
+
+/** Layer row name: click selects, double-click renames inline. */
+function RenamableName({
+  icon,
+  name,
+  displayName,
+  title,
+  onSelect,
+  onRename
+}: {
+  icon: React.ReactNode;
+  name: string;
+  displayName?: string;
+  title: string;
+  onSelect: (additive: boolean) => void;
+  onRename: (name: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(name);
+  function commit() {
+    setEditing(false);
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== name) onRename(trimmed);
+  }
+  if (editing) {
+    return (
+      <input
+        className="layer-rename"
+        value={value}
+        autoFocus
+        onFocus={(event) => event.currentTarget.select()}
+        onChange={(event) => setValue(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") commit();
+          if (event.key === "Escape") {
+            setValue(name);
+            setEditing(false);
+          }
+          event.stopPropagation();
+        }}
+        onPointerDown={(event) => event.stopPropagation()}
+      />
+    );
+  }
+  return (
+    <button
+      className="layer-name"
+      title={`${title} — double-click to rename`}
+      onClick={(event) => onSelect(event.shiftKey)}
+      onDoubleClick={() => {
+        setValue(name);
+        setEditing(true);
+      }}
+    >
+      <span className="layer-icon">{icon}</span>
+      <span className="layer-label">{displayName ?? name}</span>
+    </button>
+  );
+}
+
+function FrameLayerGroup({
+  artboard,
+  project,
+  indexes,
+  selectedIds,
+  onSelect,
+  onUpdate,
+  onDelete,
+  onUpdateArtboard,
+  onDeleteArtboard
+}: {
+  artboard: Artboard;
+  project: BoardProject;
+  indexes: ElementIndexes;
+  selectedIds: string[];
+  onSelect: (ids: string[], additive?: boolean) => void;
+  onUpdate: (elementId: string, patch: Record<string, unknown>) => void;
+  onDelete: (elementId: string) => void;
+  onUpdateArtboard: (patch: Partial<Artboard>) => void;
+  onDeleteArtboard: () => void;
+}) {
+  const roots = indexes.layerRootsByArtboard.get(artboard.id) ?? [];
+  const [open, setOpen] = useState(true);
+  const forceOpen = roots.some((element) => selectedIds.includes(element.id) || hasSelectedDescendant(element.id, project, selectedIds));
+  const expanded = open || forceOpen;
+  const count = project.elements.filter((element) => element.artboardId === artboard.id).length;
+  return (
+    <div className="layer-group">
+      <div className={classNames("layer-row artboard-layer", selectedIds.includes(artboard.id) && "selected", !artboard.visible && "hidden-layer")}>
+        <button className="layer-chevron" aria-label={expanded ? "Collapse frame" : "Expand frame"} disabled={!roots.length} onClick={() => setOpen((current) => !current)}>
+          {roots.length ? (expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />) : <span className="layer-spacer" />}
+        </button>
+        <RenamableName
+          icon={<Frame size={12} />}
+          name={artboard.name}
+          title={artboard.name}
+          onSelect={(additive) => onSelect([artboard.id], additive)}
+          onRename={(name) => onUpdateArtboard({ name })}
+        />
+        {count ? <span className="layer-count">{count}</span> : null}
+        <div className="layer-actions">
+          <button className="layer-act" title={artboard.visible ? "Hide" : "Show"} onClick={() => onUpdateArtboard({ visible: !artboard.visible })}>
+            {artboard.visible ? <Eye size={12} /> : <EyeOff size={12} />}
+          </button>
+          <button className="layer-act" title={artboard.locked ? "Unlock" : "Lock"} onClick={() => onUpdateArtboard({ locked: !artboard.locked })}>
+            {artboard.locked ? <Lock size={12} /> : <LockOpen size={12} />}
+          </button>
+          <button className="layer-act danger" title="Delete frame" onClick={onDeleteArtboard}><Trash2 size={12} /></button>
+        </div>
+      </div>
+      {expanded
+        ? roots.map((element) => (
+            <LayerNode key={element.id} element={element} project={project} indexes={indexes} depth={1} selectedIds={selectedIds} onSelect={onSelect} onUpdate={onUpdate} onDelete={onDelete} />
+          ))
+        : null}
+    </div>
+  );
+}
+
 function LayerNode({
   element,
   project,
@@ -2478,8 +2847,7 @@ function LayerNode({
   selectedIds,
   onSelect,
   onUpdate,
-  onDelete,
-  onReorder
+  onDelete
 }: {
   element: BoardElement;
   project: BoardProject;
@@ -2489,19 +2857,27 @@ function LayerNode({
   onSelect: (ids: string[], additive?: boolean) => void;
   onUpdate: (elementId: string, patch: Record<string, unknown>) => void;
   onDelete: (elementId: string) => void;
-  onReorder: (elementId: string, delta: number) => void;
 }) {
   const children = indexes.layerChildrenByParent.get(element.id) ?? [];
+  // Nested children start collapsed to keep the list calm; selecting a descendant reveals it.
+  const [open, setOpen] = useState(false);
+  const forceOpen = hasSelectedDescendant(element.id, project, selectedIds);
+  const expanded = open || forceOpen;
   return (
     <>
-      <div className={classNames("layer-row element-layer", selectedIds.includes(element.id) && "selected", !element.visible && "hidden-layer")} style={{ "--indent": `${depth * 12}px` } as React.CSSProperties}>
-        <button className="layer-name" onClick={(event) => onSelect([element.id], event.shiftKey)} title={`${element.name} · ${element.id}`}>
-          {children.length ? <ChevronDown size={11} /> : <span className="layer-spacer" />}
-          <span>{element.name}</span>
+      <div className={classNames("layer-row element-layer", selectedIds.includes(element.id) && "selected", !element.visible && "hidden-layer")} style={{ "--indent": `${depth * 14}px` } as React.CSSProperties}>
+        <button className="layer-chevron" aria-label={expanded ? "Collapse" : "Expand"} disabled={!children.length} onClick={() => setOpen((current) => !current)}>
+          {children.length ? (expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />) : <span className="layer-spacer" />}
         </button>
+        <RenamableName
+          icon={layerIconFor(element.type)}
+          name={element.name}
+          displayName={compactName(element.name)}
+          title={`${element.name} · ${element.type}`}
+          onSelect={(additive) => onSelect([element.id], additive)}
+          onRename={(name) => onUpdate(element.id, { name })}
+        />
         <div className="layer-actions">
-          <button className="layer-act" title="Bring forward" onClick={() => onReorder(element.id, 1)}><ArrowUpToLine size={12} /></button>
-          <button className="layer-act" title="Send backward" onClick={() => onReorder(element.id, -1)}><ArrowDownToLine size={12} /></button>
           <button className="layer-act" title={element.visible ? "Hide" : "Show"} onClick={() => onUpdate(element.id, { visible: !element.visible })}>
             {element.visible ? <Eye size={12} /> : <EyeOff size={12} />}
           </button>
@@ -2511,9 +2887,11 @@ function LayerNode({
           <button className="layer-act danger" title="Delete" onClick={() => onDelete(element.id)}><Trash2 size={12} /></button>
         </div>
       </div>
-      {children.map((child) => (
-        <LayerNode key={child.id} element={child} project={project} indexes={indexes} depth={depth + 1} selectedIds={selectedIds} onSelect={onSelect} onUpdate={onUpdate} onDelete={onDelete} onReorder={onReorder} />
-      ))}
+      {expanded
+        ? children.map((child) => (
+            <LayerNode key={child.id} element={child} project={project} indexes={indexes} depth={depth + 1} selectedIds={selectedIds} onSelect={onSelect} onUpdate={onUpdate} onDelete={onDelete} />
+          ))
+        : null}
     </>
   );
 }
@@ -2543,7 +2921,7 @@ function ArtboardView({
   editingTextId: string | null;
   onSelect: (ids: string[], additive?: boolean) => void;
   onDragStart: (state: DragState) => void;
-  onConnectTap: (id: string) => void;
+  onConnectTap: (id: string, event: { clientX: number; clientY: number }) => void;
   onBeginTextEdit: (id: string) => void;
   onCommitText: (id: string, value: string) => void;
 }) {
@@ -2574,7 +2952,7 @@ function ArtboardView({
         onPointerDown={(event) => {
           event.stopPropagation();
           if (tool === "connect") {
-            onConnectTap(artboard.id);
+            onConnectTap(artboard.id, event);
             return;
           }
           onSelect([artboard.id], event.shiftKey);
@@ -2593,7 +2971,7 @@ function ArtboardView({
         onPointerDown={(event) => {
           if (tool === "connect") {
             event.stopPropagation();
-            onConnectTap(artboard.id);
+            onConnectTap(artboard.id, event);
             return;
           }
           if (tool === "ink") return; // let the ink pointer pipeline on the viewport handle it
@@ -2698,7 +3076,7 @@ function ElementView({
   editingTextId: string | null;
   onSelect: (ids: string[], additive?: boolean) => void;
   onDragStart: (state: DragState) => void;
-  onConnectTap: (id: string) => void;
+  onConnectTap: (id: string, event: { clientX: number; clientY: number }) => void;
   onBeginTextEdit: (id: string) => void;
   onCommitText: (id: string, value: string) => void;
 }) {
@@ -2723,7 +3101,7 @@ function ElementView({
         if (tool === "ink") return; // ink draws through elements
         if (tool === "connect") {
           event.stopPropagation();
-          onConnectTap(element.id);
+          onConnectTap(element.id, event);
           return;
         }
         if (editing) {
@@ -3272,6 +3650,61 @@ function ArtboardInspector({ artboard, onChange, onDelete }: { artboard: Artboar
   );
 }
 
+const CONNECTOR_PORT_OPTIONS: Array<{ value: BoardConnector["fromPort"]; label: string }> = [
+  { value: "auto", label: "Auto" },
+  { value: "n", label: "Top" },
+  { value: "e", label: "Right" },
+  { value: "s", label: "Bottom" },
+  { value: "w", label: "Left" }
+];
+
+/** Tiny arrowhead preview glyph for the segmented pickers. */
+function ArrowGlyph({ kind }: { kind: BoardConnector["arrowEnd"] }) {
+  return (
+    <svg viewBox="0 0 26 12" width={26} height={12} aria-hidden="true" className="arrow-glyph">
+      <line x1={1} y1={6} x2={kind === "none" ? 25 : 17} y2={6} strokeWidth={1.6} />
+      {kind === "arrow" ? <path d="M17 6 L11 2 M17 6 L11 10" fill="none" strokeWidth={1.6} /> : null}
+      {kind === "triangle" ? <path d="M25 6 L15 1.5 L15 10.5 Z" strokeWidth={1} className="filled" /> : null}
+      {kind === "dot" ? <circle cx={20} cy={6} r={3.4} strokeWidth={1} className="filled" /> : null}
+      {kind === "diamond" ? <path d="M25 6 L20 1.5 L15 6 L20 10.5 Z" strokeWidth={1} className="filled" /> : null}
+      {kind === "arrow" ? <line x1={17} y1={6} x2={25} y2={6} strokeWidth={1.6} /> : null}
+    </svg>
+  );
+}
+
+function SegmentedControl<T extends string>({
+  label,
+  value,
+  options,
+  onChange
+}: {
+  label: string;
+  value: T;
+  options: Array<{ value: T; label?: string; render?: React.ReactNode; title?: string }>;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="field">
+      <span>{label}</span>
+      <div className="segmented-control" role="radiogroup" aria-label={label}>
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={value === option.value}
+            title={option.title ?? option.label ?? option.value}
+            className={classNames("segment", value === option.value && "active")}
+            onClick={() => onChange(option.value)}
+          >
+            {option.render ?? option.label ?? option.value}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ConnectorInspector({
   project,
   connector,
@@ -3283,68 +3716,46 @@ function ConnectorInspector({
   onChange: (patch: Record<string, unknown>) => void;
   onDelete: () => void;
 }) {
-  const routings: BoardConnector["routing"][] = ["curved", "orthogonal", "straight"];
   const arrowheads: BoardConnector["arrowEnd"][] = ["none", "arrow", "triangle", "dot", "diamond"];
+  const arrowOptions = arrowheads.map((kind) => ({ value: kind, render: <ArrowGlyph kind={kind} />, title: kind === "none" ? "None" : kind[0]!.toUpperCase() + kind.slice(1) }));
+  function swapDirection() {
+    onChange({
+      fromArtboardId: connector.toArtboardId,
+      toArtboardId: connector.fromArtboardId,
+      fromElementId: connector.toElementId ?? null,
+      toElementId: connector.fromElementId ?? null,
+      fromPort: connector.toPort,
+      toPort: connector.fromPort,
+      arrowStart: connector.arrowEnd,
+      arrowEnd: connector.arrowStart
+    });
+  }
   return (
-    <div className="inspector-fields">
-      <ReadOnlyField label="Connector" value={`${connectorEndName(project, connector, "from")} → ${connectorEndName(project, connector, "to")}`} />
-      <Field label="Label" value={connector.label ?? ""} onChange={(label) => onChange({ label })} />
-      <label className="field">
-        <span>Routing</span>
-        <select value={connector.routing} onChange={(event) => onChange({ routing: event.target.value })}>
-          {routings.map((routing) => (
-            <option key={routing} value={routing}>
-              {routing[0]!.toUpperCase() + routing.slice(1)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="field-grid two-col">
-        <label className="field">
-          <span>Start arrow</span>
-          <select value={connector.arrowStart} onChange={(event) => onChange({ arrowStart: event.target.value })}>
-            {arrowheads.map((head) => (
-              <option key={head} value={head}>
-                {head}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>End arrow</span>
-          <select value={connector.arrowEnd} onChange={(event) => onChange({ arrowEnd: event.target.value })}>
-            {arrowheads.map((head) => (
-              <option key={head} value={head}>
-                {head}
-              </option>
-            ))}
-          </select>
-        </label>
+    <div className="inspector-fields connector-inspector">
+      <div className="connector-endpoints">
+        <span className="endpoint-chip" title="Start of the connector">{connectorEndName(project, connector, "from")}</span>
+        <button className="endpoint-swap" title="Swap direction" aria-label="Swap connector direction" onClick={swapDirection}>
+          <ArrowLeftRight size={13} />
+        </button>
+        <span className="endpoint-chip" title="End of the connector">{connectorEndName(project, connector, "to")}</span>
       </div>
-      <div className="field-grid two-col">
-        <label className="field">
-          <span>From port</span>
-          <select value={connector.fromPort} onChange={(event) => onChange({ fromPort: event.target.value })}>
-            {["auto", "n", "s", "e", "w"].map((port) => (
-              <option key={port} value={port}>
-                {port}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>To port</span>
-          <select value={connector.toPort} onChange={(event) => onChange({ toPort: event.target.value })}>
-            {["auto", "n", "s", "e", "w"].map((port) => (
-              <option key={port} value={port}>
-                {port}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <ColorField label="Stroke" value={connector.style.stroke ?? "#2563EB"} onChange={(stroke) => onChange({ style: { stroke } })} />
-      <NumberField label="Stroke width" value={connector.style.strokeWidth ?? 2} min={1} max={8} step={0.5} onChange={(strokeWidth) => onChange({ style: { strokeWidth } })} />
+      <Field label="Label (shown on the line)" value={connector.label ?? ""} onChange={(label) => onChange({ label })} />
+      <SegmentedControl
+        label="Path"
+        value={connector.routing}
+        options={[
+          { value: "curved", label: "Curved" },
+          { value: "orthogonal", label: "Elbow" },
+          { value: "straight", label: "Straight" }
+        ]}
+        onChange={(routing) => onChange({ routing })}
+      />
+      <SegmentedControl label="Start cap" value={connector.arrowStart} options={arrowOptions} onChange={(arrowStart) => onChange({ arrowStart })} />
+      <SegmentedControl label="End cap" value={connector.arrowEnd} options={arrowOptions} onChange={(arrowEnd) => onChange({ arrowEnd })} />
+      <SegmentedControl label="Leaves start from" value={connector.fromPort} options={CONNECTOR_PORT_OPTIONS.map((option) => ({ value: option.value, label: option.label }))} onChange={(fromPort) => onChange({ fromPort })} />
+      <SegmentedControl label="Enters target at" value={connector.toPort} options={CONNECTOR_PORT_OPTIONS.map((option) => ({ value: option.value, label: option.label }))} onChange={(toPort) => onChange({ toPort })} />
+      <ColorField label="Line color" value={connector.style.stroke ?? "#2563EB"} onChange={(stroke) => onChange({ style: { stroke } })} />
+      <NumberField label="Thickness" value={connector.style.strokeWidth ?? 2} min={1} max={8} step={0.5} onChange={(strokeWidth) => onChange({ style: { strokeWidth } })} />
       <button className="wide-action danger" onClick={onDelete}>
         <Trash2 size={15} /> Delete connector
       </button>

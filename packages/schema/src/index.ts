@@ -992,6 +992,10 @@ export function applyBoardOperation(project: BoardProject, rawOperation: BoardOp
       if (operation.patch.style && typeof operation.patch.style === "object" && !Array.isArray(operation.patch.style)) {
         merged.style = { ...existing.style, ...(operation.patch.style as Record<string, unknown>) } as BoardStyle;
       }
+      // Endpoint element ids are optional; an explicit null in the patch detaches them.
+      // (JSON transport drops `undefined`, so null is the only way to clear — used by swap-direction.)
+      if (operation.patch.fromElementId === null) delete (merged as Record<string, unknown>).fromElementId;
+      if (operation.patch.toElementId === null) delete (merged as Record<string, unknown>).toElementId;
       next.connectors[index] = ConnectorSchema.parse(merged);
       next.selection = [operation.connectorId];
       break;

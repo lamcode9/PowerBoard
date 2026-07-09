@@ -78,6 +78,19 @@ User installed TestFlight build 202607042139 and reported 10 problems. Root caus
 - [x] **#6 Look & feel:** glass tokened toolbar, dot-grid canvas, deeper frame shadows, floating zoom pill, refined dropdown menus, template cards, connect dialog; dark-mode parity via token remap. Verified light + dark.
 - [x] Verified all 10 in-browser; typecheck + build clean; 43/43 tests; mcp:check 36 tools. Ship: commit+push, `fastlane mac beta`.
 
+## Phase 8 — UX overhaul v3 (second-run feedback, 2026-07-09)
+
+User installed 202607051047 and reported 7 problems. Theme of this round: **the chrome must get out of the way and every mode/action must be self-evident**. Root causes read from `App.tsx` + `styles.css`.
+
+- [x] **#2 Panes own their controls:** collapse buttons live ON each pane (not topbar); collapsed panes leave a floating edge tab to reopen; panes resizable by dragging their inner edge (left 216–400px, right 248–440px, persisted UI pref); remove pane buttons from topbar-right.
+- [x] **#3 Selection is actionable:** floating selection toolbar above the selection (world-anchored, inverse-scaled) with Duplicate / Group / Connect(=2) / Delete; `deleteSelection` extended to frames + connectors (today: elements only — pressing ⌫ on a frame does nothing); shift-click + marquee unchanged.
+- [x] **#4 Layers worth looking at:** wider default pane; row actions hover-only so names get full width; per-type icons; real expand/collapse chevrons (children collapsed by default); double-click rename inline; frame header rows with child count; indent guides.
+- [x] **#5 Insert menu actually usable:** (root cause found: topbar's backdrop-filter stacking context painted dropdown menus UNDER the canvas — fixed with explicit z-index; also killed the opacity keyframe that could leave menus invisible) replace the preset `<select>`-inside-dropdown with a designed picker — device preset rows (name + size) that insert on click at viewport center, plus diagram canvas / sticky / text quick-adds.
+- [x] **#6 Modes are visible:** top-center mode pill whenever tool ≠ select ("Connector — drag between shapes · Esc"), crosshair cursors, hover outlines on connect targets, and **drag-to-connect** with a live preview line (click-click still works); new connector auto-selected.
+- [x] **#7 Connector inspector humans can read:** (update_connector now accepts explicit null to detach element endpoints — swap works across mixed endpoint kinds; schema test added) endpoints header with swap button; segmented Path (Curved/Elbow/Straight) + visual arrowhead pickers; "Top/Right/Bottom/Left/Auto" anchors instead of n/s/e/w; sectioned layout.
+- [x] **#1 Beauty pass:** (also removed the legacy layer-row rules that forced 18px names, and made hidden layer actions display:none so names get full width) systematic de-border — panels become soft surfaces (hairline-via-shadow), tonal buttons instead of 1px-bordered boxes, filled inputs with accent focus ring, quieter section headers, dark-mode parity.
+- [x] Verified every flow in-browser (selection bar, multi-select, frame ⌫+undo, drag-to-connect + preview line + mode pill, insert menu end-to-end, rename, pane collapse/edge-tab/resize+persist, dark parity, board left pristine 3/13/3); typecheck + build + 44/44 tests + mcp:check ok.
+
 ## Phase 6 — Later (parked until user says go)
 
 - [ ] Online/shared boards: Supabase sync via persisted op-log; share links; presence for >1 human.

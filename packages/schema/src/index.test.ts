@@ -199,6 +199,46 @@ describe("Connector v2 + diagram operations", () => {
     expect(next.selection).toEqual([connector.id]);
   });
 
+  it("swaps connector direction via update_connector, clearing element endpoints with explicit null", () => {
+    let project = createDefaultProject();
+    const artboardId = project.artboards[0]!.id;
+    const shape = createElementFromPreset("shape", artboardId, 40, 40);
+    project = applyBoardOperation(project, { type: "add_element", element: shape });
+    const toArtboardId = project.artboards[1]!.id;
+    project = applyBoardOperation(project, {
+      type: "add_connector",
+      connector: {
+        id: "conn_swap",
+        fromArtboardId: artboardId,
+        toArtboardId,
+        fromElementId: shape.id,
+        fromPort: "auto",
+        toPort: "auto",
+        routing: "orthogonal",
+        arrowStart: "none",
+        arrowEnd: "arrow",
+        waypoints: [],
+        labelPosition: 0.5,
+        style: {}
+      }
+    });
+    const connector = project.connectors.find((candidate) => candidate.id === "conn_swap")!;
+    const swapped = applyBoardOperation(project, {
+      type: "update_connector",
+      connectorId: connector.id,
+      patch: {
+        fromArtboardId: connector.toArtboardId,
+        toArtboardId: connector.fromArtboardId,
+        fromElementId: connector.toElementId ?? null,
+        toElementId: connector.fromElementId ?? null
+      }
+    }).connectors.find((candidate) => candidate.id === "conn_swap")!;
+    expect(swapped.fromArtboardId).toBe(toArtboardId);
+    expect(swapped.toArtboardId).toBe(artboardId);
+    expect(swapped.fromElementId).toBeUndefined();
+    expect(swapped.toElementId).toBe(shape.id);
+  });
+
   it("deletes connectors and rejects unknown ids", () => {
     const project = createDefaultProject();
     const next = applyBoardOperation(project, { type: "delete_connector", connectorId: project.connectors[0]!.id });
