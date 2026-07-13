@@ -132,12 +132,12 @@
     </div>
   </div>
 
-  <div class="phase">
+  <div class="phase done">
     <div class="num">3</div>
     <div class="body">
-      <h3>Component consolidation — map chaos to tokens <span class="tag">Then</span></h3>
-      <p>Retire the 15 radii → the radius scale, the 48 shadows → the elevation scale, magic-number spacing → the spacing scale. Unify the control family (icon button, text button, segmented, field, select) onto one set of sizes, radii, hover/active/focus states — all token-driven, so dark mode and future re-themes inherit for free. Run <em>remove-until-it-breaks</em>: delete borders and boxes where spacing already does the job (continuing the recent de-bordered pass).</p>
-      <p class="kv"><b>Files:</b> <code>styles.css</code> (broad but mechanical). <b>Risk:</b> visual regressions — verify per surface in-browser. <b>Done when:</b> no raw radius/shadow literals remain in chrome; every control shares one spec.</p>
+      <h3>Component consolidation — map chaos to tokens <span class="tag ok">Mostly shipped</span></h3>
+      <p>Retired all 15 radius literals → the <code>--r-*</code> scale (only <code>50%</code> circles + one tokenized compound remain), the elevation shadows → <code>--shadow-1/2/3</code> (with <code>--shadow-pop</code> now aliasing <code>--shadow-2</code>, the deferred Phase-1 item), the card-delete focus literals → <code>var(--focus-ring)</code>, and the in-scale spacing → <code>--space-*</code> (value-preserving). Left by design: agent-pulse keyframes, hairline shadows, accent glows, the canvas artboard shadow, and off-scale tight gaps (6/7px).</p>
+      <p class="kv"><b>Verified:</b> home + board in light &amp; dark, console clean, build/typecheck/46 tests green. <b>Deferred within Phase 3:</b> harmonizing the control family to the exact 28/32px + <code>--r-md</code> spec — a deliberate visual change, and controls already share hover/active states + tokenized radii, so it's polish rather than a gap.</p>
     </div>
   </div>
 
