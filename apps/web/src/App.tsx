@@ -1733,6 +1733,33 @@ export function App() {
     }
   }
 
+  /** Briefly re-mark elements agent-active so their canvas pulse replays (click-to-focus, no edit). */
+  function pulseElements(ids: string[]) {
+    const clean = uniqueStrings(ids);
+    if (!clean.length) return;
+    const expiresAt = Date.now() + 1400;
+    setAgentActiveUntilById((current) => {
+      const next = { ...current };
+      for (const id of clean) next[id] = Math.max(next[id] ?? 0, expiresAt);
+      return next;
+    });
+    const timer = window.setTimeout(() => {
+      const now = Date.now();
+      setAgentActiveUntilById((current) => {
+        let changed = false;
+        const next = { ...current };
+        for (const [id, expiry] of Object.entries(current)) {
+          if (expiry <= now) {
+            delete next[id];
+            changed = true;
+          }
+        }
+        return changed ? next : current;
+      });
+    }, 1500);
+    agentActivityTimersRef.current.push(timer);
+  }
+
   function focusAgentTargets(ids: string[]) {
     const current = projectRef.current;
     if (!current) return;
@@ -1740,6 +1767,7 @@ export function App() {
     if (!bounds) return;
     void select(ids);
     focusBounds(bounds, "Focused agent edit");
+    pulseElements(ids);
   }
 
   function escapeAction() {
@@ -2478,7 +2506,7 @@ export function App() {
         </CollapsiblePanel>
 
         <CollapsiblePanel id="agent-activity" icon={<Bot size={16} />} title="Agent activity" collapsed={Boolean(collapsedPanels["agent-activity"])} onToggle={togglePanel}>
-          <AgentFeed entries={agentFeed} onFocusTargets={focusAgentTargets} />
+          <AgentFeed entries={agentFeed} live={agentActiveIds.size > 0} onFocusTargets={focusAgentTargets} onConnect={() => setConnectOpen(true)} />
         </CollapsiblePanel>
 
         <CollapsiblePanel id="flows" icon={<Send size={16} />} title="Flows & connectors" collapsed={Boolean(collapsedPanels.flows)} onToggle={togglePanel}>

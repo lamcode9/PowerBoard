@@ -141,12 +141,12 @@
     </div>
   </div>
 
-  <div class="phase">
+  <div class="phase done">
     <div class="num">4</div>
     <div class="body">
-      <h3>The signature surface — the live agent canvas <span class="tag amber">The differentiator</span></h3>
-      <p>This is where PowerBoard earns "stunning." Make agent work a designed, watchable moment: <strong>element pulse highlights</strong> in the accent when an agent edits, a <strong>readable Agent Activity timeline</strong> (human-language entries, click-to-focus the touched element, live "editing…" badge), and a connect-agent flow that feels alive. Echo the icon's board-and-pulse motif in the empty state. Ambient motion stays slow and calm; never blocks input; respects reduce-motion.</p>
-      <p class="kv"><b>Files:</b> <code>components/AgentFeed.tsx</code>, canvas element layer + pulse CSS, agent-activity panel, WS <code>agentActivity</code> surface. <b>Done when:</b> a human genuinely enjoys watching an agent edit — the design bar in <code>CLAUDE.md</code>.</p>
+      <h3>The signature surface — the live agent canvas <span class="tag ok">Shipped</span></h3>
+      <p>Made agent work a designed, watchable moment. <strong>Element pulses</strong> now ride the brand accent (retinted from the old teal — one accent; the motion, not the colour, distinguishes an agent edit from a selection). Added a live <strong>"editing…" badge</strong> while a burst of ops is in flight, <strong>click-to-focus</strong> that re-pulses the touched element, a <strong>"Connect an agent"</strong> action, and an <strong>empty-state motif</strong> echoing the app icon's board-and-pulse. Every pulse is guarded under <code>prefers-reduced-motion</code> (the static agent-active outline stays, so touched elements are still identifiable). Read-only against the WS/operation model — consumes the existing <code>agentActivity</code> stream.</p>
+      <p class="kv"><b>Verified live:</b> drove real <code>move_resize_element</code> agent edits through the server — empty motif renders, the feed live-updates (humanized message + "Claude · just now"), the inspector syncs in real time, the canvas element accent-highlights; build/typecheck/46 tests green. <b>Files:</b> <code>components/AgentFeed.tsx</code>, <code>App.tsx</code>, <code>styles.css</code>.</p>
     </div>
   </div>
 

@@ -875,7 +875,7 @@ button {
 
 .connector.agent-active path {
   animation: agentConnectorPulse 2200ms ease-out;
-  filter: drop-shadow(0 0 7px rgba(20, 184, 166, 0.36));
+  filter: drop-shadow(0 0 7px rgba(var(--accent-rgb), 0.36));
 }
 
 .artboard-frame {
@@ -987,7 +987,7 @@ button {
 }
 
 .board-element.agent-active:not(.selected) {
-  outline: 1px solid rgba(20, 184, 166, 0.86);
+  outline: 1px solid rgba(var(--accent-rgb), 0.86);
   outline-offset: 2px;
 }
 
@@ -1000,8 +1000,8 @@ button {
 
 .agent-pulse-outline {
   position: absolute;
-  border: 1.5px solid rgba(20, 184, 166, 0.92);
-  box-shadow: 0 0 0 0 rgba(20, 184, 166, 0.28);
+  border: 1.5px solid rgba(var(--accent-rgb), 0.92);
+  box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.28);
   animation: agentElementPulse 2400ms ease-out;
 }
 
@@ -1552,39 +1552,39 @@ button {
 
 @keyframes agentElementPulse {
   0% {
-    border-color: rgba(20, 184, 166, 0);
-    box-shadow: 0 0 0 0 rgba(20, 184, 166, 0);
+    border-color: rgba(var(--accent-rgb), 0);
+    box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0);
     opacity: 0;
   }
   12% {
-    border-color: rgba(20, 184, 166, 0.92);
-    box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.18);
+    border-color: rgba(var(--accent-rgb), 0.92);
+    box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.18);
     opacity: 1;
   }
   56% {
-    border-color: rgba(20, 184, 166, 0.72);
-    box-shadow: 0 0 0 12px rgba(20, 184, 166, 0.08);
+    border-color: rgba(var(--accent-rgb), 0.72);
+    box-shadow: 0 0 0 12px rgba(var(--accent-rgb), 0.08);
     opacity: 0.92;
   }
   100% {
-    border-color: rgba(20, 184, 166, 0);
-    box-shadow: 0 0 0 18px rgba(20, 184, 166, 0);
+    border-color: rgba(var(--accent-rgb), 0);
+    box-shadow: 0 0 0 18px rgba(var(--accent-rgb), 0);
     opacity: 0;
   }
 }
 
 @keyframes agentFramePulse {
   0% {
-    outline-color: rgba(20, 184, 166, 0.0);
-    box-shadow: 0 24px 70px rgba(15, 23, 42, 0.20), 0 0 0 0 rgba(20, 184, 166, 0);
+    outline-color: rgba(var(--accent-rgb), 0.0);
+    box-shadow: 0 24px 70px rgba(15, 23, 42, 0.20), 0 0 0 0 rgba(var(--accent-rgb), 0);
   }
   16% {
-    outline-color: rgba(20, 184, 166, 0.86);
-    box-shadow: 0 24px 70px rgba(15, 23, 42, 0.20), 0 0 0 5px rgba(20, 184, 166, 0.18);
+    outline-color: rgba(var(--accent-rgb), 0.86);
+    box-shadow: 0 24px 70px rgba(15, 23, 42, 0.20), 0 0 0 5px rgba(var(--accent-rgb), 0.18);
   }
   100% {
     outline-color: rgba(15, 23, 42, 0.10);
-    box-shadow: 0 24px 70px rgba(15, 23, 42, 0.20), 0 0 0 16px rgba(20, 184, 166, 0);
+    box-shadow: 0 24px 70px rgba(15, 23, 42, 0.20), 0 0 0 16px rgba(var(--accent-rgb), 0);
   }
 }
 
@@ -1887,8 +1887,8 @@ button {
   height: 7px;
   margin-top: 5px;
   border-radius: 50%;
-  background: #14b8a6;
-  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.16);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.16);
 }
 .agent-feed-body {
   display: flex;
@@ -1922,6 +1922,84 @@ button {
 .agent-feed-empty small {
   font-size: 11px;
   opacity: 0.85;
+}
+
+/* ---- Phase 4: live agent canvas ---- */
+/* Agent pulses ride the brand accent (retinted from teal). Reduce-motion drops the animation
+   but keeps the static agent-active outline, so touched elements are still identifiable. */
+@media (prefers-reduced-motion: reduce) {
+  .connector.agent-active path,
+  .artboard-frame.agent-active .artboard-surface,
+  .agent-pulse-outline,
+  .agent-live-dot,
+  .agent-empty-pulse,
+  .agent-empty-pulse-ring {
+    animation: none;
+  }
+}
+
+/* "editing…" badge — shown while a burst of agent ops is in flight. */
+.agent-live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  align-self: flex-start;
+  margin-bottom: var(--space-2);
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px var(--space-2) 3px 6px;
+}
+.agent-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  animation: agentLivePulse 1100ms var(--ease-in-out) infinite;
+}
+@keyframes agentLivePulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.6); }
+}
+
+/* Empty-state motif — echoes the app icon's board-and-pulse. */
+.agent-empty-motif {
+  color: var(--accent);
+}
+.agent-empty-pulse {
+  transform-origin: 20px 24px;
+  animation: agentEmptyDot 2600ms var(--ease-in-out) infinite;
+}
+.agent-empty-pulse-ring {
+  transform-origin: 20px 24px;
+  animation: agentEmptyRing 2600ms var(--ease-out) infinite;
+}
+@keyframes agentEmptyDot {
+  0%, 100% { opacity: 0.7; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
+@keyframes agentEmptyRing {
+  0% { opacity: 0.22; transform: scale(0.55); }
+  70%, 100% { opacity: 0; transform: scale(1.5); }
+}
+.agent-empty-connect {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--space-2);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--r-md);
+  background: var(--accent-tint);
+  color: var(--accent-strong);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: var(--space-2) var(--space-3);
+}
+.agent-empty-connect:hover {
+  background: var(--accent-soft);
 }
 
 /* ---- Align grid + toggle rows ---- */
