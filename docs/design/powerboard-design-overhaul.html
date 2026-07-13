@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PowerBoard — Design Overhaul Plan</title>
+<style>
+  :root{
+    --ink:#14121f; --sub:#4a4658; --faint:#928da3; --line:#e7e4ee;
+    --bg:#fbfaff; --card:#ffffff;
+    --accent:#5b62d6; --accent-strong:#3a41ad; --accent-soft:#ecedfb; --accent-line:#cdd0f4;
+    --warn:#b4341c; --warn-soft:#fef1ee; --ok:#2f8a52; --ok-soft:#eafaf0;
+    --amber:#9a6a10; --amber-soft:#fdf4e3; --gray:#6b6878; --gray-soft:#f0eef5;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+    --swatch-ring:rgba(20,18,31,.12);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --ink:#ece9f6; --sub:#a9a4bd; --faint:#6d6982; --line:#282536;
+      --bg:#0d0b16; --card:#151321;
+      --accent:#8a93f0; --accent-strong:#b3baf7; --accent-soft:#191c33; --accent-line:#2c3350;
+      --warn:#ff9d8a; --warn-soft:#241615; --ok:#7fd39f; --ok-soft:#14231a;
+      --amber:#e6b667; --amber-soft:#241d10; --gray:#8f8ba0; --gray-soft:#1c1a28;
+      --swatch-ring:rgba(255,255,255,.14);
+    }
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font:16px/1.55 Inter,-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;color:var(--ink);background:var(--bg);padding:48px 24px 96px;-webkit-font-smoothing:antialiased}
+  main{max-width:900px;margin:0 auto}
+  h1{font-size:31px;line-height:1.15;letter-spacing:-.022em;margin-bottom:10px}
+  .sub{color:var(--sub);font-size:16.5px;max-width:66ch}
+  .meta{color:var(--faint);font-size:13px;margin-top:14px}
+  h2{font-size:21px;letter-spacing:-.012em;margin:56px 0 14px;padding-top:26px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 8px;letter-spacing:-.006em}
+  p{margin:0 0 12px;color:var(--sub)}
+  p strong,li strong,td strong{color:var(--ink)}
+  ul,ol{margin:0 0 16px 22px;color:var(--sub)}
+  li{margin-bottom:6px}
+  em{color:var(--ink);font-style:normal;background:linear-gradient(transparent 62%,var(--accent-soft) 62%)}
+  code{font:13px var(--mono);background:var(--gray-soft);border-radius:5px;padding:1px 5px;color:var(--ink)}
+  .brief{background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:14px;padding:22px 26px;margin:24px 0;font-size:16.5px;line-height:1.62;color:var(--ink)}
+  .brief b{color:var(--accent-strong)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:18px 22px;margin-bottom:14px}
+  .card h3{margin-top:0;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+  .tag{display:inline-block;font:600 10.5px/1 var(--mono);letter-spacing:.05em;color:var(--accent-strong);background:var(--accent-soft);border-radius:99px;padding:5px 9px;text-transform:uppercase;white-space:nowrap}
+  .tag.warn{color:var(--warn);background:var(--warn-soft)}
+  .tag.ok{color:var(--ok);background:var(--ok-soft)}
+  .tag.amber{color:var(--amber);background:var(--amber-soft)}
+  .tag.gray{color:var(--gray);background:var(--gray-soft)}
+  table{width:100%;border-collapse:collapse;font-size:14px;margin:16px 0 8px}
+  th{text-align:left;font-weight:600;color:var(--ink);border-bottom:2px solid var(--line);padding:8px 10px}
+  td{border-bottom:1px solid var(--line);padding:9px 10px;color:var(--sub);vertical-align:top}
+  td:first-child{color:var(--ink);font-weight:500}
+  .scroll{overflow-x:auto}
+  .phase{display:flex;gap:16px;margin-bottom:16px;background:var(--card);border:1px solid var(--line);border-radius:13px;padding:16px 20px}
+  .phase .num{flex:0 0 36px;height:36px;border-radius:11px;background:var(--accent);color:#fff;font:700 15px/36px var(--mono);text-align:center}
+  .phase.done .num{background:var(--ok)}
+  .phase .body{flex:1;min-width:0}
+  .phase h3{margin:2px 0 6px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+  .phase p{margin-bottom:6px;font-size:14.5px}
+  .kv{font-size:13px;color:var(--faint);margin-top:6px}
+  .kv b{color:var(--sub);font-weight:600}
+  .swatches{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0 6px}
+  .sw{display:flex;flex-direction:column;gap:6px;align-items:center;font:600 11px/1 var(--mono);color:var(--sub)}
+  .chip{width:64px;height:44px;border-radius:10px;box-shadow:inset 0 0 0 1px var(--swatch-ring)}
+  .lede{font-size:15px;color:var(--sub);max-width:68ch;margin-bottom:18px}
+  .footnote{color:var(--faint);font-size:13px;margin-top:44px;border-top:1px solid var(--line);padding-top:16px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:640px){.two{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+  <h1>PowerBoard — Design Overhaul Plan</h1>
+  <p class="sub">A first-principles path from "clean, functional web app" to a canvas tool that looks like it belongs next to Linear, Figma, and Excalidraw. What "stunning" concretely means here, the design debt in the way, a phased plan to close it — and a <a href="#build-brief">build brief</a> with everything the executing agent needs to ship each phase without re-deriving decisions.</p>
+  <p class="meta">2026-07-13 · Prepared by Claude (Opus 4.8), reviewed &amp; extended by Claude (Fable 5) · Execution checklist: <code>tasks/todo.md</code> · Design doctrine: <code>playbooks/design.md</code> · Brand kit: <code>docs/brand/powerboard-brand.html</code></p>
+
+  <h2>North star</h2>
+  <div class="brief">
+    PowerBoard should feel like a <b>calm, precise instrument</b> — the chrome disappears, the canvas and the user's work carry the screen, and the one place we spend the novelty budget is <b>watching agents edit live</b>. Depth comes from light, layering, and restraint, not decoration. One accent (a professional slate indigo), one grid, every state designed, dark mode as designed surfaces. The bar is not "better than last week" — it's <b>best-in-class for a canvas tool</b>.
+  </div>
+  <p class="lede">Reference points to measure each screen against — the right comparison is the category leader, not our previous draft:</p>
+  <div class="scroll"><table>
+    <tr><th>Surface</th><th>Measure against</th><th>What we're borrowing</th></tr>
+    <tr><td>Canvas &amp; connectors</td><td>Figma · Excalidraw · tldraw</td><td>Cursor-centered zoom, snapping, marquee, weightless pan, crisp selection affordances</td></tr>
+    <tr><td>Panels &amp; density</td><td>Linear · Raycast</td><td>Tight 4/8 rhythm, one deliberate density, keyboard-first, restrained borders</td></tr>
+    <tr><td>Dark surfaces</td><td>Vercel · Linear</td><td>Layered greys, tuned saturation, dithered ambient gradients — never inversion</td></tr>
+    <tr><td>The signature moment</td><td>(ours to own)</td><td>Live agent activity: pulse highlights, a readable feed, "watch it work"</td></tr>
+  </table></div>
+
+  <h2>Principles we're holding to</h2>
+  <div class="two">
+    <div class="card"><h3>60 · 30 · 10, one accent</h3><p>Dominant neutral, secondary surface, exactly one accent with exactly one job: the primary action and the key live datum. Everything else is neutral. No second blue, no decorative color.</p></div>
+    <div class="card"><h3>Everything on a 4 / 8 grid</h3><p>Spacing from a scale (4/8/12/16/24/32/48), never arbitrary. Proximity encodes relationship. Whitespace does the work borders currently do.</p></div>
+    <div class="card"><h3>Every state is designed</h3><p>Empty, loading, error, offline, success — for every panel and dialog. Skeletons over spinners. A failed save fails <em>loud</em> (ties to the persistence P0).</p></div>
+    <div class="card"><h3>Spend novelty on the canvas</h3><p>The agent-live canvas is the one signature element. Everything around it stays conventional so muscle memory (⌘Z, space-pan, ⌘0) is never surprised.</p></div>
+  </div>
+
+  <h2>Where we are — the design debt</h2>
+  <p class="lede">A full inventory of <code>apps/web/src/styles.css</code> (3,458 lines) and <code>App.tsx</code> (4,668 lines) surfaced a real, coherent foundation with specific, fixable debt. The tokens exist for color; the scales for everything else do not.</p>
+  <div class="card"><h3><span class="tag ok">Fixed</span> Accent was scattered across ~20 hardcoded blues</h3><p><code>--accent</code> existed but hover / active / selected states reinvented a blue ramp inline (<code>#1d4ed8</code>, <code>#93c5fd</code>, <code>#3b82f6</code>, <code>#eff6ff</code>…), so the app read blue while the icon is violet. <strong>Now consolidated</strong> into one derived ramp — see Phase 0 and the appendix.</p></div>
+  <div class="card"><h3><span class="tag warn">Debt</span> No spacing, radius, size, or motion scale</h3><p>Zero <code>--space-*</code>, <code>--r-*</code>, <code>--dur-*</code>, or <code>--ease-*</code> tokens (the existing <code>--text-1/2</code> are text <em>colors</em>, not a type scale). Consequences visible in the file: <strong>19 distinct border-radius values</strong> (both <code>99px</code> and <code>999px</code> used for pills, plus one-off compounds like <code>8px 8px 3px 3px</code>), <strong>50 ad-hoc box-shadows</strong> despite a <code>--shadow-pop</code> token existing, and padding/gaps as magic numbers throughout.</p></div>
+  <div class="card"><h3><span class="tag warn">Debt</span> Inter is named but never loaded</h3><p>The stack is <code>Inter, ui-sans-serif, system-ui…</code> but no font is bundled, so Inter only renders where the OS already has it. Worse, <strong>~65 rules use non-standard weights</strong> (620/650/690/720/760/780/820/850…) that snap to the nearest system weight — a type hierarchy that mostly isn't rendering as authored. Bundling Inter <em>variable</em> would technically make those weights render; we collapse them anyway (Phase 2) because seventeen distinct weights is noise, not hierarchy.</p></div>
+  <div class="card"><h3><span class="tag amber">Watch</span> Board-content default palette still leaks blue</h3><p>New shapes default to a blue-tinted fill (<code>#EFF6FF</code>) and connectors seed to <code>#2563EB</code>; the <code>.mock-*</code> primitives paint eyebrow labels / chart bars in blue. These are <em>content</em>, not chrome — a deliberate decision, teed up below.</p></div>
+
+  <h2>The plan</h2>
+
+  <div class="phase done">
+    <div class="num">0</div>
+    <div class="body">
+      <h3>Brand-accent migration <span class="tag ok">Shipped</span></h3>
+      <p>Rebuilt the two lonely accent tokens into a coherent, mode-aware <strong>slate-indigo ramp</strong> (<code>--accent</code>, <code>-hover</code>, <code>-strong</code>, <code>-fg</code>, <code>-rgb</code>, <code>-soft</code>, <code>-tint</code>, <code>-border</code>) — originally derived from the app icon's violet, later re-toned to a calmer slate indigo (see appendix). Replaced every scattered hardcoded blue in chrome with a token; glows now retint per theme via <code>rgba(var(--accent-rgb), α)</code>. Added <code>--accent-fg</code> so accent fills flip to dark ink in dark mode (fixing a latent white-on-light-violet contrast bug on primary buttons).</p>
+      <p class="kv"><b>Verified:</b> light + dark, both AA; console clean; computed styles confirm nested-var glows resolve. <b>Files:</b> <code>apps/web/src/styles.css</code>. <b>Left intentionally:</b> two <code>.mock-*</code> content literals (Phase 5 decision).</p>
+    </div>
+  </div>
+
+  <div class="phase done">
+    <div class="num">1</div>
+    <div class="body">
+      <h3>Design-token foundation <span class="tag ok">Shipped</span></h3>
+      <p>Added the missing scales as CSS custom properties beside the color tokens: <strong>spacing</strong> (<code>--space-1…8</code> = 4/8/12/16/24/32/48/64), <strong>radius</strong> (<code>--r-xs/sm/md/lg/xl/pill</code>), <strong>elevation</strong> (<code>--shadow-1/2/3</code> + the existing <code>--shadow-pop</code>), <strong>motion</strong> (<code>--dur-fast</code> 120ms / <code>--dur-med</code> 200ms, <code>--ease-out</code>, <code>--ease-in-out</code>), and a two-layer <strong><code>--focus-ring</code></strong> built from the accent. Defined in both the light <code>:root</code> and <code>[data-theme="dark"]</code> blocks (dark redefines shadows + focus-ring inner); <code>prefers-reduced-motion</code> zeroes the durations at the token layer.</p>
+      <p class="kv"><b>Verified:</b> nothing consumes the tokens yet → zero visual change (0 <code>var()</code> refs); typecheck/build/test green. <b>Deviation from brief:</b> kept <code>--shadow-pop</code> explicit instead of aliasing it to <code>--shadow-2</code> — the alias would restyle 4 live popovers and break the zero-visual-change gate, so that remap moves to Phase 3 consolidation.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="num">2</div>
+    <div class="body">
+      <h3>Typography system <span class="tag">Next</span></h3>
+      <p>Bundle <strong>Inter variable</strong> (self-hosted <code>woff2</code>, no CDN — offline-first) so the type actually renders as designed. Collapse the odd weights into a 4-step scale (400 / 500 / 600 / 700) and a ~5-step size scale (12 / 13 / 14 / 17 / 22 / 28). Line-height 1.4–1.6 on body; <strong>tabular figures</strong> on every number users compare (zoom %, element sizes, board counts, coordinates). Weight carries hierarchy alongside size — never color alone.</p>
+      <p class="kv"><b>Files:</b> <code>styles.css</code>, <code>apps/web/index.html</code>, a bundled font asset. <b>Done when:</b> squint test passes; numeric readouts don't shift width as they change.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="num">3</div>
+    <div class="body">
+      <h3>Component consolidation — map chaos to tokens <span class="tag">Then</span></h3>
+      <p>Retire the 15 radii → the radius scale, the 48 shadows → the elevation scale, magic-number spacing → the spacing scale. Unify the control family (icon button, text button, segmented, field, select) onto one set of sizes, radii, hover/active/focus states — all token-driven, so dark mode and future re-themes inherit for free. Run <em>remove-until-it-breaks</em>: delete borders and boxes where spacing already does the job (continuing the recent de-bordered pass).</p>
+      <p class="kv"><b>Files:</b> <code>styles.css</code> (broad but mechanical). <b>Risk:</b> visual regressions — verify per surface in-browser. <b>Done when:</b> no raw radius/shadow literals remain in chrome; every control shares one spec.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="num">4</div>
+    <div class="body">
+      <h3>The signature surface — the live agent canvas <span class="tag amber">The differentiator</span></h3>
+      <p>This is where PowerBoard earns "stunning." Make agent work a designed, watchable moment: <strong>element pulse highlights</strong> in the accent when an agent edits, a <strong>readable Agent Activity timeline</strong> (human-language entries, click-to-focus the touched element, live "editing…" badge), and a connect-agent flow that feels alive. Echo the icon's board-and-pulse motif in the empty state. Ambient motion stays slow and calm; never blocks input; respects reduce-motion.</p>
+      <p class="kv"><b>Files:</b> <code>components/AgentFeed.tsx</code>, canvas element layer + pulse CSS, agent-activity panel, WS <code>agentActivity</code> surface. <b>Done when:</b> a human genuinely enjoys watching an agent edit — the design bar in <code>CLAUDE.md</code>.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="num">5</div>
+    <div class="body">
+      <h3>Every state, every screen + content palette <span class="tag">Then</span></h3>
+      <p>Audit each panel and dialog for the five states. Home view gets a first-run <strong>empty</strong> pitch that teaches and points at the primary action; board open uses <strong>skeletons</strong>, not spinners, with zero layout jump; save / backup <strong>failure is loud</strong> (status-bar state + console error, never a swallowed <code>catch</code>). Decide and apply the <strong>board-content default palette</strong> (the blue leaks): recommendation — neutral ink defaults for shapes/connectors so users' mockups aren't forced into brand violet, with the accent offered on demand.</p>
+      <p class="kv"><b>Files:</b> <code>App.tsx</code> (HomeView, inspectors, seed defaults ~1279/3332/3757), dialogs, backup panel. <b>Done when:</b> no undesigned state ships; a failed write is impossible to miss.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="num">6</div>
+    <div class="body">
+      <h3>Canvas craft &amp; conventions <span class="tag">Then</span></h3>
+      <p>Verify and refine the load-bearing muscle memory: ⌘Z / ⌘⇧Z, space-pan, cursor-centered zoom, ⌘0 / ⌘1, marquee select, inertial pan. Polish selection ring, snap guides, connector ports and midpoint handles to crisp hairlines on the new token scale. This is where a canvas tool feels expensive or cheap.</p>
+      <p class="kv"><b>Files:</b> canvas viewport + camera, connector layer, snap-guide render. <b>Done when:</b> every gesture matches Figma/Excalidraw expectations; nothing feels laggy or off-grid.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="num">7</div>
+    <div class="body">
+      <h3>Accessibility floor + the taste pass <span class="tag">Ship gate</span></h3>
+      <p>Non-negotiable a11y: a visible <code>--focus-ring</code> on every interactive element, a label on every icon-only button (mostly present), AA contrast in both modes (the ramp is designed for it), layout survives large text. Then <code>playbooks/design.md</code> §10: squint test, remove-until-it-breaks, hunt the cheap tells (&gt;2 accents, 5+ sizes, boxes-in-boxes, pure-black shadows, banded gradients), and a side-by-side against the best-in-class references above.</p>
+      <p class="kv"><b>Done when:</b> a staff engineer <em>and</em> a senior designer would both sign off — the <code>CLAUDE.md</code> Definition of Done.</p>
+    </div>
+  </div>
+
+  <h2>Decisions — resolved</h2>
+  <p class="lede">Previously open questions, now decided so the build agent is never blocked mid-phase. Override any of these before triggering a session; otherwise they're the spec.</p>
+  <div class="card"><h3><span class="tag ok">Decided</span> Board-content defaults go neutral ink</h3><p>New shapes/connectors and <code>.mock-*</code> primitives stop seeding blue. A user designing a blue app should get blue by <em>choice</em>, not inheritance — and forcing brand violet into user content would repeat the same mistake in a new hue. Exact values are specified in the Phase 5 brief below. This changes only <strong>fallback rendering</strong>: elements with an explicit stored <code>style</code> are untouched, and no board JSON is migrated.</p></div>
+  <div class="card"><h3><span class="tag ok">Decided</span> Bundle Inter variable — yes</h3><p>Self-hosted <code>woff2</code> (~110&nbsp;KB, one file, weights 100–900), no CDN — offline-first is non-negotiable. Single highest-ROI polish step; the current type hierarchy largely isn't rendering as authored without it.</p></div>
+  <div class="card"><h3><span class="tag gray">Sequence</span> Foundation before beauty</h3><p>Phases 1–3 (tokens → type → consolidation) are unglamorous but make Phase 4's signature work fast and consistent. Order is as numbered; Phase 4 may start once Phase 1 lands if the differentiator is wanted sooner. Phases 1+2 are small enough to ship in one session; 3 deserves its own.</p></div>
+
+  <h2 id="build-brief">Build brief — instructions for the executing agent</h2>
+  <p class="lede">Written for a Claude (Opus 4.8) session with no memory of this conversation. Everything needed to execute is in this section plus the files it names. Do not re-litigate the resolved decisions above; do flag evidence that one is wrong.</p>
+
+  <h3>Session protocol</h3>
+  <ol>
+    <li><strong>Read first, in order:</strong> <code>CLAUDE.md</code> (project brief — the design bar and Definition of Done live there), <code>/Users/km/Developer/playbooks/design.md</code> in full, this document in full, then <code>tasks/todo.md</code> for current state.</li>
+    <li><strong>One phase per work block.</strong> Announce which phase you're executing, write its checklist into <code>tasks/todo.md</code>, execute, verify, commit. Never batch two phases into one commit. Exception: Phases 1+2 may share a session but still commit separately.</li>
+    <li><strong>Run the app to verify:</strong> <code>npm run dev</code> from the repo root (Express server on <code>127.0.0.1:4318</code>, Vite web app). Check <em>light and dark</em> (toggle via OS or DevTools <code>prefers-color-scheme</code> emulation), console clean, on real surfaces: home view, an open board with elements + connectors, the inspector, dialogs.</li>
+    <li><strong>Ship gates per phase:</strong> <code>npm run typecheck</code> · <code>npm run build</code> · <code>npm test</code> all pass; in-browser verification done; then commit with a message naming the phase.</li>
+    <li><strong>If reality contradicts this brief</strong> (a line number moved, a token already exists, a claim is stale): trust the code, adapt minimally, and note the discrepancy in the commit body — don't improvise a different design silently.</li>
+  </ol>
+
+  <h3>Hard guardrails (violating any of these = stop and reassess)</h3>
+  <ul>
+    <li><strong>Phases 1–3 and 6–7 are chrome-only.</strong> Touch <code>apps/web/src/styles.css</code>, <code>apps/web/index.html</code>, <code>apps/web/src/App.tsx</code> (presentation code), and font assets. Do <em>not</em> touch <code>packages/schema</code>, the operation model, <code>boardService.ts</code>, or MCP tools in any phase of this plan.</li>
+    <li><strong>Never migrate or rewrite stored board JSON.</strong> Phase 5's palette change edits fallback literals in rendering/seeding code paths only.</li>
+    <li><strong>No network assets.</strong> Fonts self-hosted under <code>apps/web/public/fonts/</code>. No Google Fonts link, no CDN.</li>
+    <li><strong>Persistence P0:</strong> no <code>localStorage</code> writes anywhere; a failed save/backup fails loud (visible status + console error); no <code>catch {}</code> on write paths.</li>
+    <li><strong>One accent.</strong> Every new color derives from existing tokens or the neutral ramp. If you feel the need for a second accent, the design is wrong — simplify instead.</li>
+    <li><strong>Don't break muscle memory.</strong> ⌘Z/⌘⇧Z, space-pan, cursor-centered zoom, ⌘0/⌘1, marquee select must behave identically after every phase.</li>
+  </ul>
+
+  <h3>Phase 1 — token foundation (exact spec)</h3>
+  <p>Add beside the accent ramp in <code>styles.css</code> (light-mode <code>:root</code> block near line ~1539; mirror mode-dependent ones in the dark block near ~2103):</p>
+  <div class="card"><p style="margin:0"><code>--space-1:4px</code> <code>--space-2:8px</code> <code>--space-3:12px</code> <code>--space-4:16px</code> <code>--space-5:24px</code> <code>--space-6:32px</code> <code>--space-7:48px</code> <code>--space-8:64px</code><br>
+  <code>--r-xs:4px</code> <code>--r-sm:6px</code> <code>--r-md:8px</code> <code>--r-lg:12px</code> <code>--r-xl:16px</code> <code>--r-pill:999px</code><br>
+  <code>--shadow-1</code> (resting card: <code>0 1px 2px rgba(15,18,34,.06), 0 1px 1px rgba(15,18,34,.04)</code>) · <code>--shadow-2</code> (popover/dropdown: <code>0 4px 12px rgba(15,18,34,.10), 0 1px 3px rgba(15,18,34,.06)</code>) · <code>--shadow-3</code> (modal/drag: <code>0 16px 40px rgba(15,18,34,.16), 0 4px 12px rgba(15,18,34,.08)</code>) — dark mode redefines all three with deeper alpha (~1.6×) since shadows read weaker on dark surfaces. Keep <code>--shadow-pop</code> as an alias of <code>--shadow-2</code>.<br>
+  <code>--dur-fast:120ms</code> <code>--dur-med:200ms</code> <code>--ease-out:cubic-bezier(.2,.8,.2,1)</code> <code>--ease-in-out:cubic-bezier(.45,0,.25,1)</code><br>
+  <code>--focus-ring: 0 0 0 2px var(--bg, #fff), 0 0 0 4px var(--accent)</code> (two-layer so it reads on any fill; dark block swaps the inner color)</p></div>
+  <p>Add once, near the tokens: <code>@media (prefers-reduced-motion: reduce){ :root{ --dur-fast:0ms; --dur-med:0ms } }</code> so reduce-motion is honored at the token layer and every later animation inherits it for free.</p>
+  <p class="kv"><b>Done when:</b> tokens exist in both modes, zero visual change (nothing consumes them yet), typecheck/build/test pass. <b>Commit:</b> <code>Phase 1: design-token foundation (spacing, radius, elevation, motion, focus ring)</code>.</p>
+
+  <h3>Phase 2 — typography (exact spec)</h3>
+  <ul>
+    <li>Vendor <code>InterVariable.woff2</code> (and italic only if actually used — it isn't today, so skip it) into <code>apps/web/public/fonts/</code>. Source: rsms.me/inter release zip. Add <code>@font-face</code> at the top of <code>styles.css</code> with <code>font-weight: 100 900; font-display: swap; font-style: normal</code>, plus <code>font-feature-settings</code> defaults off (Inter's are fine stock).</li>
+    <li>Preload it in <code>apps/web/index.html</code>: <code>&lt;link rel="preload" as="font" type="font/woff2" crossorigin&gt;</code>.</li>
+    <li>Collapse weights: grep <code>font-weight</code> in <code>styles.css</code>; map 400–520→400, 540–660→500, 680–780→600, 800+→700. Judgment allowed on individual rules (a hero title may deserve 700 where the mapping says 600) — but the final file contains only 400/500/600/700.</li>
+    <li>Normalize sizes onto 12/13/14/17/22/28px. Most existing sizes are already close; snap outliers to the nearest step.</li>
+    <li>Apply <code>font-variant-numeric: tabular-nums</code> to every numeric readout users compare: zoom %, coordinate/size fields in the inspector, board counts, connector labels if numeric.</li>
+  </ul>
+  <p class="kv"><b>Done when:</b> DevTools computed style shows "Inter" (rendered, not fallback) on body text; numeric readouts hold width as values change; squint test — hierarchy survives blur. <b>Commit:</b> <code>Phase 2: bundle Inter variable, collapse type scale to 4 weights / 6 sizes</code>.</p>
+
+  <h3>Phase 3 — component consolidation (mechanical, verify per surface)</h3>
+  <ul>
+    <li><strong>Radii:</strong> map every literal to the scale — 2/4/5→<code>--r-xs</code> · 6/7→<code>--r-sm</code> · 8/9/10/11→<code>--r-md</code> · 12/13→<code>--r-lg</code> · 16/18→<code>--r-xl</code> · 99/999→<code>--r-pill</code>. <code>50%</code> (circles) and <code>inherit</code> stay literal; compound radii (e.g. <code>8px 8px 3px 3px</code>) recompose from tokens.</li>
+    <li><strong>Shadows:</strong> classify all ~50 <code>box-shadow</code> rules into <code>--shadow-1/2/3</code>. Accent glows keep the <code>rgba(var(--accent-rgb), α)</code> pattern but standardize to at most three glow recipes (subtle / active / drag). Inset hairlines stay literal.</li>
+    <li><strong>Spacing:</strong> convert padding/gap/margin magic numbers to <code>--space-*</code> in the chrome you touch; don't chase every instance in one pass — full coverage on panels, toolbar, inspector, dialogs is the bar.</li>
+    <li><strong>Controls:</strong> unify icon button, text button, segmented control, field, select onto one spec: heights 28/32px, <code>--r-md</code>, shared hover (<code>--accent-tint</code>), active (<code>--accent-soft</code>), and <code>--focus-ring</code> on <code>:focus-visible</code>.</li>
+    <li><strong>Remove-until-it-breaks:</strong> where the new spacing rhythm makes a border or box redundant, delete it (continues the de-bordered pass in commit <code>aa39031</code>).</li>
+  </ul>
+  <p class="kv"><b>Done when:</b> <code>grep -c "border-radius: [0-9]" styles.css</code> returns ~0 outside circles/compounds; every control shares one spec; each surface eyeballed in both modes before commit. <b>Risk:</b> highest visual-regression phase — verify home, board, inspector, dialogs, context menus individually. <b>Commit:</b> <code>Phase 3: consolidate radii/shadows/spacing onto token scales, unify control family</code>.</p>
+
+  <h3>Phase 4 — the live agent canvas (the differentiator)</h3>
+  <p>Files: <code>apps/web/src/components/AgentFeed.tsx</code>, the canvas element layer in <code>App.tsx</code>, <code>styles.css</code>. Read-only with respect to the WS protocol — consume <code>agentActivity</code> messages as they exist today.</p>
+  <ul>
+    <li><strong>Element pulse:</strong> when an agent operation touches an element, pulse it — accent box-shadow expanding from <code>0 0 0 0 rgba(var(--accent-rgb),.45)</code> to <code>0 0 0 12px rgba(var(--accent-rgb),0)</code>, two beats, <code>--dur-med</code>-derived timing, then settle. Zero pulse when <code>--dur-med</code> is 0 (reduce-motion inherits from Phase 1).</li>
+    <li><strong>Feed entries:</strong> human sentences ("Moved <em>Login button</em> to the header", not op JSON), relative timestamps, agent name + live "editing…" badge while a burst of ops is in flight (debounce ~2s), click an entry → camera centers on the touched element with a brief pulse.</li>
+    <li><strong>Empty state:</strong> echo the app icon's board-and-pulse motif (see <code>docs/brand/</code>) in the agent panel's empty state, with one line of copy and the connect-agent action.</li>
+    <li>Ambient motion is slow and calm, never blocks input, never animates layout (transform/opacity only).</li>
+  </ul>
+  <p class="kv"><b>Done when:</b> drive a real edit via MCP (<code>npm run mcp:check</code>, then a small <code>update_element</code> against a test board) and watching it genuinely delights — the <code>CLAUDE.md</code> bar. <b>Commit:</b> <code>Phase 4: live agent canvas — element pulses, readable activity feed, click-to-focus</code>.</p>
+
+  <h3>Phase 5 — every state + neutral content palette (exact values)</h3>
+  <ul>
+    <li><strong>Palette swap</strong> (fallback literals only; grep <code>#2563EB</code> and <code>#EFF6FF</code> in <code>App.tsx</code> — currently lines ~1279, 1383, 3232–33, 3332–33, 3442, 3757): connector/shape stroke fallback <code>#2563EB</code> → <strong><code>#44403C</code></strong> (warm neutral ink, reads on the canvas in both modes); shape fill fallback <code>#EFF6FF</code> → <strong><code>#F7F6F3</code></strong> (warm paper, clearly "unstyled" rather than "blue-themed"). Chart-line and <code>.mock-*</code> eyebrow/bar blues → same neutral ink, or the element's own stored style when present. Verify an <em>existing</em> board with explicitly-styled elements renders unchanged.</li>
+    <li><strong>Five states per surface</strong> (empty / loading / error / offline / success) for: HomeView, board canvas, agent panel, backup panel, each dialog. Home gets a first-run empty pitch pointing at the primary action; board open gets skeletons (no spinner, no layout jump); save/backup failure is loud — persistent status-bar state + console error.</li>
+  </ul>
+  <p class="kv"><b>Done when:</b> no undesigned state ships (simulate: empty data, slow network, server down, kill the server mid-save); a failed write is impossible to miss. <b>Commit:</b> <code>Phase 5: designed states everywhere; neutral ink content defaults (de-blue)</code>.</p>
+
+  <h3>Phase 6 — canvas craft</h3>
+  <p>Verify then refine: ⌘Z/⌘⇧Z, space-pan, cursor-centered zoom, ⌘0/⌘1, marquee, inertial pan. Selection ring becomes a 1px accent hairline with corner handles sized off the token scale; snap guides are 1px accent hairlines; connector ports and midpoint handles get crisp hover targets (visual 8px, hit area ≥16px). Test at 50% / 100% / 400% zoom — hairlines must not blur or double.</p>
+  <p class="kv"><b>Done when:</b> every gesture matches Figma/Excalidraw expectations; nothing feels laggy or off-grid. <b>Commit:</b> <code>Phase 6: canvas craft — selection, snapping, connector affordances on the token scale</code>.</p>
+
+  <h3>Phase 7 — accessibility floor + taste pass (ship gate)</h3>
+  <p><code>--focus-ring</code> visible on every interactive element via <code>:focus-visible</code>; every icon-only button has an <code>aria-label</code> (audit, don't assume); AA contrast both modes (spot-check with DevTools); layout survives 125% text zoom. Then run <code>playbooks/design.md</code> §10 in full: squint test, remove-until-it-breaks, cheap-tells hunt, side-by-side screenshots against Linear / Figma / Excalidraw.</p>
+  <p class="kv"><b>Done when:</b> a staff engineer and a senior designer would both sign off. <b>Commit:</b> <code>Phase 7: a11y floor + taste pass — ship gate</code>.</p>
+
+  <h2>Appendix — the shipped accent ramp</h2>
+  <p class="lede"><b>Re-toned 2026-07-13:</b> the accent moved from the original brand violet (<code>#6A54E6</code>) to a calmer, less-saturated <b>slate indigo</b> (<code>#5B62D6</code>) for a more professional, easier-on-the-eyes read — staying in the icon's indigo family so nothing else has to change. One source of truth in <code>styles.css</code>; all accent references derive from these. Foreground flips to ink in dark so fills stay AA. <em>Note:</em> the app icon is still violet; revisit it if a tighter icon⇄accent match is wanted.</p>
+  <div class="swatches">
+    <div class="sw"><span class="chip" style="background:#5b62d6"></span>--accent<br>#5B62D6</div>
+    <div class="sw"><span class="chip" style="background:#4d55cc"></span>-hover<br>#4D55CC</div>
+    <div class="sw"><span class="chip" style="background:#3a41ad"></span>-strong<br>#3A41AD</div>
+    <div class="sw"><span class="chip" style="background:#ecedfb"></span>-tint<br>#ECEDFB</div>
+    <div class="sw"><span class="chip" style="background:#b9bef0"></span>-border<br>#B9BEF0</div>
+    <div class="sw"><span class="chip" style="background:#eef0fc"></span>tile<br>#EEF0FC</div>
+  </div>
+  <div class="scroll"><table>
+    <tr><th>Token</th><th>Light</th><th>Dark</th><th>Job</th></tr>
+    <tr><td>--accent</td><td>#5b62d6</td><td>#8a93f0</td><td>Primary action, key live datum</td></tr>
+    <tr><td>--accent-hover</td><td>#4d55cc</td><td>#9ba3f4</td><td>Hover / pressed fills</td></tr>
+    <tr><td>--accent-strong</td><td>#3a41ad</td><td>#b3baf7</td><td>Accent as text / icon (AAA)</td></tr>
+    <tr><td>--accent-fg</td><td>#ffffff</td><td>#0b0d1e</td><td>Foreground on an accent fill</td></tr>
+    <tr><td>--accent-rgb</td><td>91, 98, 214</td><td>138, 147, 240</td><td>Channels for mode-aware glows</td></tr>
+    <tr><td>--accent-soft</td><td>rgba(…, .12)</td><td>rgba(…, .18)</td><td>Active-state wash</td></tr>
+    <tr><td>--accent-tint</td><td>#ecedfb</td><td>rgba(…, .14)</td><td>Faint hover fill</td></tr>
+    <tr><td>--accent-border</td><td>#b9bef0</td><td>rgba(…, .42)</td><td>Soft accent border</td></tr>
+  </table></div>
+
+  <p class="footnote">Living document — updated as phases land; the executing agent marks each phase card <em>done</em> here after its commit. Companion checklist in <code>tasks/todo.md</code>. Genesis reference: paper.design (<code>docs/</code> gap doc). The measure is best-in-class, not better-than-yesterday.</p>
+</main>
+</body>
+</html>

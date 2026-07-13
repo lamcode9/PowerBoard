@@ -199,8 +199,8 @@ button {
 .nav-button:hover,
 .icon-button.active,
 .nav-button.active {
-  background: #eef2ff;
-  color: #1d4ed8;
+  background: var(--accent-tint);
+  color: var(--accent-strong);
 }
 
 .icon-button:disabled,
@@ -323,7 +323,7 @@ button {
 
 .board-card:hover,
 .board-card:focus-visible {
-  border-color: #93c5fd;
+  border-color: var(--accent-border);
   box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
   outline: 0;
   transform: translateY(-1px);
@@ -338,7 +338,7 @@ button {
 
 .board-card-head svg {
   margin-top: 1px;
-  color: #2563eb;
+  color: var(--accent);
 }
 
 .board-card h3 {
@@ -367,8 +367,46 @@ button {
 }
 
 .card-open-button:hover {
-  border-color: #93c5fd;
-  color: #1d4ed8;
+  border-color: var(--accent-border);
+  color: var(--accent-strong);
+}
+
+.card-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.card-delete-button {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+/* Beat the generic .board-card-head svg { color: var(--accent) } so the trash icon follows the button. */
+.card-delete-button svg {
+  margin-top: 0;
+  color: inherit;
+}
+
+.card-delete-button:hover {
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.1);
+  border-color: rgba(220, 38, 38, 0.28);
+}
+
+.card-delete-button:focus-visible {
+  outline: none;
+  color: #dc2626;
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px var(--accent);
 }
 
 .board-meta {
@@ -503,9 +541,30 @@ button {
 }
 
 .dialog-actions button[type="submit"] {
-  border-color: #2563eb;
-  background: #2563eb;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.dialog-actions button.danger {
+  border-color: #dc2626;
+  background: #dc2626;
   color: #ffffff;
+}
+
+.dialog-actions button.danger:hover:not(:disabled) {
+  background: #c81e1e;
+  border-color: #c81e1e;
+}
+
+.dialog-actions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.delete-board-dialog .dialog-head p strong {
+  color: inherit;
+  font-weight: 780;
 }
 
 .left-panel,
@@ -560,7 +619,7 @@ button {
 }
 
 .panel-title:hover {
-  color: #1d4ed8;
+  color: var(--accent-strong);
 }
 
 .panel-section.collapsed {
@@ -612,9 +671,9 @@ button {
 
 .component-grid button:hover,
 .wide-action:hover {
-  border-color: #93c5fd;
-  background: #eff6ff;
-  color: #1d4ed8;
+  border-color: var(--accent-border);
+  background: var(--accent-tint);
+  color: var(--accent-strong);
 }
 
 .wide-action {
@@ -787,11 +846,11 @@ button {
 }
 
 .connector text {
-  fill: #1e40af;
+  fill: var(--accent-strong);
   font-size: 12px;
   font-weight: 760;
   paint-order: stroke;
-  stroke: #eff6ff;
+  stroke: #ffffff;
   stroke-width: 5px;
 }
 
@@ -846,8 +905,8 @@ button {
 }
 
 .artboard-frame.selected .artboard-label {
-  background: #2563eb;
-  color: #ffffff;
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 
 .artboard-frame.selected .artboard-label em {
@@ -865,7 +924,7 @@ button {
 }
 
 .artboard-frame.selected .artboard-surface {
-  outline: 3px solid #2563eb;
+  outline: 3px solid var(--accent);
 }
 
 .artboard-frame.agent-active .artboard-surface {
@@ -900,8 +959,8 @@ button {
   position: absolute;
   z-index: 41;
   pointer-events: none;
-  border: 1.5px solid var(--accent, #2563eb);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.7), 0 2px 10px rgba(37, 99, 235, 0.22);
+  border: 1.5px solid var(--accent);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.7), 0 2px 10px rgba(var(--accent-rgb), 0.22);
 }
 
 .board-element.selected-ancestor {
@@ -945,9 +1004,9 @@ button {
   align-items: center;
   gap: 8px;
   border-radius: 6px;
-  background: #2563eb;
-  color: #ffffff;
-  box-shadow: 0 8px 22px rgba(37, 99, 235, 0.25);
+  background: var(--accent);
+  color: var(--accent-fg);
+  box-shadow: 0 8px 22px rgba(var(--accent-rgb), 0.25);
   font-size: 11px;
   font-weight: 820;
   line-height: 20px;
@@ -1022,7 +1081,7 @@ button {
   height: 13px;
   border: 2px solid #ffffff;
   border-radius: 999px;
-  background: #2563eb;
+  background: var(--accent);
   cursor: nwse-resize;
 }
 
@@ -1035,8 +1094,8 @@ button {
   height: 18px;
   border: 3px solid #ffffff;
   border-radius: 999px;
-  background: #2563eb;
-  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.28);
+  background: var(--accent);
+  box-shadow: 0 8px 20px rgba(var(--accent-rgb), 0.28);
   cursor: nwse-resize;
 }
 
@@ -1320,8 +1379,8 @@ button {
 }
 
 .readonly-value-row button:hover {
-  border-color: #93c5fd;
-  color: #1d4ed8;
+  border-color: var(--accent-border);
+  color: var(--accent-strong);
 }
 
 .field input[type="range"] {
@@ -1533,9 +1592,17 @@ button {
    ============================================================ */
 
 :root {
-  --accent: #2563eb;
-  --accent-soft: rgba(37, 99, 235, 0.12);
-  --shape-tile-fill: #eff6ff;
+  /* Brand accent ramp — indigo→violet, derived from the app icon's pulse node.
+     One source of truth: chrome derives every accent state from these tokens. */
+  --accent: #5b62d6;           /* primary action / key line (AA white-on-accent, 5.05:1) */
+  --accent-hover: #4d55cc;     /* hover / pressed primary fills */
+  --accent-strong: #3a41ad;    /* accent as text or icon on light surfaces (AAA, 8.3:1) */
+  --accent-fg: #ffffff;        /* foreground on an accent fill */
+  --accent-rgb: 91, 98, 214;   /* channels for tinted glows/shadows, mode-aware */
+  --accent-soft: rgba(var(--accent-rgb), 0.12);
+  --accent-tint: #ecedfb;      /* faint accent wash (hover fills) */
+  --accent-border: #b9bef0;    /* soft accent border */
+  --shape-tile-fill: #f0ecff;
   --panel-bg: #f9fafc;
   --panel-border: rgba(15, 23, 42, 0.08);
   --surface-1: #ffffff;
@@ -1546,6 +1613,47 @@ button {
   --control-bg: rgba(15, 23, 42, 0.05);
   --control-bg-hover: rgba(15, 23, 42, 0.09);
   --shadow-pop: 0 12px 32px rgba(15, 23, 42, 0.14), 0 2px 8px rgba(15, 23, 42, 0.08);
+
+  /* ---- Phase 1: design-token foundation — spacing, radius, elevation, motion, focus.
+     Vocabulary only; nothing consumes these yet (Phases 2–3 spend them). Zero visual change. ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --r-pill: 999px;
+
+  /* Elevation ladder (light); dark redefines with deeper alpha. --shadow-pop stays explicit for
+     now — aliasing it to --shadow-2 would restyle 4 live popovers, so that remap is Phase 3. */
+  --shadow-1: 0 1px 2px rgba(15, 18, 34, 0.06), 0 1px 1px rgba(15, 18, 34, 0.04);
+  --shadow-2: 0 4px 12px rgba(15, 18, 34, 0.1), 0 1px 3px rgba(15, 18, 34, 0.06);
+  --shadow-3: 0 16px 40px rgba(15, 18, 34, 0.16), 0 4px 12px rgba(15, 18, 34, 0.08);
+
+  --dur-fast: 120ms;
+  --dur-med: 200ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.45, 0, 0.25, 1);
+
+  /* Two-layer ring: inner = page bg (a gap), outer = accent; reads on any fill. Dark swaps inner. */
+  --focus-ring: 0 0 0 2px #ffffff, 0 0 0 4px var(--accent);
+}
+
+/* Honour reduce-motion at the token layer: every later animation that derives its timing from
+   these inherits the 0ms for free (wired now, spent in Phases 3–4). */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-med: 0ms;
+  }
 }
 
 /* ---- Tool state cursors ---- */
@@ -1664,7 +1772,7 @@ button {
   transition: stroke-width 0.12s ease;
 }
 .connector.selected .connector-spine {
-  filter: drop-shadow(0 0 2px rgba(37, 99, 235, 0.5));
+  filter: drop-shadow(0 0 2px rgba(var(--accent-rgb), 0.5));
 }
 .connector-label rect {
   fill: var(--surface-1);
@@ -1893,7 +2001,7 @@ button {
 }
 .status-hint {
   flex: 0 0 auto;
-  color: #93c5fd;
+  color: var(--accent);
   font-size: 11px;
   font-weight: 650;
   white-space: nowrap;
@@ -2089,9 +2197,17 @@ button {
    main app surfaces + all new components via token overrides.
    ============================================================ */
 [data-theme="dark"] {
-  --accent: #60a5fa;
-  --accent-soft: rgba(96, 165, 250, 0.16);
-  --shape-tile-fill: #1e293b;
+  /* Dark mode: brighter violet reads on dark; foreground flips to ink so
+     accent fills stay AA. Mirrors the icon's lighter ring stop. */
+  --accent: #8a93f0;
+  --accent-hover: #9ba3f4;
+  --accent-strong: #b3baf7;
+  --accent-fg: #0b0d1e;
+  --accent-rgb: 138, 147, 240;
+  --accent-soft: rgba(var(--accent-rgb), 0.18);
+  --accent-tint: rgba(var(--accent-rgb), 0.14);
+  --accent-border: rgba(var(--accent-rgb), 0.42);
+  --shape-tile-fill: #241f3a;
   --panel-bg: #131a26;
   --panel-border: rgba(255, 255, 255, 0.07);
   --surface-1: #1a2230;
@@ -2102,6 +2218,12 @@ button {
   --control-bg: rgba(255, 255, 255, 0.06);
   --control-bg-hover: rgba(255, 255, 255, 0.11);
   --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
+  /* Phase 1: shadows read weaker on dark surfaces → deeper, black-based alpha. Spacing/radius/motion
+     are mode-independent and inherited from :root. */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 1px rgba(0, 0, 0, 0.22);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.44), 0 1px 3px rgba(0, 0, 0, 0.32);
+  --shadow-3: 0 16px 40px rgba(0, 0, 0, 0.58), 0 4px 12px rgba(0, 0, 0, 0.42);
+  --focus-ring: 0 0 0 2px #0c111b, 0 0 0 4px var(--accent);
   color: #e5edf7;
   background: #0c111b;
 }
@@ -2127,8 +2249,8 @@ button {
 }
 [data-theme="dark"] .brand-mark,
 [data-theme="dark"] .loading-mark {
-  background: #60a5fa;
-  color: #0c111b;
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 [data-theme="dark"] .icon-button,
 [data-theme="dark"] .text-button,
@@ -2182,6 +2304,17 @@ button {
 [data-theme="dark"] .new-board-dialog {
   background: #1a2230;
   color: #e5edf7;
+}
+[data-theme="dark"] .card-delete-button {
+  color: #8a99ad;
+}
+[data-theme="dark"] .card-delete-button:hover {
+  color: #ff8a7a;
+  background: rgba(255, 138, 122, 0.14);
+  border-color: rgba(255, 138, 122, 0.3);
+}
+[data-theme="dark"] .card-delete-button:focus-visible {
+  box-shadow: 0 0 0 2px #131a26, 0 0 0 4px var(--accent);
 }
 [data-theme="dark"] .field input,
 [data-theme="dark"] .field select {
@@ -2429,19 +2562,16 @@ button {
   padding: 0 14px;
   border-radius: 10px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   font-size: 13px;
   font-weight: 760;
   cursor: pointer;
-  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.28);
+  box-shadow: 0 6px 16px rgba(var(--accent-rgb), 0.28);
   transition: transform 0.12s ease, box-shadow 0.12s ease;
 }
 .connect-agent-button:hover {
   transform: translateY(-1px);
-  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.34);
-}
-[data-theme="dark"] .connect-agent-button {
-  color: #0c111b;
+  box-shadow: 0 10px 22px rgba(var(--accent-rgb), 0.34);
 }
 
 /* ---- Focus mode ---- */
@@ -3244,8 +3374,8 @@ button {
   gap: 8px;
   border-radius: 999px;
   background: var(--accent);
-  color: #ffffff;
-  box-shadow: 0 10px 28px rgba(37, 99, 235, 0.38);
+  color: var(--accent-fg);
+  box-shadow: 0 10px 28px rgba(var(--accent-rgb), 0.38);
   font-size: 12.5px;
   padding: 6px 7px 6px 14px;
   transform: translateX(-50%);

@@ -3,6 +3,26 @@
 Source of truth for the v2 pivot. Full rationale + feature matrix: `docs/powerboard-desktop-roadmap.html`.
 Written 2026-07-04. Status legend: [ ] todo · [~] in progress · [x] done.
 
+## Active — Delete Board (2026-07-13) ✅ shipped
+
+Gap: board manager had create/read/update but **no delete** anywhere (server route, boardService, cloudStore, web UI). Board deletion is a *lifecycle* action (like create), NOT an in-board operation — so it lives at the store/API layer, not the operations union. Destructive → confirm dialog + loud status; hard delete.
+
+- [x] `cloudStore.ts`: `deleteBoard(boardId): Promise<boolean>` on `CloudStore` interface + Pg impl (`delete from board_projects` — `cloud_files` cascades). `MemoryCloudStore` test mock updated.
+- [x] `boardService.ts` `deleteBoard(boardId)`: existence check → 404-able; local/mirror rm board dir (removes board.json/assets/exports/history); mirror+cloud delete from cloud; `forgetBoardState` drops in-memory undo/redo/selection; `history.drop`. Returns `found`.
+- [x] `historyStore.ts` `drop(boardId)` (rm history dir + clear cached index). `backupService.ts` `cancel(boardId)` (clear pending debounce timer; snapshot files kept as recovery net).
+- [x] `DELETE /api/boards/:boardId` route → 404 if absent else `{ ok, boardId }`; broadcast `board.removed`.
+- [x] `api.ts` `deleteBoard` (withLocalFallback → DELETE + `localDeleteBoard` IndexedDB `.delete`).
+- [x] HomeView per-card Delete (Trash2, muted→danger, aria-label, stopPropagation; card onKeyDown guarded so Enter on Delete no longer also opens) → `DeleteBoardDialog` confirm; on success prune state + loud status; if deleted board is open, return home.
+- [x] styles: `.card-delete-button` + `.dialog-actions button.danger` (+ dark overrides).
+- [x] Tests: local create→delete→gone + cloud-mode delete + missing→false (2 new; 46 total pass). typecheck + build green. Verified in-browser on an isolated server: seed 2 boards → delete one → confirm dialog → card removed, recount, "Deleted …" status, board dir removed on disk, console clean.
+
+## Design overhaul (docs/design/powerboard-design-overhaul.html)
+
+- [x] **Phase 0 — brand accent.** Shipped, then re-toned violet → slate indigo (2026-07-13) at user request. See appendix in the doc.
+- [x] **Phase 1 — design-token foundation** (2026-07-13). Added `--space-1…8`, `--r-xs…pill`, `--shadow-1/2/3`, `--dur-fast/med`, `--ease-out/in-out`, `--focus-ring` to both the light `:root` and `[data-theme="dark"]` blocks + a `prefers-reduced-motion` token override. Vocabulary only — nothing consumes them yet → zero visual change. **Discrepancy noted vs brief:** left `--shadow-pop` explicit rather than aliasing to `--shadow-2` (aliasing would restyle 4 live popovers, breaking the "zero visual change" gate) — deferred that remap to Phase 3 consolidation. typecheck + build + test green.
+- [ ] **Phase 2 — typography** (bundle Inter variable, collapse to 4 weights / 6 sizes, tabular numerics). Next.
+- [ ] Phases 3–7 per the doc (consolidation → live agent canvas → states+content palette → canvas craft → a11y/taste).
+
 ## Locked decisions (do not re-litigate without user)
 
 - **D1 — Shell: Electron (Mac App Store build) → TestFlight.** The Node server (Express + WS + MCP + sharp) runs unmodified inside Electron's main process, so the app *is* the daemon: UI, storage, and MCP all served by one installed binary. Tauri/native Swift would force a port of ~2.2k lines of server logic or an unsandboxable Node sidecar. Fallback if MAS sandbox blocks us: Developer ID + notarized DMG (still installable, loses TestFlight).
@@ -90,6 +110,20 @@ User installed 202607051047 and reported 7 problems. Theme of this round: **the 
 - [x] **#7 Connector inspector humans can read:** (update_connector now accepts explicit null to detach element endpoints — swap works across mixed endpoint kinds; schema test added) endpoints header with swap button; segmented Path (Curved/Elbow/Straight) + visual arrowhead pickers; "Top/Right/Bottom/Left/Auto" anchors instead of n/s/e/w; sectioned layout.
 - [x] **#1 Beauty pass:** (also removed the legacy layer-row rules that forced 18px names, and made hidden layer actions display:none so names get full width) systematic de-border — panels become soft surfaces (hairline-via-shadow), tonal buttons instead of 1px-bordered boxes, filled inputs with accent focus ring, quieter section headers, dark-mode parity.
 - [x] Verified every flow in-browser (selection bar, multi-select, frame ⌫+undo, drag-to-connect + preview line + mode pill, insert menu end-to-end, rename, pane collapse/edge-tab/resize+persist, dark parity, board left pristine 3/13/3); typecheck + build + 44/44 tests + mcp:check ok.
+
+## Phase 9 — Design system overhaul (2026-07-13)
+
+Goal: from "clean web app" to best-in-class canvas tool (Linear/Figma/Excalidraw bar). Full plan + rationale: `docs/design/powerboard-design-overhaul.html`. Doctrine: `playbooks/design.md`.
+
+- [x] **P0 — Brand-accent migration:** rebuilt `--accent`/`--accent-soft` into a mode-aware violet ramp derived from the app icon (`--accent`,`-hover`,`-strong`,`-fg`,`-rgb`,`-soft`,`-tint`,`-border`); replaced ~20 scattered hardcoded blues in chrome with tokens; glows retint per theme via `rgba(var(--accent-rgb),α)`; added `--accent-fg` so accent fills flip to ink in dark (fixes latent white-on-light-violet contrast). Verified light+dark AA, console clean, 98 accent refs from one source. `styles.css`.
+- [ ] **P1 — Token foundation:** add missing scales — spacing (`--space-1..8`), radius (`--r-*`, kills the 15-value chaos), elevation (`--shadow-1/2/3`, kills 48 ad-hoc shadows), motion (`--dur-*`,`--ease-*`), semantic `--focus-ring`. Non-breaking vocabulary for P2–P3.
+- [ ] **P2 — Typography:** bundle Inter variable (self-hosted woff2, offline-first); collapse odd weights (650/730/760/850) → 400/500/600/700; ~5-step size scale; tabular figures on all compared numbers.
+- [ ] **P3 — Component consolidation:** map every radius/shadow/spacing literal → tokens; unify the control family (button/field/segmented) onto one spec; remove-until-it-breaks border cleanup.
+- [ ] **P4 — Signature surface (the differentiator):** live agent canvas — element pulse highlights, readable Agent Activity timeline (click-to-focus, live badge), alive connect-agent flow, icon motif in empty state. `AgentFeed.tsx` + canvas layer.
+- [ ] **P5 — Every state + content palette:** empty/loading/error/offline/success per panel+dialog; skeletons not spinners; loud save/backup failure; **decide board-content default palette** (rec: neutral ink defaults, accent on demand) — App.tsx seeds ~1279/3332/3757.
+- [ ] **P6 — Canvas craft:** verify/refine ⌘Z, space-pan, cursor-centered zoom, ⌘0/⌘1, marquee, inertial pan; polish selection ring/snap/connector handles on the token scale.
+- [ ] **P7 — A11y floor + taste pass:** focus rings everywhere, icon-button labels, AA both modes, large-text survival; §10 squint / remove-until-breaks / cheap-tell hunt / best-in-class compare.
+- Open decisions (see plan doc): board-content palette (a/b/c); bundle Inter (~110KB, rec yes); sequence P1→P3 before P4 (or P4 in parallel after P1).
 
 ## Phase 6 — Later (parked until user says go)
 
