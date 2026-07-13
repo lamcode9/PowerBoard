@@ -109,6 +109,18 @@ app.put("/api/boards/:boardId", asyncHandler(async (req, res) => {
   res.json(next);
 }));
 
+app.delete("/api/boards/:boardId", asyncHandler(async (req, res) => {
+  const boardId = param(req, "boardId");
+  const removed = await store.deleteBoard(boardId);
+  if (!removed) {
+    res.status(404).json({ error: `Board not found: ${boardId}` });
+    return;
+  }
+  backup.cancel(boardId);
+  broadcast(boardId, { type: "board.removed", boardId });
+  res.json({ ok: true, boardId });
+}));
+
 app.post("/api/boards/:boardId/operations", asyncHandler(async (req, res) => {
   const operation = OperationSchema.parse(req.body.operation) as BoardOperation;
   const agentEdit = readAgentEdit(req.body);

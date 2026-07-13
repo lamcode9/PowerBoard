@@ -24,6 +24,7 @@ export interface CloudStore {
   listBoards(): Promise<CloudBoardSummary[]>;
   readBoard(boardId: string): Promise<BoardProject | undefined>;
   writeBoard(project: BoardProject): Promise<void>;
+  deleteBoard(boardId: string): Promise<boolean>;
   writeFile(input: {
     boardId: string;
     path: string;
@@ -165,6 +166,12 @@ export class SupabasePostgresStore implements CloudStore {
         valid.metadata.updatedAt
       ]
     );
+  }
+
+  async deleteBoard(boardId: string): Promise<boolean> {
+    // cloud_files rows reference board_projects with `on delete cascade`, so assets/exports go too.
+    const result = await this.pool.query(`delete from ${SCHEMA_NAME}.board_projects where id = $1`, [boardId]);
+    return (result.rowCount ?? 0) > 0;
   }
 
   async writeFile(input: {

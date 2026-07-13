@@ -253,6 +253,38 @@ export class BoardStore {
     return valid;
   }
 
+  /**
+   * Permanently delete a board and everything under it (JSON, assets, exports, history). Lifecycle
+   * action — not an in-board operation, so it is not undoable. Returns false if the board did not
+   * exist (route surfaces that as 404). Backup snapshots are intentionally left on disk as a safety net.
+   */
+  async deleteBoard(boardId: string): Promise<boolean> {
+    await this.ensureReady();
+    if (this.isCloudPrimary()) {
+      const found = await this.requiredCloud().deleteBoard(boardId);
+      this.forgetBoardState(boardId);
+      return found;
+    }
+    const existedLocally = await this.exists(boardId);
+    // Mirror mode: remove the cloud copy first so a cloud failure aborts before we touch local files.
+    let existedInCloud = false;
+    if (this.cloud) {
+      existedInCloud = await this.cloud.deleteBoard(boardId);
+    }
+    if (existedLocally) {
+      await fs.rm(this.boardDir(boardId), { recursive: true, force: true });
+    }
+    this.forgetBoardState(boardId);
+    await this.history.drop(boardId);
+    return existedLocally || existedInCloud;
+  }
+
+  private forgetBoardState(boardId: string): void {
+    this.undoStacks.delete(boardId);
+    this.redoStacks.delete(boardId);
+    this.selections.delete(boardId);
+  }
+
   async readStoredFile(boardId: string, relativePath: string): Promise<CloudFileRecord | undefined> {
     return this.cloud?.readFile(boardId, relativePath);
   }

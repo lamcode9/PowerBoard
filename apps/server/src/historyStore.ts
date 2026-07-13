@@ -97,6 +97,14 @@ export class HistoryStore {
     return { undo: index.undo.length, redo: index.redo.length };
   }
 
+  /** Remove all persisted history + op-log for a board, and forget its cached index. Idempotent (board delete). */
+  async drop(boardId: string): Promise<void> {
+    await this.withLock(boardId, async () => {
+      await fs.rm(this.historyDir(boardId), { recursive: true, force: true }).catch(() => undefined);
+      this.indexes.delete(boardId);
+    });
+  }
+
   async appendOpLog(boardId: string, entry: Omit<OpLogEntry, "seq">): Promise<void> {
     const dir = this.historyDir(boardId);
     await fs.mkdir(dir, { recursive: true });

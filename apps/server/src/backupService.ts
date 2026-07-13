@@ -52,6 +52,15 @@ export class BackupService {
     );
   }
 
+  /** Cancel a pending debounced backup (e.g. the board was deleted). Existing snapshot files are kept. */
+  cancel(boardId: string): void {
+    const timer = this.timers.get(boardId);
+    if (timer) {
+      clearTimeout(timer);
+      this.timers.delete(boardId);
+    }
+  }
+
   async backupBoard(boardId: string): Promise<{ file: string }> {
     const timer = this.timers.get(boardId);
     if (timer) {

@@ -88,6 +88,7 @@ import {
   applyOperation,
   backupNow,
   createBoard,
+  deleteBoard,
   exportMermaid,
   exportPagePdf,
   exportPageSvg,
@@ -285,6 +286,8 @@ export function App() {
   const [presetId, setPresetId] = useState(DEVICE_PRESETS[0]!.id);
   const [newBoardDialogOpen, setNewBoardDialogOpen] = useState(false);
   const [newBoardName, setNewBoardName] = useState("Untitled PowerBoard Board");
+  const [boardPendingDelete, setBoardPendingDelete] = useState<BoardSummary | null>(null);
+  const [deletingBoard, setDeletingBoard] = useState(false);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [pan, setPan] = useState<PanState | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
@@ -787,6 +790,42 @@ export function App() {
   function cancelNewBoard() {
     setNewBoardDialogOpen(false);
     setStatus(homeOpen ? "Boards" : project?.name ?? "PowerBoard");
+  }
+
+  function requestDeleteBoard(board: BoardSummary) {
+    setBoardPendingDelete(board);
+    setStatus(`Delete ${board.name}?`);
+  }
+
+  function cancelDeleteBoard() {
+    if (deletingBoard) return;
+    setBoardPendingDelete(null);
+    setStatus(homeOpen ? "Boards" : project?.name ?? "PowerBoard");
+  }
+
+  async function confirmDeleteBoard() {
+    const board = boardPendingDelete;
+    if (!board || deletingBoard) return;
+    setDeletingBoard(true);
+    try {
+      await deleteBoard(board.id);
+      setBoardSummaries((current) => current.filter((candidate) => candidate.id !== board.id));
+      setBoardPreviews((current) => {
+        const next = { ...current };
+        delete next[board.id];
+        return next;
+      });
+      setBoardPendingDelete(null);
+      setStatus(`Deleted ${board.name}`);
+      // If the deleted board is the one currently open, fall back to the home view.
+      if (projectRef.current?.id === board.id) {
+        await showHome("replace");
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not delete board");
+    } finally {
+      setDeletingBoard(false);
+    }
   }
 
   async function showHome(routeMode: RouteMode = "push") {
@@ -2203,7 +2242,7 @@ export function App() {
       </header>
 
       {homeOpen ? (
-        <HomeView boards={boardSummaries} previews={boardPreviews} storageStatus={storageStatus} loading={boardsLoading} onOpen={openBoard} onCreate={createNewBoard} />
+        <HomeView boards={boardSummaries} previews={boardPreviews} storageStatus={storageStatus} loading={boardsLoading} onOpen={openBoard} onCreate={createNewBoard} onDelete={requestDeleteBoard} />
       ) : project ? (
         <>
       {leftPaneOpen ? (
@@ -2507,6 +2546,15 @@ export function App() {
         />
       ) : null}
 
+      {boardPendingDelete ? (
+        <DeleteBoardDialog
+          board={boardPendingDelete}
+          busy={deletingBoard}
+          onCancel={cancelDeleteBoard}
+          onConfirm={() => void confirmDeleteBoard()}
+        />
+      ) : null}
+
       {project ? <AgentConnectDialog open={connectOpen} project={project} health={storageStatus} onClose={() => setConnectOpen(false)} /> : null}
       <CommandPalette open={commandOpen} commands={paletteCommands} onClose={() => setCommandOpen(false)} />
       <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
@@ -2574,7 +2622,8 @@ function HomeView({
   storageStatus,
   loading,
   onOpen,
-  onCreate
+  onCreate,
+  onDelete
 }: {
   boards: BoardSummary[];
   previews: Record<string, BoardProject>;
@@ -2582,6 +2631,7 @@ function HomeView({
   loading: boolean;
   onOpen: (boardId: string) => void;
   onCreate: () => void;
+  onDelete: (board: BoardSummary) => void;
 }) {
   const totalFrames = boards.reduce((sum, board) => sum + board.artboardCount, 0);
   const totalElements = boards.reduce((sum, board) => sum + board.elementCount, 0);
@@ -2623,6 +2673,8 @@ function HomeView({
                   tabIndex={0}
                   onClick={() => onOpen(board.id)}
                   onKeyDown={(event) => {
+                    // Only when the card itself is focused — let nested controls (Open, Delete) handle their own keys.
+                    if (event.target !== event.currentTarget) return;
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
                       onOpen(board.id);
@@ -2635,17 +2687,32 @@ function HomeView({
                       <h3>{board.name}</h3>
                       <p>{formatUpdatedAt(board.updatedAt)}</p>
                     </div>
-                    <a
-                      className="card-open-button"
-                      href={routeHash({ view: "board", boardId: board.id })}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        event.preventDefault();
-                        onOpen(board.id);
-                      }}
-                    >
-                      Open
-                    </a>
+                    <div className="card-head-actions">
+                      <button
+                        type="button"
+                        className="card-delete-button"
+                        title={`Delete ${board.name}`}
+                        aria-label={`Delete board ${board.name}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          event.preventDefault();
+                          onDelete(board);
+                        }}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                      <a
+                        className="card-open-button"
+                        href={routeHash({ view: "board", boardId: board.id })}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          event.preventDefault();
+                          onOpen(board.id);
+                        }}
+                      >
+                        Open
+                      </a>
+                    </div>
                   </div>
                   <div className="board-meta">
                     <span>
@@ -4005,6 +4072,34 @@ function NewBoardDialog({ defaultName, onCancel, onCreate }: { defaultName: stri
           <button type="submit" className="primary"><Plus size={15} /> Create board</button>
         </div>
       </form>
+    </div>
+  );
+}
+
+function DeleteBoardDialog({ board, busy, onCancel, onConfirm }: { board: BoardSummary; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) onCancel();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onCancel, busy]);
+  return (
+    <div className="dialog-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget && !busy) onCancel(); }}>
+      <div className="new-board-dialog delete-board-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-board-title" aria-describedby="delete-board-desc">
+        <div className="dialog-head">
+          <h2 id="delete-board-title">Delete board</h2>
+          <p id="delete-board-desc">
+            Permanently delete <strong>{board.name}</strong> — {board.artboardCount} {pluralize(board.artboardCount, "frame")}, {board.elementCount} {pluralize(board.elementCount, "element")}. This can’t be undone.
+          </p>
+        </div>
+        <div className="dialog-actions">
+          <button type="button" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button type="button" className="danger" onClick={onConfirm} disabled={busy} autoFocus>
+            <Trash2 size={15} /> {busy ? "Deleting…" : "Delete board"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

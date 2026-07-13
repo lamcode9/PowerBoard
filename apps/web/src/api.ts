@@ -66,6 +66,15 @@ export async function saveBoard(project: BoardProject): Promise<BoardProject> {
   return withLocalFallback(() => request(`/api/boards/${project.id}`, { method: "PUT", body: JSON.stringify(project) }), () => localSaveBoard(project));
 }
 
+export async function deleteBoard(boardId: string): Promise<void> {
+  await withLocalFallback(
+    async () => {
+      await request<{ ok: boolean; boardId: string }>(`/api/boards/${boardId}`, { method: "DELETE" });
+    },
+    () => localDeleteBoard(boardId)
+  );
+}
+
 export async function applyOperation(boardId: string, operation: BoardOperation): Promise<BoardProject> {
   return withLocalFallback(
     () =>
@@ -231,6 +240,23 @@ async function localSaveBoard(project: BoardProject): Promise<BoardProject> {
   const valid = validateBoardProject(project);
   await writeLocalProjects([valid]);
   return valid;
+}
+
+async function localDeleteBoard(boardId: string): Promise<void> {
+  try {
+    const db = await openLocalDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).delete(boardId);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("Local board delete failed."));
+      tx.onabort = () => reject(tx.error ?? new Error("Local board delete was aborted."));
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`PowerBoard: board delete FAILED in browser-local mode. ${message}`);
+    throw new Error(`Board not deleted: ${message}`);
+  }
 }
 
 async function localApplyOperation(boardId: string, operation: BoardOperation): Promise<BoardProject> {

@@ -30,6 +30,36 @@ describe("BoardStore", () => {
     expect(redone.elements.some((candidate) => candidate.id === element.id)).toBe(true);
   });
 
+  it("deletes a board and its files, and reports missing boards as not found", async () => {
+    const { dir, store } = await tempStore();
+    const board = await store.createBoard("Deletable Board");
+    const boardDir = path.join(dir, board.id);
+    await expect(fs.access(boardDir)).resolves.toBeUndefined();
+
+    const removed = await store.deleteBoard(board.id);
+    expect(removed).toBe(true);
+
+    const list = await store.listBoards();
+    expect(list.some((candidate) => candidate.id === board.id)).toBe(false);
+    await expect(store.readBoard(board.id)).rejects.toThrow();
+    await expect(fs.access(boardDir)).rejects.toThrow();
+
+    // Deleting an already-gone / never-existed board reports false rather than throwing.
+    expect(await store.deleteBoard(board.id)).toBe(false);
+    expect(await store.deleteBoard("board_missing")).toBe(false);
+  });
+
+  it("deletes a board from the cloud store in cloud mode", async () => {
+    const cloud = new MemoryCloudStore();
+    const { store } = await tempStore(cloud, "cloud");
+    const board = await store.createBoard("Cloud Deletable");
+    expect(await cloud.readBoard(board.id)).toBeDefined();
+
+    expect(await store.deleteBoard(board.id)).toBe(true);
+    expect(await cloud.readBoard(board.id)).toBeUndefined();
+    expect(await store.deleteBoard(board.id)).toBe(false);
+  });
+
   it("does not persist stale selection ids", async () => {
     const { store } = await tempStore();
     const board = await store.createBoard("Selection Board");
@@ -347,6 +377,14 @@ class MemoryCloudStore implements CloudStore {
 
   async writeBoard(project: BoardProject): Promise<void> {
     this.boards.set(project.id, project);
+  }
+
+  async deleteBoard(boardId: string): Promise<boolean> {
+    const existed = this.boards.delete(boardId);
+    for (const key of Array.from(this.files.keys())) {
+      if (key.startsWith(`${boardId}/`)) this.files.delete(key);
+    }
+    return existed;
   }
 
   async writeFile(input: {
