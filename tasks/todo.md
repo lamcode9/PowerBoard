@@ -20,8 +20,9 @@ Gap: board manager had create/read/update but **no delete** anywhere (server rou
 
 - [x] **Phase 0 — brand accent.** Shipped, then re-toned violet → slate indigo (2026-07-13) at user request. See appendix in the doc.
 - [x] **Phase 1 — design-token foundation** (2026-07-13). Added `--space-1…8`, `--r-xs…pill`, `--shadow-1/2/3`, `--dur-fast/med`, `--ease-out/in-out`, `--focus-ring` to both the light `:root` and `[data-theme="dark"]` blocks + a `prefers-reduced-motion` token override. Vocabulary only — nothing consumes them yet → zero visual change. **Discrepancy noted vs brief:** left `--shadow-pop` explicit rather than aliasing to `--shadow-2` (aliasing would restyle 4 live popovers, breaking the "zero visual change" gate) — deferred that remap to Phase 3 consolidation. typecheck + build + test green.
-- [ ] **Phase 2 — typography** (bundle Inter variable, collapse to 4 weights / 6 sizes, tabular numerics). Next.
-- [ ] Phases 3–7 per the doc (consolidation → live agent canvas → states+content palette → canvas craft → a11y/taste).
+- [x] **Phase 2 — typography** (2026-07-13). Bundled Inter variable self-hosted (`apps/web/public/fonts/InterVariable.woff2`, 344KB — full file, not a subset; larger than the doc's ~110KB estimate but fine for an offline desktop app) + `@font-face` (weight 100–900, `font-display:swap`) + `<link rel=preload>`. Collapsed 17 inflated weights → 500/600/700; normalized 18 sizes → 11/12/13/14/17/22/28; `font-variant-numeric: tabular-nums` on zoom %, inspector coord/size fields, and count pills. Verified: browser fetched the woff2 (200), squint test passes, console clean, build/typecheck/46 tests green.
+- [ ] **Phase 3 — component consolidation** (map radii/shadows/spacing literals → the Phase-1 token scales; unify control family; incl. the deferred `--shadow-pop` → `--shadow-2` alias). Next.
+- [ ] Phases 4–7 per the doc (live agent canvas → states+content palette → canvas craft → a11y/taste).
 
 ## Locked decisions (do not re-litigate without user)
 

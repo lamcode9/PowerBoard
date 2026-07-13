@@ -123,12 +123,12 @@
     </div>
   </div>
 
-  <div class="phase">
+  <div class="phase done">
     <div class="num">2</div>
     <div class="body">
-      <h3>Typography system <span class="tag">Next</span></h3>
-      <p>Bundle <strong>Inter variable</strong> (self-hosted <code>woff2</code>, no CDN — offline-first) so the type actually renders as designed. Collapse the odd weights into a 4-step scale (400 / 500 / 600 / 700) and a ~5-step size scale (12 / 13 / 14 / 17 / 22 / 28). Line-height 1.4–1.6 on body; <strong>tabular figures</strong> on every number users compare (zoom %, element sizes, board counts, coordinates). Weight carries hierarchy alongside size — never color alone.</p>
-      <p class="kv"><b>Files:</b> <code>styles.css</code>, <code>apps/web/index.html</code>, a bundled font asset. <b>Done when:</b> squint test passes; numeric readouts don't shift width as they change.</p>
+      <h3>Typography system <span class="tag ok">Shipped</span></h3>
+      <p>Bundled <strong>Inter variable</strong> self-hosted (<code>apps/web/public/fonts/InterVariable.woff2</code>, <code>@font-face</code> weight 100–900, <code>font-display:swap</code>, <code>&lt;link rel=preload&gt;</code>) so the type renders as designed. Collapsed the 17 odd weights into <strong>500 / 600 / 700</strong> (no explicit 400 existed — body inherits it) and the 18 sizes into <strong>11 / 12 / 13 / 14 / 17 / 22 / 28</strong> (kept an 11px floor so dense panels don't reflow). <strong>Tabular figures</strong> on zoom %, inspector coord/size fields, and count pills.</p>
+      <p class="kv"><b>Verified:</b> browser fetched the woff2 (200), squint test passes, console clean, build/typecheck/46 tests green. <b>Note:</b> the woff2 is the full 344&nbsp;KB file, not the ~110&nbsp;KB Latin subset the brief estimated — acceptable for an offline desktop app; subset later if wire size matters.</p>
     </div>
   </div>
 
