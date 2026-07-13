@@ -1430,10 +1430,10 @@ export function createElementFromPreset(type: BoardElement["type"], artboardId: 
   const presets: Record<BoardElement["type"], Partial<BoardElement>> = {
     frame: { width: 260, height: 180, style: { fill: "transparent", stroke: "#94A3B8", strokeWidth: 1, radius: 14 }, props: { hierarchyOnly: true } },
     group: { width: 260, height: 180, style: { fill: "transparent", stroke: "#94A3B8", strokeWidth: 1, radius: 14 }, props: { hierarchyOnly: true } },
-    rect: { width: 180, height: 120, style: { fill: "#DBEAFE", radius: 18 } },
+    rect: { width: 180, height: 120, style: { fill: "#F7F6F3", radius: 18 } },
     text: { width: 220, height: 44, style: { color: "#111827", fontSize: 26, fontWeight: 760, lineHeight: 32 }, props: { text: "New headline" } },
     image: { width: 240, height: 160, style: { fill: "#E2E8F0", radius: 18, imageFit: "cover" }, props: { alt: "Image" } },
-    icon: { width: 48, height: 48, semanticRole: "material icon", style: { fill: "#EFF6FF", color: "#2563EB", radius: 14 }, props: { materialIcon: "add_circle", label: "Add" } },
+    icon: { width: 48, height: 48, semanticRole: "material icon", style: { fill: "#F7F6F3", color: "#44403C", radius: 14 }, props: { materialIcon: "add_circle", label: "Add" } },
     line: { width: 220, height: 24, semanticRole: "divider", style: { fill: "transparent", stroke: "#64748B", strokeWidth: 2, opacity: 1 }, props: { direction: "horizontal", lineCap: "round" } },
     button: { width: 220, height: 56, style: { fill: "#111827", color: "#FFFFFF", radius: 16, fontSize: 15, fontWeight: 720 }, props: { text: "Continue" } },
     input: { width: 280, height: 58, style: { fill: "#FFFFFF", stroke: "#CBD5E1", strokeWidth: 1, color: "#334155", radius: 14, fontSize: 15 }, props: { label: "Email", placeholder: "you@example.com" } },
@@ -1444,14 +1444,14 @@ export function createElementFromPreset(type: BoardElement["type"], artboardId: 
     nav: { width: 320, height: 72, style: { fill: "#FFFFFF", color: "#111827", radius: 20, shadow: "0 12px 36px rgba(15, 23, 42, 0.08)", padding: 16 }, props: { title: "Overview", items: ["Home", "Inbox", "Settings"] } },
     tabbar: { width: 320, height: 72, style: { fill: "#FFFFFF", color: "#64748B", radius: 24, shadow: "0 12px 36px rgba(15, 23, 42, 0.10)" }, props: { items: ["Home", "Search", "Profile"], active: "Home" } },
     chart: { width: 320, height: 210, style: { fill: "#FFFFFF", color: "#111827", radius: 20, shadow: "0 14px 40px rgba(15, 23, 42, 0.08)", padding: 18 }, props: { title: "Trend", values: [28, 46, 34, 72, 58, 84] } },
-    sparkline: { width: 240, height: 88, semanticRole: "sparkline chart", style: { fill: "transparent", stroke: "#2563EB", strokeWidth: 3, color: "#2563EB" }, props: { values: [24, 38, 32, 58, 48, 72, 66], showArea: true } },
+    sparkline: { width: 240, height: 88, semanticRole: "sparkline chart", style: { fill: "transparent", stroke: "#44403C", strokeWidth: 3, color: "#44403C" }, props: { values: [24, 38, 32, 58, 48, 72, 66], showArea: true } },
     badge: { width: 108, height: 36, style: { fill: "#DCFCE7", color: "#047857", radius: 999, fontSize: 13, fontWeight: 720 }, props: { text: "Ready" } },
     emptyState: { width: 320, height: 260, style: { fill: "#F8FAFC", color: "#334155", radius: 22, stroke: "#E2E8F0", strokeWidth: 1, padding: 24 }, props: { title: "Nothing here yet", body: "Create a screen or import a screenshot to begin." } },
     paywall: { width: 340, height: 470, style: { fill: "#FFFFFF", color: "#111827", radius: 28, shadow: "0 20px 70px rgba(15, 23, 42, 0.16)", padding: 24 }, props: { title: "Go Pro", price: "$4.99/mo", features: ["Unlimited boards", "Code export", "Agent control"], action: "Start Pro" } },
     table: { width: 520, height: 280, style: { fill: "#FFFFFF", color: "#111827", radius: 18, shadow: "0 14px 40px rgba(15, 23, 42, 0.08)", padding: 18 }, props: { title: "Rows", columns: ["Name", "Status"], rows: [["Home", "Ready"], ["Paywall", "Draft"]] } },
     sticky: { width: 220, height: 160, style: { fill: "#FEF3C7", color: "#78350F", radius: 16, shadow: "0 10px 28px rgba(120, 53, 15, 0.12)", padding: 16 }, props: { text: "Prompt notes go here." } },
     screenshotOverlay: { width: 320, height: 640, locked: true, style: { fill: "#E2E8F0", radius: 24, opacity: 0.65, imageFit: "contain" }, props: { alt: "Screenshot overlay" } },
-    shape: { width: 180, height: 100, semanticRole: "diagram shape", style: { fill: "#EFF6FF", stroke: "#2563EB", strokeWidth: 1.5, color: "#1E3A5F", radius: 10, fontSize: 14, fontWeight: 600, textAlign: "center" }, props: { shape: "rectangle", text: "Step" } },
+    shape: { width: 180, height: 100, semanticRole: "diagram shape", style: { fill: "#F7F6F3", stroke: "#44403C", strokeWidth: 1.5, color: "#44403C", radius: 10, fontSize: 14, fontWeight: 600, textAlign: "center" }, props: { shape: "rectangle", text: "Step" } },
     ink: { width: 240, height: 160, semanticRole: "freehand ink", style: { fill: "transparent", stroke: "#334155", strokeWidth: 2.5 }, props: { points: [] } }
   };
 

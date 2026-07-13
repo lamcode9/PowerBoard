@@ -212,7 +212,7 @@ ${indent}</svg>`;
     }
     case "sparkline": {
       const points = sparklinePoints(readNumberArray(element.props.values, [24, 38, 32, 58, 48, 72, 66]), 100, 100, 8);
-      const stroke = style.stroke ?? style.color ?? "#2563EB";
+      const stroke = style.stroke ?? style.color ?? "#44403C";
       return `${indent}<svg data-board-element="${element.id}" className="${wrapperClass}" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="${escapeAttr(readString(element.props.label, "Sparkline"))}"${inlineStyles}>
 ${element.props.showArea === true ? `${indent}  <polygon points="8,100 ${points} 92,100" fill="${escapeAttr(stroke)}" opacity="0.12" />\n` : ""}${indent}  <polyline points="${points}" fill="none" stroke="${escapeAttr(stroke)}" strokeWidth="${style.strokeWidth ?? 3}" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
 ${indent}</svg>`;
@@ -727,7 +727,7 @@ function renderConnectorSvg(project: BoardProject, connector: BoardConnector): s
   const toRect = connectorEndpointRect(project, connector.toArtboardId, connector.toElementId);
   if (!fromRect || !toRect) return "";
   const geometry = connectorGeometry(fromRect, toRect, connector);
-  const stroke = escapeAttr(connector.style.stroke ?? "#2563EB");
+  const stroke = escapeAttr(connector.style.stroke ?? "#44403C");
   const strokeWidth = connector.style.strokeWidth ?? 2;
   const parts: string[] = [`<path d="${geometry.d}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round"/>`];
   if (connector.arrowEnd !== "none") {

@@ -9,6 +9,7 @@ import {
   AlignStartVertical,
   AlignVerticalDistributeCenter,
   Activity,
+  AlertTriangle,
   ArchiveRestore,
   ArrowLeftRight,
   ArrowRight,
@@ -20,6 +21,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  CloudOff,
   Command as CommandIcon,
   Component,
   Copy,
@@ -54,6 +56,7 @@ import {
   PenTool,
   Plus,
   Redo2,
+  RotateCcw,
   Save,
   Send,
   Shapes,
@@ -68,6 +71,7 @@ import {
   Type,
   Undo2,
   Upload,
+  WifiOff,
   Workflow,
   ZoomIn,
   ZoomOut
@@ -291,7 +295,19 @@ export function App() {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [pan, setPan] = useState<PanState | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
-  const [status, setStatus] = useState("Starting workspace...");
+  const [status, setStatusMessage] = useState("Starting workspace...");
+  const [statusTone, setStatusTone] = useState<"info" | "error">("info");
+  const [boardsError, setBoardsError] = useState<string | null>(null);
+  // Any ordinary status update clears an error tone; a failed write must fail LOUD (persistence P0).
+  function setStatus(message: string) {
+    setStatusMessage(message);
+    setStatusTone("info");
+  }
+  function failLoud(message: string) {
+    console.error(`[PowerBoard] ${message}`);
+    setStatusMessage(message);
+    setStatusTone("error");
+  }
   const [agentActiveUntilById, setAgentActiveUntilById] = useState<Record<string, number>>({});
   const [collapsedPanels, setCollapsedPanels] = useState<Record<string, boolean>>({});
   const [panePrefs, setPanePrefs] = useState<PanePrefs>(readPanePrefs);
@@ -711,9 +727,14 @@ export function App() {
     try {
       const boards = await listBoards();
       setBoardSummaries(boards);
+      setBoardsError(null);
       const previewSeq = ++previewSeqRef.current;
       void loadBoardPreviews(boards, previewSeq);
       return boards;
+    } catch (error) {
+      // A load failure must read as a load failure — never as an empty account.
+      setBoardsError(error instanceof Error ? error.message : "Could not reach the workspace");
+      throw error;
     } finally {
       setBoardsLoading(false);
     }
@@ -783,7 +804,7 @@ export function App() {
       setStatus(`Created ${next.name}`);
     } catch (error) {
       if (!isCurrentNavigation(seq)) return;
-      setStatus(error instanceof Error ? error.message : "Could not create board");
+      failLoud(error instanceof Error ? error.message : "Could not create board");
     }
   }
 
@@ -822,7 +843,7 @@ export function App() {
         await showHome("replace");
       }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not delete board");
+      failLoud(error instanceof Error ? error.message : "Could not delete board");
     } finally {
       setDeletingBoard(false);
     }
@@ -897,7 +918,7 @@ export function App() {
         setStatus("Saved");
       }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Operation failed");
+      failLoud(error instanceof Error ? error.message : "Operation failed — your last change may not be saved");
     }
   }
 
@@ -1315,7 +1336,7 @@ export function App() {
         waypoints: [],
         label: "Flow",
         labelPosition: 0.5,
-        style: { stroke: "#2563EB" }
+        style: { stroke: "#44403C" }
       }
     });
   }
@@ -1419,7 +1440,7 @@ export function App() {
         arrowEnd: "arrow",
         waypoints: [],
         labelPosition: 0.5,
-        style: { stroke: "#2563EB" }
+        style: { stroke: "#44403C" }
       }
     });
     await select([connectorId]).catch(() => undefined);
@@ -1578,8 +1599,13 @@ export function App() {
       locked: false,
       visible: true
     };
-    const next = await queueOperation(current.id, { type: "create_artboard", artboard });
-    return next ? artboard : null;
+    try {
+      const next = await queueOperation(current.id, { type: "create_artboard", artboard });
+      return next ? artboard : null;
+    } catch (error) {
+      failLoud(error instanceof Error ? error.message : "Could not create a canvas — your change may not be saved");
+      return null;
+    }
   }
 
   /** Add an element and select it so it's immediately visible and editable. */
@@ -1587,10 +1613,15 @@ export function App() {
     const boardId = projectRef.current?.id;
     if (!boardId) return;
     setStatus("Saving...");
-    const next = await queueOperation(boardId, { type: "add_element", element }).catch(() => null);
-    if (next && projectRef.current?.id === boardId) {
-      await select([element.id]).catch(() => undefined);
-      setStatus(`Added ${element.name}`);
+    try {
+      const next = await queueOperation(boardId, { type: "add_element", element });
+      if (next && projectRef.current?.id === boardId) {
+        await select([element.id]).catch(() => undefined);
+        setStatus(`Added ${element.name}`);
+      }
+    } catch (error) {
+      // A failed insert must never hang on "Saving…" — fail loud (persistence P0).
+      failLoud(error instanceof Error ? error.message : `Could not add ${element.name} — your change may not be saved`);
     }
   }
 
@@ -1727,9 +1758,13 @@ export function App() {
       setStatus("Backing up…");
       const result = await backupNow();
       await refreshStorageStatus().catch(() => undefined);
-      setStatus(result.failed.length ? `Backup finished with ${result.failed.length} failure(s): ${result.failed[0]?.error}` : `Backed up ${result.backedUp.length} ${pluralize(result.backedUp.length, "board")}`);
+      if (result.failed.length) {
+        failLoud(`Backup finished with ${result.failed.length} failure(s): ${result.failed[0]?.error}`);
+      } else {
+        setStatus(`Backed up ${result.backedUp.length} ${pluralize(result.backedUp.length, "board")}`);
+      }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Backup failed");
+      failLoud(error instanceof Error ? error.message : "Backup failed");
     }
   }
 
@@ -2270,7 +2305,7 @@ export function App() {
       </header>
 
       {homeOpen ? (
-        <HomeView boards={boardSummaries} previews={boardPreviews} storageStatus={storageStatus} loading={boardsLoading} onOpen={openBoard} onCreate={createNewBoard} onDelete={requestDeleteBoard} />
+        <HomeView boards={boardSummaries} previews={boardPreviews} storageStatus={storageStatus} loading={boardsLoading} error={boardsError} onRetry={() => void refreshBoards().catch(() => undefined)} onOpen={openBoard} onCreate={createNewBoard} onDelete={requestDeleteBoard} />
       ) : project ? (
         <>
       {leftPaneOpen ? (
@@ -2588,8 +2623,11 @@ export function App() {
       <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       {project ? <RestoreDialog boardId={project.id} open={restoreOpen} onClose={() => setRestoreOpen(false)} onRestored={setStatus} /> : null}
 
-      <footer className="statusbar">
-        <span className="status-message">{status}</span>
+      <footer className={classNames("statusbar", statusTone === "error" && "has-error")}>
+        <span className={classNames("status-message", statusTone === "error" && "is-error")}>
+          {statusTone === "error" ? <AlertTriangle size={13} aria-hidden="true" /> : null}
+          {status}
+        </span>
         <span className="statusbar-spacer" />
         {!homeOpen && connectFromId ? <span className="status-hint">Connector armed — click a target</span> : null}
         {!homeOpen && tool !== "select" ? <span className="status-hint">{tool === "connect" ? "Connector tool" : "Ink tool"} · Esc to exit</span> : null}
@@ -2649,6 +2687,8 @@ function HomeView({
   previews,
   storageStatus,
   loading,
+  error,
+  onRetry,
   onOpen,
   onCreate,
   onDelete
@@ -2657,6 +2697,8 @@ function HomeView({
   previews: Record<string, BoardProject>;
   storageStatus: ApiHealth | null;
   loading: boolean;
+  error: string | null;
+  onRetry: () => void;
   onOpen: (boardId: string) => void;
   onCreate: () => void;
   onDelete: (board: BoardSummary) => void;
@@ -2768,17 +2810,44 @@ function HomeView({
             })}
           </div>
         ) : loading ? (
-          <div className="home-empty">
-            <Frame size={28} />
-            <h3>Loading boards</h3>
+          <div className="board-card-grid" aria-hidden="true">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <div key={index} className="board-card board-card-skeleton">
+                <div className="skeleton-head">
+                  <span className="skeleton-glyph" />
+                  <div className="skeleton-lines">
+                    <span className="skeleton-line" />
+                    <span className="skeleton-line short" />
+                  </div>
+                </div>
+                <div className="skeleton-chips">
+                  <span className="skeleton-chip" />
+                  <span className="skeleton-chip" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : error ? (
+          <div className="home-empty home-error" role="alert">
+            {navigator.onLine ? <CloudOff size={28} /> : <WifiOff size={28} />}
+            <h3>{navigator.onLine ? "Couldn't reach the workspace" : "You're offline"}</h3>
+            <p>{navigator.onLine ? error : "Reconnect to load and save your boards. Nothing you've done is lost."}</p>
+            <button className="wide-action" onClick={() => onRetry()}>
+              <RotateCcw size={16} /> Try again
+            </button>
           </div>
         ) : (
-          <div className="home-empty">
-            <Frame size={28} />
-            <h3>No boards yet</h3>
+          <div className="home-empty home-first-run">
+            <div className="first-run-motif" aria-hidden="true">
+              <Frame size={30} />
+              <Sparkles size={16} className="first-run-spark" />
+            </div>
+            <h3>Start your first board</h3>
+            <p>One canvas for hi-fi app mockups and diagrams — designed for you and your agents to edit together.</p>
             <button className="wide-action" onClick={() => onCreate()}>
               <Plus size={16} /> New board
             </button>
+            <small>Agent edits stream in live once you point one at the MCP endpoint.</small>
           </div>
         )}
       </div>
@@ -3324,8 +3393,8 @@ function ElementContent({ element, assetSrc }: { element: BoardElement; assetSrc
       const points = sparklinePoints(values, 100, 100, 8);
       return (
         <svg className="sparkline-primitive" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label={readString(element.props.label, "Sparkline")}>
-          {element.props.showArea === true ? <polygon points={`8,100 ${points} 92,100`} fill={readString(element.style.stroke ?? element.style.color, "#2563EB")} opacity="0.12" /> : null}
-          <polyline points={points} stroke={readString(element.style.stroke ?? element.style.color, "#2563EB")} strokeWidth={element.style.strokeWidth ?? 3} vectorEffect="non-scaling-stroke" />
+          {element.props.showArea === true ? <polygon points={`8,100 ${points} 92,100`} fill={readString(element.style.stroke ?? element.style.color, "#44403C")} opacity="0.12" /> : null}
+          <polyline points={points} stroke={readString(element.style.stroke ?? element.style.color, "#44403C")} strokeWidth={element.style.strokeWidth ?? 3} vectorEffect="non-scaling-stroke" />
         </svg>
       );
     }
@@ -3424,8 +3493,8 @@ function ElementContent({ element, assetSrc }: { element: BoardElement; assetSrc
 
 function ShapePrimitive({ element }: { element: BoardElement }) {
   const kind = readString(element.props.shape, "rectangle");
-  const fill = readString(element.style.fill, "#EFF6FF");
-  const stroke = readString(element.style.stroke, "#2563EB");
+  const fill = readString(element.style.fill, "#F7F6F3");
+  const stroke = readString(element.style.stroke, "#44403C");
   const strokeWidth = element.style.strokeWidth ?? 1.5;
   const text = readString(element.props.text, "");
   return (
@@ -3534,7 +3603,7 @@ function ConnectorLayer({ project, selectedIds, agentActiveIds, onSelect }: { pr
         const toRect = connectorWorldRect(project, connector.toArtboardId, connector.toElementId);
         if (!fromRect || !toRect) return null;
         const geometry = connectorGeometry(fromRect, toRect, connector);
-        const stroke = String(connector.style.stroke ?? "#2563EB");
+        const stroke = String(connector.style.stroke ?? "#44403C");
         const selected = selectedIds.includes(connector.id);
         const agentActive = agentActiveIds.has(connector.id);
         const strokeWidth = (connector.style.strokeWidth ?? 2) + (selected ? 1.5 : 0);
@@ -3849,7 +3918,7 @@ function ConnectorInspector({
       <SegmentedControl label="End cap" value={connector.arrowEnd} options={arrowOptions} onChange={(arrowEnd) => onChange({ arrowEnd })} />
       <SegmentedControl label="Leaves start from" value={connector.fromPort} options={CONNECTOR_PORT_OPTIONS.map((option) => ({ value: option.value, label: option.label }))} onChange={(fromPort) => onChange({ fromPort })} />
       <SegmentedControl label="Enters target at" value={connector.toPort} options={CONNECTOR_PORT_OPTIONS.map((option) => ({ value: option.value, label: option.label }))} onChange={(toPort) => onChange({ toPort })} />
-      <ColorField label="Line color" value={connector.style.stroke ?? "#2563EB"} onChange={(stroke) => onChange({ style: { stroke } })} />
+      <ColorField label="Line color" value={connector.style.stroke ?? "#44403C"} onChange={(stroke) => onChange({ style: { stroke } })} />
       <NumberField label="Thickness" value={connector.style.strokeWidth ?? 2} min={1} max={8} step={0.5} onChange={(strokeWidth) => onChange({ style: { strokeWidth } })} />
       <button className="wide-action danger" onClick={onDelete}>
         <Trash2 size={15} /> Delete connector

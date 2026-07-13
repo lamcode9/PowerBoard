@@ -492,6 +492,7 @@ button {
 .home-empty h3 {
   font-size: 14px;
   font-weight: 700;
+  color: inherit;
 }
 
 .home-empty .wide-action {
@@ -499,6 +500,146 @@ button {
   min-width: 150px;
   margin-bottom: 0;
   padding: 0 14px;
+}
+
+.home-empty p {
+  max-width: 42ch;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  color: inherit;
+  opacity: 0.82;
+}
+
+.home-empty small {
+  font-size: 12px;
+  color: inherit;
+  opacity: 0.62;
+}
+
+/* First-run pitch: a designed welcome, not a bare fallback. */
+.home-first-run {
+  gap: var(--space-4);
+  border-style: solid;
+  border-color: var(--accent-border);
+  background:
+    radial-gradient(120% 90% at 50% -10%, var(--accent-tint), transparent 60%),
+    #ffffff;
+  color: var(--ink-2, #475569);
+}
+
+.first-run-motif {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--r-lg);
+  background: var(--accent-tint);
+  color: var(--accent-strong);
+}
+
+.first-run-spark {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  color: var(--accent);
+}
+
+.home-first-run h3 {
+  font-size: 17px;
+}
+
+/* Error / offline: never let a load failure read as "no boards yet". */
+.home-error {
+  border-style: solid;
+  border-color: #f0c9c9;
+  background: #fdf5f5;
+  color: #9f3f3f;
+}
+
+.home-error h3 {
+  font-size: 15px;
+}
+
+/* Loading skeletons: same grid geometry as real cards → no layout jump, no spinner. */
+.board-card-skeleton {
+  cursor: default;
+  gap: var(--space-4);
+  pointer-events: none;
+}
+
+.board-card-skeleton:hover {
+  border-color: #d7dee8;
+  box-shadow: none;
+  transform: none;
+}
+
+.skeleton-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.skeleton-lines {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.skeleton-glyph,
+.skeleton-line,
+.skeleton-chip {
+  border-radius: var(--r-sm);
+  background: linear-gradient(100deg, #eef2f7 30%, #f7fafc 50%, #eef2f7 70%);
+  background-size: 220% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-glyph {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: var(--r-md);
+}
+
+.skeleton-line {
+  height: 11px;
+}
+
+.skeleton-line.short {
+  width: 55%;
+}
+
+.skeleton-chips {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: auto;
+}
+
+.skeleton-chip {
+  width: 72px;
+  height: 22px;
+  border-radius: var(--r-pill);
+}
+
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 220% 0;
+  }
+  to {
+    background-position: -20% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-glyph,
+  .skeleton-line,
+  .skeleton-chip {
+    animation: none;
+  }
 }
 
 .dialog-backdrop {
@@ -1138,7 +1279,7 @@ button {
 
 .mock-card span,
 .mock-paywall span {
-  color: #2563eb;
+  color: #44403c;
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -1254,7 +1395,7 @@ button {
 .mock-chart i {
   flex: 1;
   border-radius: var(--r-md) var(--r-md) 3px 3px;
-  background: #3b82f6;
+  background: #44403c;
 }
 
 .mock-table-grid {
@@ -1535,10 +1676,28 @@ button {
 }
 
 .status-message {
+  display: inline-flex;
   min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.status-message svg {
+  flex: 0 0 auto;
+}
+
+/* A failed write must be impossible to miss: the whole bar goes red, not just the text (persistence P0). */
+.statusbar.has-error {
+  background: #7f1d1d;
+  color: #fecaca;
+}
+
+.status-message.is-error {
+  color: #fecaca;
+  font-weight: 600;
 }
 
 .agent-edit-stamp {
@@ -2397,6 +2556,32 @@ button {
 [data-theme="dark"] .board-card h3,
 [data-theme="dark"] .home-header h2 {
   color: #e5edf7;
+}
+[data-theme="dark"] .home-empty {
+  border-color: #2a3547;
+  background: #131a26;
+  color: #93a4bd;
+}
+[data-theme="dark"] .home-first-run {
+  border-color: var(--accent-border);
+  background:
+    radial-gradient(120% 90% at 50% -10%, var(--accent-tint), transparent 60%),
+    #131a26;
+  color: #c3cfdf;
+}
+[data-theme="dark"] .home-error {
+  border-color: #5b2a2a;
+  background: #241315;
+  color: #f0b4b4;
+}
+[data-theme="dark"] .skeleton-glyph,
+[data-theme="dark"] .skeleton-line,
+[data-theme="dark"] .skeleton-chip {
+  background: linear-gradient(100deg, #1b2432 30%, #24303f 50%, #1b2432 70%);
+  background-size: 220% 100%;
+}
+[data-theme="dark"] .board-card-skeleton:hover {
+  border-color: #263042;
 }
 [data-theme="dark"] .new-board-dialog {
   background: #1a2230;
