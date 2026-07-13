@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#181824"/>
+      <stop offset="1" stop-color="#0C0C12"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5B5BF0"/>
+      <stop offset="1" stop-color="#8B5CFF"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="11" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect x="0" y="0" width="512" height="512" rx="115" fill="url(#tile)"/>
+  <rect x="0.5" y="0.5" width="511" height="511" rx="114.5" fill="none" stroke="#2A2A3A" stroke-width="1"/>
+
+  <!-- org-chart / flow bus -->
+  <path d="M256 190 V250 M156 250 H356 M156 250 V300 M356 250 V300" fill="none" stroke="#5757C4" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- top node -->
+  <rect x="196" y="98" width="120" height="92" rx="26" fill="none" stroke="#54546A" stroke-width="18"/>
+  <!-- left child -->
+  <rect x="96" y="300" width="120" height="92" rx="26" fill="none" stroke="#54546A" stroke-width="18"/>
+  <!-- right child: powered -->
+  <rect x="296" y="300" width="120" height="92" rx="26" fill="url(#accent)" filter="url(#glow)"/>
+  <g transform="translate(356,346) scale(2.7) translate(-12,-12)" fill="#FFFFFF">
+    <path d="M13 2 L6 13 L11 13 L10 22 L18 10 L13 10 Z"/>
+  </g>
+</svg>

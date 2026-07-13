@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="tile" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#1C1C2A"/>
+      <stop offset="0.55" stop-color="#111119"/>
+      <stop offset="1" stop-color="#08080D"/>
+    </linearGradient>
+    <radialGradient id="bloom" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#7C4DFF" stop-opacity="0.48"/>
+      <stop offset="0.55" stop-color="#5B5BF0" stop-opacity="0.15"/>
+      <stop offset="1" stop-color="#5B5BF0" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="core" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8272FF"/>
+      <stop offset="1" stop-color="#5E48E0"/>
+    </linearGradient>
+    <clipPath id="tileClip"><rect width="512" height="512" rx="115"/></clipPath>
+  </defs>
+
+  <g transform="translate(100,100) scale(1.609375)">
+    <rect width="512" height="512" rx="115" fill="url(#tile)"/>
+    <g clip-path="url(#tileClip)"><circle cx="256" cy="256" r="170" fill="url(#bloom)"/></g>
+
+    <rect x="88" y="88" width="336" height="336" rx="80" fill="none" stroke="#5A5A72" stroke-width="20"/>
+    <rect x="99" y="99" width="314" height="314" rx="70" fill="none" stroke="#8888A2" stroke-width="2" stroke-opacity="0.4"/>
+
+    <circle cx="256" cy="256" r="92" fill="#7C4DFF" opacity="0.12"/>
+    <circle cx="256" cy="256" r="74" fill="#8B6BFF" opacity="0.18"/>
+    <circle cx="256" cy="256" r="58" fill="url(#core)"/>
+    <circle cx="256" cy="256" r="58" fill="none" stroke="#BCAEFF" stroke-width="2.5" stroke-opacity="0.45"/>
+  </g>
+</svg>

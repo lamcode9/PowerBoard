@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Transparent glyph-only mark (no tile). Tuned for dark surfaces / marketing overlays. -->
+  <defs>
+    <linearGradient id="ring" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9A86FF"/>
+      <stop offset="1" stop-color="#6A54E6"/>
+    </linearGradient>
+    <linearGradient id="core" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8272FF"/>
+      <stop offset="1" stop-color="#5E48E0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="96" y="96" width="320" height="320" rx="66" fill="none" stroke="#8E8EA6" stroke-width="12"/>
+  <rect x="103" y="103" width="306" height="306" rx="59" fill="none" stroke="#B4B4C6" stroke-width="1.5" stroke-opacity="0.35"/>
+
+  <circle cx="256" cy="256" r="112" fill="none" stroke="url(#ring)" stroke-width="9" opacity="0.28"/>
+  <circle cx="256" cy="256" r="74" fill="none" stroke="url(#ring)" stroke-width="9" opacity="0.55"/>
+
+  <circle cx="256" cy="256" r="58" fill="#7C4DFF" opacity="0.12"/>
+  <circle cx="256" cy="256" r="46" fill="#8B6BFF" opacity="0.18"/>
+  <circle cx="256" cy="256" r="36" fill="url(#core)"/>
+  <circle cx="256" cy="256" r="36" fill="none" stroke="#BCAEFF" stroke-width="1.5" stroke-opacity="0.45"/>
+</svg>

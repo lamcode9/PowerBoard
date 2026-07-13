@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#181824"/>
+      <stop offset="1" stop-color="#0C0C12"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5B5BF0"/>
+      <stop offset="1" stop-color="#8B5CFF"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="10" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect x="0" y="0" width="512" height="512" rx="115" fill="url(#tile)"/>
+  <rect x="0.5" y="0.5" width="511" height="511" rx="114.5" fill="none" stroke="#2A2A3A" stroke-width="1"/>
+
+  <!-- two nodes joined by a lightning-bolt connector -->
+  <rect x="196" y="88" width="120" height="96" rx="26" fill="url(#accent)"/>
+  <rect x="196" y="328" width="120" height="96" rx="26" fill="url(#accent)"/>
+
+  <!-- bolt as the connector -->
+  <g filter="url(#glow)">
+    <path d="M270 176 L214 268 L252 268 L238 336 L302 240 L262 240 Z" fill="#FFFFFF"/>
+  </g>
+</svg>

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#181824"/>
+      <stop offset="1" stop-color="#0C0C12"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5B5BF0"/>
+      <stop offset="1" stop-color="#8B5CFF"/>
+    </linearGradient>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="14" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect x="0" y="0" width="512" height="512" rx="115" fill="url(#tile)"/>
+  <rect x="0.5" y="0.5" width="511" height="511" rx="114.5" fill="none" stroke="#2A2A3A" stroke-width="1"/>
+
+  <!-- board frame -->
+  <rect x="100" y="100" width="312" height="312" rx="58" fill="none" stroke="#54546A" stroke-width="16"/>
+
+  <!-- live agent pulse -->
+  <circle cx="256" cy="256" r="112" fill="none" stroke="#7C4DFF" stroke-width="8" opacity="0.22"/>
+  <circle cx="256" cy="256" r="74" fill="none" stroke="#7C4DFF" stroke-width="8" opacity="0.5"/>
+  <circle cx="256" cy="256" r="34" fill="url(#accent)" filter="url(#glow)"/>
+</svg>
