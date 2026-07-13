@@ -137,10 +137,13 @@ const componentTypes: BoardElement["type"][] = [
   "rect"
 ];
 
+type ResizeHandle = "nw" | "ne" | "sw" | "se";
+
 type DragState = {
   id: string;
   target: "element" | "artboard";
   mode: "move" | "resize";
+  handle?: ResizeHandle;
   startX: number;
   startY: number;
   original: Pick<BoardElement | Artboard, "x" | "y" | "width" | "height">;
@@ -1037,10 +1040,7 @@ export function App() {
       setGuidesIfChanged(snapped.guides);
       patch = clampMove(activeDrag, snapped.x, snapped.y);
     } else {
-      patch = {
-        width: Math.max(minSize, Math.round(activeDrag.original.width + dx)),
-        height: Math.max(minSize, Math.round(activeDrag.original.height + dy))
-      };
+      patch = resizePatch(activeDrag, dx, dy, minSize);
     }
     const latest = { ...activeDrag.latest, ...patch };
     dragRef.current = { ...activeDrag, latest };
@@ -1061,6 +1061,31 @@ export function App() {
       x: clamp(x, 0, Math.max(0, artboard.width - width)),
       y: clamp(y, 0, Math.max(0, artboard.height - height))
     };
+  }
+
+  /** Resize from any corner: the opposite edge stays pinned, min-size clamps toward the anchor. */
+  function resizePatch(activeDrag: DragState, dx: number, dy: number, minSize: number): Partial<Pick<BoardElement, "x" | "y" | "width" | "height">> {
+    const { x, y, width, height } = activeDrag.original;
+    const handle = activeDrag.handle ?? "se";
+    const right = x + width;
+    const bottom = y + height;
+    let nextX = x;
+    let nextY = y;
+    let nextWidth: number;
+    let nextHeight: number;
+    if (handle.includes("w")) {
+      nextWidth = Math.max(minSize, Math.round(width - dx));
+      nextX = right - nextWidth;
+    } else {
+      nextWidth = Math.max(minSize, Math.round(width + dx));
+    }
+    if (handle.includes("n")) {
+      nextHeight = Math.max(minSize, Math.round(height - dy));
+      nextY = bottom - nextHeight;
+    } else {
+      nextHeight = Math.max(minSize, Math.round(height + dy));
+    }
+    return { x: nextX, y: nextY, width: nextWidth, height: nextHeight };
   }
 
   function setGuidesIfChanged(guides: SnapGuides) {
@@ -2055,6 +2080,9 @@ export function App() {
     cameraRef.current = camera;
     if (canvasPlaneRef.current) {
       canvasPlaneRef.current.style.transform = cameraTransform(camera);
+      // Publish live zoom so on-plane affordances (rings, handles, guides) can hold a
+      // constant screen size via calc(px / var(--zoom)) — no blur/double at 50%/400%.
+      canvasPlaneRef.current.style.setProperty("--zoom", String(camera.zoom));
     }
     if (zoomStateFrameRef.current !== null) return;
     zoomStateFrameRef.current = window.requestAnimationFrame(() => {
@@ -2432,9 +2460,17 @@ export function App() {
         onPointerDown={onViewportPointerDown}
       >
         <div className="canvas-space">
-          <div ref={canvasPlaneRef} className="canvas-plane" style={{ transform: cameraTransform(cameraRef.current), width: CANVAS_WIDTH, height: CANVAS_HEIGHT }}>
+          <div ref={canvasPlaneRef} className="canvas-plane" style={{ transform: cameraTransform(cameraRef.current), width: CANVAS_WIDTH, height: CANVAS_HEIGHT, ["--zoom" as string]: cameraRef.current.zoom }}>
             <div className="canvas-grid" />
-            <ConnectorLayer project={project} selectedIds={selectedIds} agentActiveIds={agentActiveIds} onSelect={select} />
+            <ConnectorLayer
+              project={project}
+              selectedIds={selectedIds}
+              agentActiveIds={agentActiveIds}
+              zoom={zoom}
+              onSelect={select}
+              onSetWaypoint={(connectorId, point) => void runOperation({ type: "update_connector", connectorId, patch: { waypoints: point ? [point] : [] } })}
+              clientToWorld={worldPointFromClient}
+            />
             {project.artboards
               .filter((artboard) => artboard.visible)
               .map((artboard) => (
@@ -3308,17 +3344,20 @@ function ElementView({
           onCommitText={onCommitText}
         />
       ))}
-      {selected && !element.locked && !editing ? (
-        <button
-          className="resize-handle"
-          aria-label="Resize"
-          onPointerDown={(event) => {
-            event.stopPropagation();
-            capturePointer(event.currentTarget, event.pointerId);
-            onDragStart({ id: element.id, target: "element", mode: "resize", startX: event.clientX, startY: event.clientY, original: element, latest: element });
-          }}
-        />
-      ) : null}
+      {selected && !element.locked && !editing
+        ? (["nw", "ne", "sw", "se"] as const).map((handle) => (
+            <button
+              key={handle}
+              className={`resize-handle ${handle}`}
+              aria-label={`Resize (${handle})`}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                capturePointer(event.currentTarget, event.pointerId);
+                onDragStart({ id: element.id, target: "element", mode: "resize", handle, startX: event.clientX, startY: event.clientY, original: element, latest: element });
+              }}
+            />
+          ))
+        : null}
     </div>
   );
 }
@@ -3595,20 +3634,47 @@ function connectorWorldRect(project: BoardProject, artboardId: string, elementId
   return { x, y, width: element.width, height: element.height };
 }
 
-function ConnectorLayer({ project, selectedIds, agentActiveIds, onSelect }: { project: BoardProject; selectedIds: string[]; agentActiveIds: Set<string>; onSelect: (ids: string[], additive?: boolean) => void }) {
+function ConnectorLayer({
+  project,
+  selectedIds,
+  agentActiveIds,
+  zoom,
+  onSelect,
+  onSetWaypoint,
+  clientToWorld
+}: {
+  project: BoardProject;
+  selectedIds: string[];
+  agentActiveIds: Set<string>;
+  zoom: number;
+  onSelect: (ids: string[], additive?: boolean) => void;
+  onSetWaypoint: (connectorId: string, point: { x: number; y: number } | null) => void;
+  clientToWorld: (clientX: number, clientY: number) => { x: number; y: number } | null;
+}) {
+  // Live preview of a midpoint drag; commit to the op model only on pointer-up.
+  const [waypointDraft, setWaypointDraft] = useState<{ id: string; x: number; y: number } | null>(null);
+  const dragRef = useRef<{ id: string; moved: boolean; point: { x: number; y: number } } | null>(null);
+  // Counter-scale so the handle is a constant ~8px dot with a ≥16px hit area at any zoom.
+  const dotRadius = 4 / zoom;
+  const hitRadius = 8 / zoom;
   return (
     <svg className="connector-layer" width={CANVAS_WIDTH} height={CANVAS_HEIGHT} viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}>
       {project.connectors.map((connector) => {
         const fromRect = connectorWorldRect(project, connector.fromArtboardId, connector.fromElementId);
         const toRect = connectorWorldRect(project, connector.toArtboardId, connector.toElementId);
         if (!fromRect || !toRect) return null;
-        const geometry = connectorGeometry(fromRect, toRect, connector);
-        const stroke = String(connector.style.stroke ?? "#44403C");
         const selected = selectedIds.includes(connector.id);
+        const draftPoint = waypointDraft && waypointDraft.id === connector.id ? { x: waypointDraft.x, y: waypointDraft.y } : null;
+        // Preview the dragged waypoint so the spine follows the cursor before we persist.
+        const effective = draftPoint ? { ...connector, waypoints: [draftPoint] } : connector;
+        const geometry = connectorGeometry(fromRect, toRect, effective);
+        const stroke = String(connector.style.stroke ?? "#44403C");
         const agentActive = agentActiveIds.has(connector.id);
         const strokeWidth = (connector.style.strokeWidth ?? 2) + (selected ? 1.5 : 0);
         const endHead = arrowheadPath(geometry.end, geometry.endAngle, connector.arrowEnd);
         const startHead = connector.arrowStart !== "none" ? arrowheadPath(geometry.start, geometry.startAngle + Math.PI, connector.arrowStart) : "";
+        // Handle sits on the active waypoint if there is one, else at the straight-line midpoint.
+        const handleAt = draftPoint ?? effective.waypoints[0] ?? { x: (geometry.start.x + geometry.end.x) / 2, y: (geometry.start.y + geometry.end.y) / 2 };
         return (
           <g key={connector.id} className={classNames("connector", selected && "selected", agentActive && "agent-active")}>
             {/* Wide invisible hit target for easy selection. */}
@@ -3632,6 +3698,46 @@ function ConnectorLayer({ project, selectedIds, agentActiveIds, onSelect }: { pr
                 <text x={geometry.labelPoint.x} y={geometry.labelPoint.y + 4} textAnchor="middle">
                   {connector.label}
                 </text>
+              </g>
+            ) : null}
+            {selected ? (
+              <g className="connector-waypoint">
+                <circle
+                  cx={handleAt.x}
+                  cy={handleAt.y}
+                  r={hitRadius}
+                  fill="transparent"
+                  style={{ cursor: "grab", pointerEvents: "all" }}
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                    (event.target as SVGElement).setPointerCapture?.(event.pointerId);
+                    dragRef.current = { id: connector.id, moved: false, point: handleAt };
+                    setWaypointDraft({ id: connector.id, x: handleAt.x, y: handleAt.y });
+                  }}
+                  onPointerMove={(event) => {
+                    const session = dragRef.current;
+                    if (!session || session.id !== connector.id) return;
+                    const world = clientToWorld(event.clientX, event.clientY);
+                    if (!world) return;
+                    session.moved = true;
+                    session.point = world;
+                    setWaypointDraft({ id: connector.id, x: world.x, y: world.y });
+                  }}
+                  onPointerUp={(event) => {
+                    const session = dragRef.current;
+                    dragRef.current = null;
+                    (event.target as SVGElement).releasePointerCapture?.(event.pointerId);
+                    if (session?.moved) onSetWaypoint(connector.id, session.point);
+                    setWaypointDraft(null);
+                  }}
+                  onDoubleClick={(event) => {
+                    event.stopPropagation();
+                    onSetWaypoint(connector.id, null);
+                  }}
+                >
+                  <title>Drag to bend · double-click to straighten</title>
+                </circle>
+                <circle className="connector-waypoint-dot" cx={handleAt.x} cy={handleAt.y} r={dotRadius} strokeWidth={1.5 / zoom} style={{ pointerEvents: "none" }} />
               </g>
             ) : null}
           </g>
