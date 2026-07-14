@@ -2947,6 +2947,7 @@ function RenamableName({
     return (
       <input
         className="layer-rename"
+        aria-label="Rename layer"
         value={value}
         autoFocus
         onFocus={(event) => event.currentTarget.select()}
@@ -3375,6 +3376,7 @@ function InlineTextEditor({ element, onCommit }: { element: BoardElement; onComm
     <textarea
       ref={ref}
       className="inline-text-editor"
+      aria-label="Edit text"
       value={value}
       onChange={(event) => setValue(event.target.value)}
       onPointerDown={(event) => event.stopPropagation()}
@@ -4059,7 +4061,7 @@ function ReadOnlyField({ label, value, copyable = false }: { label: string; valu
     <div className="field readonly-field">
       <span>{label}</span>
       <div className="readonly-value-row">
-        <input value={value} readOnly onFocus={(event) => event.currentTarget.select()} />
+        <input value={value} aria-label={label} readOnly onFocus={(event) => event.currentTarget.select()} />
         {copyable ? (
           <button type="button" title={`Copy ${label}`} onClick={() => void copyValue()}>
             <Copy size={14} />
@@ -4084,8 +4086,8 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
   return (
     <label className="field color-field">
       <span>{label}</span>
-      <input type="color" value={normalizeColor(value)} onChange={(event) => onChange(event.target.value)} />
-      <input value={value} onChange={(event) => onChange(event.target.value)} />
+      <input type="color" aria-label={`${label} color picker`} value={normalizeColor(value)} onChange={(event) => onChange(event.target.value)} />
+      <input value={value} aria-label={`${label} hex value`} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
 }
@@ -4094,8 +4096,8 @@ function NumberField({ label, value, min, max, step = 1, onChange }: { label: st
   return (
     <label className="field">
       <span>{label}</span>
-      <input type="range" value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} />
-      <input type="number" value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} />
+      <input type="range" aria-label={`${label} slider`} value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} />
+      <input type="number" aria-label={label} value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} />
     </label>
   );
 }

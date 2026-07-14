@@ -47,6 +47,21 @@ button {
   border: 0;
 }
 
+/* Accessibility focus floor: a branded, consistent keyboard-focus ring on every interactive
+   element. :focus-visible keeps it off mouse/touch; outline follows border-radius and isn't
+   clipped by overflow, so it works on cards, chips, toolbar controls, and canvas buttons alike. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Controls that already carry their own inset accent ring keep it — no doubled ring. */
+.field input:focus-visible,
+.field select:focus-visible,
+.menu-field select:focus-visible,
+.layer-rename:focus-visible {
+  outline: none;
+}
+
 .loading-shell {
   display: grid;
   min-height: 100vh;
@@ -168,7 +183,6 @@ button {
   width: 220px;
   max-width: 24vw;
   border: 0;
-  outline: 0;
   background: transparent;
   color: #334155;
   font-size: 13px;
@@ -284,7 +298,7 @@ button {
 
 .board-card-head p {
   margin: 4px 0 0;
-  color: #64748b;
+  color: var(--text-2);
   font-size: 12px;
   font-weight: 500;
 }
@@ -344,7 +358,6 @@ button {
 .board-card:focus-visible {
   border-color: var(--accent-border);
   box-shadow: var(--shadow-2);
-  outline: 0;
   transform: translateY(-1px);
 }
 
@@ -467,14 +480,14 @@ button {
 }
 
 .frame-chip small {
-  color: #64748b;
+  color: var(--text-2);
   font-size: 11px;
   font-weight: 600;
 }
 
 .frame-chip.more,
 .frame-chip.empty {
-  color: #64748b;
+  color: var(--text-2);
 }
 
 .home-empty {
@@ -560,7 +573,7 @@ button {
 }
 
 .home-error h3 {
-  font-size: 15px;
+  font-size: 17px;
 }
 
 /* Loading skeletons: same grid geometry as real cards → no layout jump, no spinner. */
@@ -673,7 +686,7 @@ button {
 
 .new-board-dialog p {
   margin: 5px 0 0;
-  color: #64748b;
+  color: var(--text-2);
   font-size: 12px;
   font-weight: 500;
 }
@@ -1515,7 +1528,9 @@ button {
 .field {
   display: grid;
   gap: 6px;
-  color: #64748b;
+  /* Token flips to a lighter slate in dark mode so 11px bold labels clear AA (was a hardcoded
+     #64748b that stayed dark-on-dark at 3.67:1). */
+  color: var(--text-2);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -2322,7 +2337,6 @@ button {
 .palette-input-row input {
   flex: 1;
   border: 0;
-  outline: 0;
   background: transparent;
   color: var(--text-1);
   font-size: 14px;
