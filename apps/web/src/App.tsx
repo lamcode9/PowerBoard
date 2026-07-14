@@ -2202,7 +2202,7 @@ export function App() {
       {!homeOpen && focusMode ? <div className="focus-reveal-strip" aria-hidden="true" /> : null}
       <header className="topbar">
         <div className="topbar-left">
-          <a className="brand-block" href={routeHash({ view: "home" })} title="All boards">
+          <a className="brand-block" href={routeHash({ view: "home" })} data-tip="All boards" aria-label="All boards">
             <div className="brand-mark">PB</div>
             {homeOpen ? (
               <div className="brand-title">
@@ -2262,12 +2262,12 @@ export function App() {
                   <>
                     <div className="menu-heading">Align</div>
                     <div className="menu-grid">
-                      <button className="menu-icon" title="Align left" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-left"); close(); }}><AlignStartVertical size={16} /></button>
-                      <button className="menu-icon" title="Align centers" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-center-x"); close(); }}><AlignCenterVertical size={16} /></button>
-                      <button className="menu-icon" title="Align right" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-right"); close(); }}><AlignEndVertical size={16} /></button>
-                      <button className="menu-icon" title="Align top" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-top"); close(); }}><AlignStartHorizontal size={16} /></button>
-                      <button className="menu-icon" title="Align middles" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-center-y"); close(); }}><AlignCenterHorizontal size={16} /></button>
-                      <button className="menu-icon" title="Align bottom" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-bottom"); close(); }}><AlignEndHorizontal size={16} /></button>
+                      <button className="menu-icon" data-tip="Align left" aria-label="Align left" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-left"); close(); }}><AlignStartVertical size={16} /></button>
+                      <button className="menu-icon" data-tip="Align centers" aria-label="Align centers" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-center-x"); close(); }}><AlignCenterVertical size={16} /></button>
+                      <button className="menu-icon" data-tip="Align right" aria-label="Align right" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-right"); close(); }}><AlignEndVertical size={16} /></button>
+                      <button className="menu-icon" data-tip="Align top" aria-label="Align top" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-top"); close(); }}><AlignStartHorizontal size={16} /></button>
+                      <button className="menu-icon" data-tip="Align middles" aria-label="Align middles" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-center-y"); close(); }}><AlignCenterHorizontal size={16} /></button>
+                      <button className="menu-icon" data-tip="Align bottom" aria-label="Align bottom" disabled={selectedIds.length < 2} onClick={() => { void runLayout("align-bottom"); close(); }}><AlignEndHorizontal size={16} /></button>
                     </div>
                     <div className="menu-divider" />
                     <button className="menu-item" disabled={selectedIds.length < 3} onClick={() => { void runLayout("distribute-horizontal"); close(); }}><AlignHorizontalDistributeCenter size={15} /> Distribute horizontally</button>
@@ -2308,7 +2308,7 @@ export function App() {
             <div className="toolbar-spacer" />
 
             <div className="topbar-right">
-              <button className="connect-agent-button" onClick={() => setConnectOpen(true)} title="Connect an AI agent to this board">
+              <button className="connect-agent-button" onClick={() => setConnectOpen(true)} data-tip="Connect an AI agent to this board">
                 <Cable size={16} /> Connect agent
               </button>
               <div className="toolbar-group segmented">
@@ -2347,7 +2347,7 @@ export function App() {
               <Shapes size={14} /> Diagram
             </button>
           </div>
-          <button className="pane-collapse" title="Hide panel" aria-label="Hide left panel" onClick={toggleLeftPane}>
+          <button className="pane-collapse" data-tip="Hide panel" aria-label="Hide left panel" onClick={toggleLeftPane}>
             <PanelLeftClose size={15} />
           </button>
         </div>
@@ -2367,11 +2367,10 @@ export function App() {
             <CollapsiblePanel id="shapes" icon={<Shapes size={16} />} title="Shapes" collapsed={Boolean(collapsedPanels.shapes)} onToggle={togglePanel}>
               <div className="shape-grid">
                 {DIAGRAM_SHAPES.map(({ kind, label }) => (
-                  <button key={kind} className="shape-tile" onClick={() => addShape(kind, label)} title={label}>
+                  <button key={kind} className="shape-tile" onClick={() => addShape(kind, label)} data-tip={label} aria-label={label}>
                     <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                      <ShapeOutline kind={kind} fill="var(--shape-tile-fill)" stroke="var(--accent)" strokeWidth={4} />
+                      <ShapeOutline kind={kind} fill="none" stroke="currentColor" strokeWidth={4} />
                     </svg>
-                    <span>{label}</span>
                   </button>
                 ))}
               </div>
@@ -2521,13 +2520,13 @@ export function App() {
               <div className="selection-actionbar-anchor" style={{ left: selectionBounds.x + selectionBounds.width / 2, top: selectionBounds.y }}>
                 <div className="selection-actionbar" style={{ transform: `scale(${1 / zoom}) translate(-50%, calc(-100% - 14px))` }} onPointerDown={(event) => event.stopPropagation()}>
                   {selectedIds.length > 1 ? <span className="sel-count">{selectedIds.length}</span> : null}
-                  <button title="Duplicate (⌘D)" onClick={() => void duplicateSelection()}><Copy size={14} /></button>
-                  <button title="Group" disabled={selectedElementCount < 2 || selectedElementCount !== selectedIds.length} onClick={() => void groupSelection()}><Group size={14} /></button>
+                  <button data-tip="Duplicate (⌘D)" aria-label="Duplicate" onClick={() => void duplicateSelection()}><Copy size={14} /></button>
+                  <button data-tip="Group" aria-label="Group" disabled={selectedElementCount < 2 || selectedElementCount !== selectedIds.length} onClick={() => void groupSelection()}><Group size={14} /></button>
                   {selectedIds.length === 2 ? (
-                    <button title="Connect these two" onClick={() => void createConnectorBetween(selectedIds[0]!, selectedIds[1]!)}><Spline size={14} /></button>
+                    <button data-tip="Connect these two" aria-label="Connect these two" onClick={() => void createConnectorBetween(selectedIds[0]!, selectedIds[1]!)}><Spline size={14} /></button>
                   ) : null}
                   <span className="sel-divider" />
-                  <button className="danger" title="Delete (⌫)" onClick={() => void deleteSelection()}><Trash2 size={14} /></button>
+                  <button className="danger" data-tip="Delete (⌫)" aria-label="Delete" onClick={() => void deleteSelection()}><Trash2 size={14} /></button>
                 </div>
               </div>
             ) : null}
@@ -2548,7 +2547,7 @@ export function App() {
       {rightPaneOpen ? (
         <aside className="right-panel">
         <div className="pane-top">
-          <button className="pane-collapse" title="Hide panel" aria-label="Hide right panel" onClick={toggleRightPane}>
+          <button className="pane-collapse" data-tip="Hide panel" aria-label="Hide right panel" onClick={toggleRightPane}>
             <PanelRightClose size={15} />
           </button>
           <span className="pane-top-label">{selectedIds.length ? `${selectedIds.length} selected` : "Nothing selected"}</span>
@@ -2613,12 +2612,12 @@ export function App() {
       ) : null}
 
       {!chromeHidden && !leftPaneOpen ? (
-        <button className="pane-edge-tab left" title="Show left panel" aria-label="Show left panel" onClick={toggleLeftPane}>
+        <button className="pane-edge-tab left" data-tip="Show left panel" aria-label="Show left panel" onClick={toggleLeftPane}>
           <PanelLeftOpen size={15} />
         </button>
       ) : null}
       {!chromeHidden && !rightPaneOpen ? (
-        <button className="pane-edge-tab right" title="Show right panel" aria-label="Show right panel" onClick={toggleRightPane}>
+        <button className="pane-edge-tab right" data-tip="Show right panel" aria-label="Show right panel" onClick={toggleRightPane}>
           <PanelRightOpen size={15} />
         </button>
       ) : null}
@@ -3022,13 +3021,13 @@ function FrameLayerGroup({
         />
         {count ? <span className="layer-count">{count}</span> : null}
         <div className="layer-actions">
-          <button className="layer-act" title={artboard.visible ? "Hide" : "Show"} onClick={() => onUpdateArtboard({ visible: !artboard.visible })}>
+          <button className="layer-act" data-tip={artboard.visible ? "Hide" : "Show"} aria-label={artboard.visible ? "Hide" : "Show"} onClick={() => onUpdateArtboard({ visible: !artboard.visible })}>
             {artboard.visible ? <Eye size={12} /> : <EyeOff size={12} />}
           </button>
-          <button className="layer-act" title={artboard.locked ? "Unlock" : "Lock"} onClick={() => onUpdateArtboard({ locked: !artboard.locked })}>
+          <button className="layer-act" data-tip={artboard.locked ? "Unlock" : "Lock"} aria-label={artboard.locked ? "Unlock" : "Lock"} onClick={() => onUpdateArtboard({ locked: !artboard.locked })}>
             {artboard.locked ? <Lock size={12} /> : <LockOpen size={12} />}
           </button>
-          <button className="layer-act danger" title="Delete frame" onClick={onDeleteArtboard}><Trash2 size={12} /></button>
+          <button className="layer-act danger" data-tip="Delete frame" aria-label="Delete frame" onClick={onDeleteArtboard}><Trash2 size={12} /></button>
         </div>
       </div>
       {expanded
@@ -3079,13 +3078,13 @@ function LayerNode({
           onRename={(name) => onUpdate(element.id, { name })}
         />
         <div className="layer-actions">
-          <button className="layer-act" title={element.visible ? "Hide" : "Show"} onClick={() => onUpdate(element.id, { visible: !element.visible })}>
+          <button className="layer-act" data-tip={element.visible ? "Hide" : "Show"} aria-label={element.visible ? "Hide" : "Show"} onClick={() => onUpdate(element.id, { visible: !element.visible })}>
             {element.visible ? <Eye size={12} /> : <EyeOff size={12} />}
           </button>
-          <button className="layer-act" title={element.locked ? "Unlock" : "Lock"} onClick={() => onUpdate(element.id, { locked: !element.locked })}>
+          <button className="layer-act" data-tip={element.locked ? "Unlock" : "Lock"} aria-label={element.locked ? "Unlock" : "Lock"} onClick={() => onUpdate(element.id, { locked: !element.locked })}>
             {element.locked ? <Lock size={12} /> : <LockOpen size={12} />}
           </button>
-          <button className="layer-act danger" title="Delete" onClick={() => onDelete(element.id)}><Trash2 size={12} /></button>
+          <button className="layer-act danger" data-tip="Delete" aria-label="Delete" onClick={() => onDelete(element.id)}><Trash2 size={12} /></button>
         </div>
       </div>
       {expanded
@@ -3677,6 +3676,12 @@ function ConnectorLayer({
         const startHead = connector.arrowStart !== "none" ? arrowheadPath(geometry.start, geometry.startAngle + Math.PI, connector.arrowStart) : "";
         // Handle sits on the active waypoint if there is one, else at the straight-line midpoint.
         const handleAt = draftPoint ?? effective.waypoints[0] ?? { x: (geometry.start.x + geometry.end.x) / 2, y: (geometry.start.y + geometry.end.y) / 2 };
+        // If the midpoint handle sits on the label ("fl●w"), lift the label clear while selected —
+        // a constant screen offset so it holds at any zoom.
+        const labelLift =
+          selected && connector.label && Math.hypot(geometry.labelPoint.x - handleAt.x, geometry.labelPoint.y - handleAt.y) < 24 / zoom
+            ? 20 / zoom
+            : 0;
         return (
           <g key={connector.id} className={classNames("connector", selected && "selected", agentActive && "agent-active")}>
             {/* Wide invisible hit target for easy selection. */}
@@ -3696,8 +3701,8 @@ function ConnectorLayer({
             {startHead ? <path d={startHead} stroke={stroke} strokeWidth={strokeWidth} fill={arrowheadIsFilled(connector.arrowStart) ? stroke : "none"} strokeLinejoin="round" /> : null}
             {connector.label ? (
               <g className="connector-label">
-                <rect x={geometry.labelPoint.x - connector.label.length * 3.6 - 8} y={geometry.labelPoint.y - 11} width={connector.label.length * 7.2 + 16} height={22} rx={11} />
-                <text x={geometry.labelPoint.x} y={geometry.labelPoint.y + 4} textAnchor="middle">
+                <rect x={geometry.labelPoint.x - connector.label.length * 3.6 - 8} y={geometry.labelPoint.y - 11 - labelLift} width={connector.label.length * 7.2 + 16} height={22} rx={11} />
+                <text x={geometry.labelPoint.x} y={geometry.labelPoint.y + 4 - labelLift} textAnchor="middle">
                   {connector.label}
                 </text>
               </g>
@@ -4138,7 +4143,7 @@ function CollapsiblePanel({
 
 function IconButton({ label, active, disabled, onClick, children }: { label: string; active?: boolean; disabled?: boolean; onClick?: () => void; children: React.ReactNode }) {
   return (
-    <button className={active ? "icon-button active" : "icon-button"} onClick={onClick} title={label} aria-label={label} disabled={disabled}>
+    <button className={active ? "icon-button active" : "icon-button"} onClick={onClick} data-tip={label} aria-label={label} disabled={disabled}>
       {children}
     </button>
   );
@@ -4203,24 +4208,24 @@ function ZoomControl({
 }) {
   return (
     <div className="zoom-control" role="group" aria-label="Zoom and view">
-      <button className="zoom-seg" title="Fit all frames (⌘1)" aria-label="Fit all frames" onClick={onFit}>
+      <button className="zoom-seg" data-tip="Fit all frames (⌘1)" aria-label="Fit all frames" onClick={onFit}>
         <Maximize2 size={16} />
       </button>
-      <button className="zoom-seg" title="Focus selection" aria-label="Focus selection" onClick={onFocusSelection} disabled={!canFocusSelection}>
+      <button className="zoom-seg" data-tip="Focus selection" aria-label="Focus selection" onClick={onFocusSelection} disabled={!canFocusSelection}>
         <Focus size={16} />
       </button>
       <span className="zoom-divider" />
-      <button className="zoom-seg" title="Zoom out (⌘−)" aria-label="Zoom out" onClick={onZoomOut}>
+      <button className="zoom-seg" data-tip="Zoom out (⌘−)" aria-label="Zoom out" onClick={onZoomOut}>
         <ZoomOut size={16} />
       </button>
       <button className="zoom-readout-button" title="Reset to 100% (⌘0)" onClick={onReset}>
         {Math.round(zoom * 100)}%
       </button>
-      <button className="zoom-seg" title="Zoom in (⌘+)" aria-label="Zoom in" onClick={onZoomIn}>
+      <button className="zoom-seg" data-tip="Zoom in (⌘+)" aria-label="Zoom in" onClick={onZoomIn}>
         <ZoomIn size={16} />
       </button>
       <span className="zoom-divider" />
-      <button className={classNames("zoom-seg", focusMode && "active")} title={focusMode ? "Exit focus mode (F)" : "Focus mode (F)"} aria-label="Toggle focus mode" onClick={onToggleFocusMode}>
+      <button className={classNames("zoom-seg", focusMode && "active")} data-tip={focusMode ? "Exit focus mode (F)" : "Focus mode (F)"} aria-label="Toggle focus mode" onClick={onToggleFocusMode}>
         {focusMode ? <Minimize2 size={16} /> : <Expand size={16} />}
       </button>
     </div>
