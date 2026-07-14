@@ -1001,7 +1001,11 @@ button {
 .connector-layer {
   position: absolute;
   inset: 0;
-  z-index: 0;
+  /* Above frames (z-index 1) so intra-frame connectors + their midpoint handles are visible and
+     grabbable, not hidden behind the opaque frame surface. The layer is pointer-events:none except
+     connector hit-paths/handles, so element selection still passes through. Stays below snap
+     guides + marquee (z-index 7). */
+  z-index: 2;
   pointer-events: none;
 }
 
