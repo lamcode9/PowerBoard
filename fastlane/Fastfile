@@ -94,6 +94,20 @@ platform :mac do
     ensure_internal_testing(app_id: app.id)
   end
 
+  desc "Read-only: report ASC processing state for recent builds (build:<version> to filter). Does NOT upload."
+  lane :build_status do |options|
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.from(hash: @api_key)
+    app = Spaceship::ConnectAPI::App.find(APP_IDENTIFIER)
+    UI.user_error!("No ASC app record for #{APP_IDENTIFIER}.") unless app
+    builds = app.get_builds(sort: "-uploadedDate", limit: 8, includes: "preReleaseVersion")
+    wanted = options[:build]
+    builds.each do |b|
+      next if wanted && b.version.to_s != wanted.to_s
+      UI.success("build #{b.version} (v#{b.pre_release_version&.version}) — processing=#{b.processing_state} uploaded=#{b.uploaded_date}")
+    end
+    UI.message("Done. VALID = ready for testers; PROCESSING = still on Apple's side; INVALID/FAILED = check email.")
+  end
+
   private_lane :ensure_internal_testing do |options|
     Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.from(hash: @api_key)
     app = Spaceship::ConnectAPI::App.get(app_id: options[:app_id])
@@ -203,13 +217,16 @@ platform :mac do
   private_lane :upload_pkg do |options|
     pkg = options[:pkg]
     UI.user_error!("No .pkg found — run `fastlane mac beta` first.") unless pkg && File.exist?(pkg)
+    # Return as soon as the binary is accepted. The synchronous "wait for processing" poll can run
+    # 60–90 min for a MAS build and is the fragile step (a dropped TLS read there once reported a
+    # fully-successful upload as a failure). Check processing separately with `fastlane mac build_status`.
     upload_to_testflight(
       pkg: pkg,
       app_platform: "osx",
-      skip_waiting_for_build_processing: false,
+      skip_waiting_for_build_processing: true,
       distribute_external: false
     )
-    UI.success("Uploaded #{File.basename(pkg)} to TestFlight.")
+    UI.success("Uploaded #{File.basename(pkg)} to TestFlight. Run `fastlane mac build_status` to watch it turn VALID.")
   end
 
   def latest_pkg
