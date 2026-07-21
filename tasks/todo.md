@@ -3,6 +3,18 @@
 Source of truth for the v2 pivot. Full rationale + feature matrix: `docs/powerboard-desktop-roadmap.html`.
 Written 2026-07-04. Status legend: [ ] todo · [~] in progress · [x] done.
 
+## Active — App-level MCP board management (2026-07-21) ✅ shipped
+
+Gap: the MCP surface exposed `list_boards`/`create_board`/`read_board` (already app-wide) but **no way to delete, rename, or see the files backing a board** — so an agent in Claude Desktop couldn't manage the workspace, only edit inside one board. The store already had `deleteBoard()` and `DELETE /api/boards/:id`; the missing piece was MCP exposure + two small lifecycle siblings. Board lifecycle stays at the store/API layer (like `create_board`), NOT the operations union — consistent with the Delete Board decision below.
+
+- [x] `boardService.ts`: `renameBoard(boardId, name)` (trim-guarded, bumps updatedAt, persists via `writeBoard` → local + cloud mirror; throws on missing/blank) + `listBoardFiles(boardId)` → `BoardFileListing` (board.json location or cloud:// URI, referenced assets, on-disk exports with sizes; cloud-primary defers export listing).
+- [x] `mcpServer.ts` (v0.2.0 → **0.3.0**): new tools `rename_board`, `delete_board`, `list_board_files` — structured errors + idempotency (via `registerTool`); `delete_board` throws `not found` → structured `not_found`, and fires new `onBoardRemoved` option so live clients drop the board. Descriptions flag delete as irreversible / not board-undo.
+- [x] `index.ts`: `/mcp` handler wires `onBoardRemoved` → `backup.cancel` + broadcast `board.removed` (so the running app's board list updates live when an agent deletes). New `PATCH /api/boards/:boardId` rename route (HTTP parity) → broadcast `board.changed`.
+- [x] `mcpCheck.ts`: added the 3 tools to `REQUIRED_TOOLS` (conformance gate).
+- [x] `apps/desktop/main.js`: Help → **"Connect an Agent (MCP)…"** dialog rewritten with the Claude Desktop custom-connector URL (`…/mcp`) + a Copy-URL button (`clipboard`).
+- [x] Tests: rename (persist + trim + missing/blank reject) + listBoardFiles (empty → location/assets/exports, then asset+export populated). 46 → **48 pass**. typecheck + build + mcp:check green.
+- [ ] Push MAS build to TestFlight (build & upload now — user-approved).
+
 ## Active — Delete Board (2026-07-13) ✅ shipped
 
 Gap: board manager had create/read/update but **no delete** anywhere (server route, boardService, cloudStore, web UI). Board deletion is a *lifecycle* action (like create), NOT an in-board operation — so it lives at the store/API layer, not the operations union. Destructive → confirm dialog + loud status; hard delete.

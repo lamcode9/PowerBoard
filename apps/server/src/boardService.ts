@@ -36,6 +36,16 @@ interface AssetInput {
   dataUrl: string;
 }
 
+export interface BoardFileListing {
+  boardId: string;
+  name: string;
+  storageMode: StorageMode;
+  /** board.json path (local) or a cloud:// URI (cloud-primary). */
+  location: string;
+  assets: Array<{ id: string; name: string; fileName: string; mimeType: string; size: number; src: string }>;
+  exports: Array<{ fileName: string; path: string; size: number }>;
+}
+
 export type StorageMode = "local" | "mirror" | "cloud";
 export type BoardEditSource = "user" | "agent";
 
@@ -208,6 +218,25 @@ export class BoardStore {
     return finalProject;
   }
 
+  /**
+   * Rename a whole board project (metadata only). Application-level lifecycle action — bumps
+   * updatedAt and persists through the normal write path (local + cloud mirror). Not an in-board
+   * element operation, so it is deliberately not on the undo stack. Throws if the board is missing.
+   */
+  async renameBoard(boardId: string, name: string): Promise<BoardProject> {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      throw new Error("name is required.");
+    }
+    const project = await this.readBoard(boardId);
+    const next = BoardProjectSchema.parse({
+      ...project,
+      name: trimmed,
+      metadata: { ...project.metadata, updatedAt: new Date().toISOString() }
+    });
+    return this.writeBoard(next);
+  }
+
   async readBoard(boardId: string): Promise<BoardProject> {
     if (this.isCloudPrimary()) {
       await this.ensureReady();
@@ -287,6 +316,58 @@ export class BoardStore {
 
   async readStoredFile(boardId: string, relativePath: string): Promise<CloudFileRecord | undefined> {
     return this.cloud?.readFile(boardId, relativePath);
+  }
+
+  /**
+   * Application-level file view for one board: where its JSON lives, the assets it references, and
+   * the exports generated for it. Pairs with listBoards() so an agent can see everything PowerBoard
+   * stores, not just the in-board object model. In cloud-primary mode paths are cloud:// URIs and
+   * export listing is deferred (cloud exports are addressed on demand).
+   */
+  async listBoardFiles(boardId: string): Promise<BoardFileListing> {
+    const project = await this.readBoard(boardId);
+    const assets = project.assets.map((asset) => ({
+      id: asset.id,
+      name: asset.name,
+      fileName: asset.fileName,
+      mimeType: asset.mimeType,
+      size: asset.size,
+      src: asset.src
+    }));
+    if (this.isCloudPrimary()) {
+      return {
+        boardId,
+        name: project.name,
+        storageMode: this.storageMode,
+        location: `cloud://${boardId}/board.json`,
+        assets,
+        exports: []
+      };
+    }
+    const exportsDir = ensureInsideRoot(this.root, path.join(this.boardDir(boardId), "exports"));
+    let exports: BoardFileListing["exports"] = [];
+    try {
+      const entries = await fs.readdir(exportsDir, { withFileTypes: true });
+      exports = await Promise.all(
+        entries
+          .filter((entry) => entry.isFile())
+          .map(async (entry) => {
+            const filePath = path.join(exportsDir, entry.name);
+            const stat = await fs.stat(filePath);
+            return { fileName: entry.name, path: filePath, size: stat.size };
+          })
+      );
+    } catch {
+      // No exports folder yet — the board simply has no generated files.
+    }
+    return {
+      boardId,
+      name: project.name,
+      storageMode: this.storageMode,
+      location: this.boardFilePath(boardId),
+      assets,
+      exports
+    };
   }
 
   cloudStatus(): string {

@@ -6,6 +6,8 @@ import { agentActivityForOperation, agentActivityForSelection, AgentBoardActivit
 
 interface BoardMcpOptions {
   onBoardChanged?: (boardId: string, activity?: AgentBoardActivity) => Promise<void> | void;
+  /** Fired after an application-level board deletion so live clients can drop it from the board list. */
+  onBoardRemoved?: (boardId: string) => Promise<void> | void;
   /** Extra live status for get_board_status (e.g. backup health from the HTTP server). */
   statusExtras?: () => Record<string, unknown>;
 }
@@ -69,7 +71,7 @@ function toolError(tool: string, error: unknown): ToolResult {
 export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions = {}): McpServer {
   const server = new McpServer({
     name: "powerboard",
-    version: "0.2.0"
+    version: "0.3.0"
   });
 
   // Wrap every handler: structured errors + optional idempotency replay.
@@ -149,6 +151,50 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
       await changed(project.id);
       return text(project);
     }
+  );
+
+  registerTool(
+    "rename_board",
+    {
+      title: "Rename board",
+      description:
+        "Rename a whole board project. Application-level lifecycle action — updates the board's name and updatedAt; not an in-board element operation, so it is not on the board undo stack.",
+      inputSchema: { boardId: z.string(), name: z.string().min(1) }
+    },
+    async ({ boardId, name }) => {
+      const project = await store.renameBoard(boardId, name);
+      await changed(boardId);
+      return text(project);
+    }
+  );
+
+  registerTool(
+    "delete_board",
+    {
+      title: "Delete board",
+      description:
+        "Permanently delete a whole board project — its JSON, assets, exports, and history — from the configured source of truth. Application-level lifecycle action: irreversible and NOT covered by board undo (versioned backup snapshots are left on disk as a safety net). Returns { ok, boardId }. Confirm the id with list_boards first.",
+      inputSchema: { boardId: z.string() }
+    },
+    async ({ boardId }) => {
+      const removed = await store.deleteBoard(boardId);
+      if (!removed) {
+        throw new Error(`Board not found: ${boardId}`);
+      }
+      await options.onBoardRemoved?.(boardId);
+      return text({ ok: true, boardId, deleted: true });
+    }
+  );
+
+  registerTool(
+    "list_board_files",
+    {
+      title: "List board files",
+      description:
+        "List the files backing a board at the application level: its JSON location, the assets it references (icons, imported screenshots), and the exports generated for it (PNG/SVG/PDF/spec). Pair with list_boards to see everything PowerBoard stores, not just the in-board object model.",
+      inputSchema: { boardId: z.string() }
+    },
+    async ({ boardId }) => text(await store.listBoardFiles(boardId))
   );
 
   registerTool(

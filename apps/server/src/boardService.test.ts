@@ -60,6 +60,49 @@ describe("BoardStore", () => {
     expect(await store.deleteBoard(board.id)).toBe(false);
   });
 
+  it("renames a board and bumps updatedAt, and rejects missing boards or blank names", async () => {
+    const { store } = await tempStore();
+    const board = await store.createBoard("Original Name");
+
+    const renamed = await store.renameBoard(board.id, "  Renamed Board  ");
+    expect(renamed.name).toBe("Renamed Board");
+    expect(renamed.metadata.updatedAt >= board.metadata.updatedAt).toBe(true);
+
+    // Persisted, not just returned.
+    const reread = await store.readBoard(board.id);
+    expect(reread.name).toBe("Renamed Board");
+    const list = await store.listBoards();
+    expect(list.find((candidate) => candidate.id === board.id)?.name).toBe("Renamed Board");
+
+    await expect(store.renameBoard(board.id, "   ")).rejects.toThrow(/name is required/i);
+    await expect(store.renameBoard("board_missing", "Nope")).rejects.toThrow();
+  });
+
+  it("lists the files backing a board: location, assets, and exports", async () => {
+    const { dir, store } = await tempStore();
+    const board = await store.createBoard("Files Board");
+
+    const emptyListing = await store.listBoardFiles(board.id);
+    expect(emptyListing.boardId).toBe(board.id);
+    expect(emptyListing.name).toBe("Files Board");
+    expect(emptyListing.location).toBe(path.join(dir, board.id, "board.json"));
+    expect(emptyListing.assets).toEqual([]);
+    expect(emptyListing.exports).toEqual([]);
+
+    const pngPixel = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+    await store.saveAsset(board.id, { fileName: "pixel.png", dataUrl: pngPixel });
+    await store.exportSpec(board.id);
+
+    const listing = await store.listBoardFiles(board.id);
+    expect(listing.assets).toHaveLength(1);
+    expect(listing.assets[0]?.name).toBe("pixel.png");
+    expect(listing.assets[0]?.mimeType).toBe("image/png");
+    expect(listing.exports.map((file) => file.fileName)).toEqual(
+      expect.arrayContaining(["implementation-spec.md", "board-summary.json"])
+    );
+    expect(listing.exports.every((file) => file.size > 0)).toBe(true);
+  });
+
   it("does not persist stale selection ids", async () => {
     const { store } = await tempStore();
     const board = await store.createBoard("Selection Board");

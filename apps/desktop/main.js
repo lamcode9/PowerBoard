@@ -1,7 +1,7 @@
 // PowerBoard desktop shell. Runs the PowerBoard server (Express + WS + MCP) inside the
 // Electron main process, then opens a window on it. One process owns UI, storage, and MCP,
 // so agents connecting to http://127.0.0.1:4318/mcp always see the board the user sees.
-import { app, BrowserWindow, Menu, dialog, shell } from "electron";
+import { app, BrowserWindow, Menu, dialog, shell, clipboard } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -185,11 +185,24 @@ function buildMenu() {
       role: "help",
       submenu: [
         {
-          label: "MCP Endpoint",
+          label: "Connect an Agent (MCP)…",
           click: () => {
             dialog.showMessageBox({
-              message: "Agent access",
-              detail: `Agents can edit this board live via MCP:\n\nHTTP: ${serverOrigin}/mcp\nAPI: ${serverOrigin}/api\n\nThe server runs whenever PowerBoard is open.`
+              type: "info",
+              message: "Connect Claude Desktop to PowerBoard",
+              detail:
+                `PowerBoard exposes its whole workspace over MCP while the app is open — an agent can ` +
+                `list, create, rename, and delete boards and edit any board live.\n\n` +
+                `Recommended — Claude Desktop → Settings → Connectors → Add custom connector:\n` +
+                `    ${serverOrigin}/mcp\n\n` +
+                `This shares PowerBoard's live board, so you watch edits land in real time. Keep PowerBoard ` +
+                `open while the agent works.\n\n` +
+                `Raw endpoints:  HTTP ${serverOrigin}/mcp   ·   REST ${serverOrigin}/api`,
+              buttons: ["Copy MCP URL", "Done"],
+              defaultId: 0,
+              cancelId: 1
+            }).then((result) => {
+              if (result.response === 0) clipboard.writeText(`${serverOrigin}/mcp`);
             });
           }
         }

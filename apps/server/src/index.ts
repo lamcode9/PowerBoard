@@ -109,6 +109,17 @@ app.put("/api/boards/:boardId", asyncHandler(async (req, res) => {
   res.json(next);
 }));
 
+app.patch("/api/boards/:boardId", asyncHandler(async (req, res) => {
+  const name = typeof req.body?.name === "string" ? req.body.name : "";
+  if (!name.trim()) {
+    res.status(400).json({ error: "name is required." });
+    return;
+  }
+  const next = await store.renameBoard(param(req, "boardId"), name);
+  broadcast(next.id, { type: "board.changed", boardId: next.id, project: next });
+  res.json(next);
+}));
+
 app.delete("/api/boards/:boardId", asyncHandler(async (req, res) => {
   const boardId = param(req, "boardId");
   const removed = await store.deleteBoard(boardId);
@@ -230,6 +241,10 @@ app.post("/mcp", async (req, res) => {
     onBoardChanged: async (boardId, agentActivity) => {
       const project = await store.readBoard(boardId);
       broadcast(boardId, { type: "board.changed", boardId, project, agentActivity });
+    },
+    onBoardRemoved: (boardId) => {
+      backup.cancel(boardId);
+      broadcast(boardId, { type: "board.removed", boardId });
     },
     statusExtras: () => ({ backup: backup.status() })
   });
