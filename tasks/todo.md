@@ -34,7 +34,19 @@ visible without hunting).
 - [x] Home: `Connect agent` header button, quiet connect strip (endpoint + copy + live health),
       first-run empty state promoted from a passive `<small>` to a real action
 - [x] Verify: typecheck, tests, build, run app, screenshot home + dialog
-- [ ] Commit, push, `fastlane mac beta` → TestFlight
+- [x] Commit + push (`12285fc`), `fastlane mac beta` → build **202607221350** (v0.1.0, 117MB).
+      Upload returned clean in ~22min (exit 0) — the `skip_waiting_for_build_processing` fix from
+      `b4fc59e` worked; no repeat of the 85-min poll hang. Verified the shipped `app.asar` carries
+      this session's code before trusting the build: new tagline present / old absent, "Add custom
+      connector" copy present, stale `--prefix` dev path gone, and `delete_board` / `rename_board` /
+      `list_board_files` all baked in. Confirmed **VALID** in ASC at 14:22 (~4min after upload —
+      it took 2 polls before Apple even registered the build, so don't read early absence as failure).
+
+### Follow-ups noticed but deliberately not taken (out of scope)
+
+- Agents can `rename_board` over MCP, but the UI still has no rename affordance — only agents can
+  rename a board. Asymmetric; worth closing.
+- No search/filter on the board grid. Fine at 8 boards, painful at 30.
 
 Decisions: the connect strip is **not** dismissible — one slim muted row that doubles as the live
 server-health readout (no persistence flag, differentiator stays visible). Lead with the HTTP
