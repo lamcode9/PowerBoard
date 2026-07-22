@@ -1,6 +1,28 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="PowerBoard">
-  <rect width="64" height="64" rx="14" fill="#111827"/>
-  <rect x="14" y="13" width="36" height="38" rx="8" fill="#F9FAFB"/>
-  <path d="M22 27h20M22 37h12" stroke="#111827" stroke-width="5" stroke-linecap="round"/>
-  <circle cx="43" cy="38" r="5" fill="#2563EB"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="PowerBoard">
+  <!-- Small-size brand variant: no sub-pixel pulse rings; bloom + solid core carry the glow. -->
+  <defs>
+    <linearGradient id="tile" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#1C1C2A"/>
+      <stop offset="0.55" stop-color="#111119"/>
+      <stop offset="1" stop-color="#08080D"/>
+    </linearGradient>
+    <radialGradient id="bloom" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#7C4DFF" stop-opacity="0.48"/>
+      <stop offset="0.55" stop-color="#5B5BF0" stop-opacity="0.15"/>
+      <stop offset="1" stop-color="#5B5BF0" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="core" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8272FF"/>
+      <stop offset="1" stop-color="#5E48E0"/>
+    </linearGradient>
+    <clipPath id="tileClip"><rect width="512" height="512" rx="115"/></clipPath>
+  </defs>
+
+  <rect width="512" height="512" rx="115" fill="url(#tile)"/>
+  <g clip-path="url(#tileClip)"><circle cx="256" cy="256" r="170" fill="url(#bloom)"/></g>
+  <rect x="88" y="88" width="336" height="336" rx="80" fill="none" stroke="#5A5A72" stroke-width="20"/>
+  <circle cx="256" cy="256" r="92" fill="#7C4DFF" opacity="0.12"/>
+  <circle cx="256" cy="256" r="74" fill="#8B6BFF" opacity="0.18"/>
+  <circle cx="256" cy="256" r="58" fill="url(#core)"/>
+  <circle cx="256" cy="256" r="58" fill="none" stroke="#BCAEFF" stroke-width="2.5" stroke-opacity="0.45"/>
 </svg>

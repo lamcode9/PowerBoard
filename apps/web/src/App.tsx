@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
@@ -2139,7 +2139,7 @@ export function App() {
   if (!project && !homeOpen) {
     return (
       <main className="loading-shell">
-        <div className="loading-mark">PB</div>
+        <div className="loading-mark"><BrandMark /></div>
         <p>{status}</p>
       </main>
     );
@@ -2203,11 +2203,11 @@ export function App() {
       <header className="topbar">
         <div className="topbar-left">
           <a className="brand-block" href={routeHash({ view: "home" })} data-tip="All boards" aria-label="All boards">
-            <div className="brand-mark">PB</div>
+            <div className="brand-mark"><BrandMark /></div>
             {homeOpen ? (
               <div className="brand-title">
                 <h1>PowerBoard</h1>
-                <p>the agent-native design board</p>
+                <p>the agent-native visual workspace</p>
               </div>
             ) : (
               <div className="brand-title">
@@ -2333,7 +2333,7 @@ export function App() {
       </header>
 
       {homeOpen ? (
-        <HomeView boards={boardSummaries} previews={boardPreviews} storageStatus={storageStatus} loading={boardsLoading} error={boardsError} onRetry={() => void refreshBoards().catch(() => undefined)} onOpen={openBoard} onCreate={createNewBoard} onDelete={requestDeleteBoard} />
+        <HomeView boards={boardSummaries} previews={boardPreviews} storageStatus={storageStatus} loading={boardsLoading} error={boardsError} onRetry={() => void refreshBoards().catch(() => undefined)} onOpen={openBoard} onCreate={createNewBoard} onDelete={requestDeleteBoard} onConnect={() => setConnectOpen(true)} />
       ) : project ? (
         <>
       {leftPaneOpen ? (
@@ -2653,7 +2653,7 @@ export function App() {
         />
       ) : null}
 
-      {project ? <AgentConnectDialog open={connectOpen} project={project} health={storageStatus} onClose={() => setConnectOpen(false)} /> : null}
+      <AgentConnectDialog open={connectOpen} project={project} health={storageStatus} onClose={() => setConnectOpen(false)} />
       <CommandPalette open={commandOpen} commands={paletteCommands} onClose={() => setCommandOpen(false)} />
       <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       {project ? <RestoreDialog boardId={project.id} open={restoreOpen} onClose={() => setRestoreOpen(false)} onRestored={setStatus} /> : null}
@@ -2717,6 +2717,51 @@ function BackupPanel({ status, onBackupNow, onOpenRestore }: { status?: ApiHealt
   );
 }
 
+/**
+ * The MCP endpoint this running server exposes. In dev the web app is served from 5173 behind a
+ * proxy, but the server — and therefore MCP — always listens on 4318.
+ */
+function mcpEndpointUrl(): string {
+  const origin = typeof window !== "undefined" && window.location.origin.startsWith("http") ? window.location.origin : "http://127.0.0.1:4318";
+  const serverBase = origin.includes("5173") ? "http://127.0.0.1:4318" : origin;
+  return `${serverBase}/mcp`;
+}
+
+/**
+ * Home's one persistent pointer at what makes PowerBoard different: the live MCP endpoint.
+ * Deliberately quiet — a single muted row that doubles as the server-health readout, so it can
+ * stay on screen permanently without a dismissal flag.
+ */
+function HomeConnectStrip({ storageStatus, onConnect }: { storageStatus: ApiHealth | null; onConnect: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const endpoint = mcpEndpointUrl();
+  const reachable = storageStatus?.ok !== false;
+  const copyEndpoint = async () => {
+    try {
+      await navigator.clipboard.writeText(endpoint);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <div className="home-connect-strip">
+      <span className={classNames("connect-dot", reachable ? "ok" : "down")} aria-hidden="true" />
+      <span className="home-connect-text">
+        <strong>Agents can edit these boards.</strong> Point Claude at
+      </span>
+      <code>{endpoint}</code>
+      <button type="button" className="copy-chip" onClick={() => void copyEndpoint()} aria-label="Copy MCP endpoint">
+        {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? "Copied" : "Copy"}
+      </button>
+      <button type="button" className="home-connect-more" onClick={onConnect}>
+        How to connect
+      </button>
+    </div>
+  );
+}
+
 function HomeView({
   boards,
   previews,
@@ -2726,7 +2771,8 @@ function HomeView({
   onRetry,
   onOpen,
   onCreate,
-  onDelete
+  onDelete,
+  onConnect
 }: {
   boards: BoardSummary[];
   previews: Record<string, BoardProject>;
@@ -2737,6 +2783,7 @@ function HomeView({
   onOpen: (boardId: string) => void;
   onCreate: () => void;
   onDelete: (board: BoardSummary) => void;
+  onConnect: () => void;
 }) {
   const totalFrames = boards.reduce((sum, board) => sum + board.artboardCount, 0);
   const totalElements = boards.reduce((sum, board) => sum + board.elementCount, 0);
@@ -2759,10 +2806,17 @@ function HomeView({
               <span className={classNames("storage-pill", isCloudBacked(storageStatus) && "cloud")}>{storageLabel(storageStatus)}</span>
             </div>
           </div>
-          <button className="text-button home-create" onClick={() => onCreate()}>
-            <Plus size={16} /> New board
-          </button>
+          <div className="home-header-actions">
+            <button className="text-button home-connect" onClick={() => onConnect()}>
+              <Cable size={15} /> Connect agent
+            </button>
+            <button className="text-button home-create" onClick={() => onCreate()}>
+              <Plus size={16} /> New board
+            </button>
+          </div>
         </div>
+
+        <HomeConnectStrip storageStatus={storageStatus} onConnect={onConnect} />
 
         {boards.length ? (
           <div className="board-card-grid">
@@ -2882,7 +2936,10 @@ function HomeView({
             <button className="wide-action" onClick={() => onCreate()}>
               <Plus size={16} /> New board
             </button>
-            <small>Agent edits stream in live once you point one at the MCP endpoint.</small>
+            <button type="button" className="text-button first-run-connect" onClick={() => onConnect()}>
+              <Cable size={15} /> Connect an agent
+            </button>
+            <small>Agent edits stream in live once you point Claude at the MCP endpoint.</small>
           </div>
         )}
       </div>
@@ -4314,7 +4371,63 @@ function DeleteBoardDialog({ board, busy, onCancel, onConfirm }: { board: BoardS
   );
 }
 
-function AgentConnectDialog({ open, project, health, onClose }: { open: boolean; project: BoardProject; health: ApiHealth | null; onClose: () => void }) {
+/**
+ * The PowerBoard mark (brand Direction D: board frame + live agent pulse), matching the macOS
+ * app icon. Inline rather than an <img> so it needs no network fetch and stays crisp on HiDPI.
+ *
+ * Follows the brand system's *small* variant (`apps/desktop/build/icon-small.svg`), not the
+ * full-size one: at 42px the full icon's thin pulse rings land under a pixel and read as haze,
+ * so the glow is carried by a radial bloom plus a larger solid core, over a thicker frame.
+ * Ids are scoped per instance so two marks on screen can't collide on the gradient defs.
+ */
+function BrandMark({ size }: { size?: number }) {
+  const uid = useId().replace(/:/g, "");
+  const tile = `pb-tile-${uid}`;
+  const bloom = `pb-bloom-${uid}`;
+  const core = `pb-core-${uid}`;
+  const clip = `pb-clip-${uid}`;
+  return (
+    <svg
+      viewBox="0 0 512 512"
+      width={size ?? "100%"}
+      height={size ?? "100%"}
+      role="img"
+      aria-label="PowerBoard"
+      focusable="false"
+    >
+      <defs>
+        <linearGradient id={tile} x1="0.15" y1="0" x2="0.85" y2="1">
+          <stop offset="0" stopColor="#1C1C2A" />
+          <stop offset="0.55" stopColor="#111119" />
+          <stop offset="1" stopColor="#08080D" />
+        </linearGradient>
+        <radialGradient id={bloom} cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0" stopColor="#7C4DFF" stopOpacity="0.48" />
+          <stop offset="0.55" stopColor="#5B5BF0" stopOpacity="0.15" />
+          <stop offset="1" stopColor="#5B5BF0" stopOpacity="0" />
+        </radialGradient>
+        <linearGradient id={core} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#8272FF" />
+          <stop offset="1" stopColor="#5E48E0" />
+        </linearGradient>
+        <clipPath id={clip}>
+          <rect width="512" height="512" rx="115" />
+        </clipPath>
+      </defs>
+      <rect width="512" height="512" rx="115" fill={`url(#${tile})`} />
+      <g clipPath={`url(#${clip})`}>
+        <circle cx="256" cy="256" r="170" fill={`url(#${bloom})`} />
+      </g>
+      <rect x="88" y="88" width="336" height="336" rx="80" fill="none" stroke="#5A5A72" strokeWidth="20" />
+      <circle cx="256" cy="256" r="92" fill="#7C4DFF" opacity="0.12" />
+      <circle cx="256" cy="256" r="74" fill="#8B6BFF" opacity="0.18" />
+      <circle cx="256" cy="256" r="58" fill={`url(#${core})`} />
+      <circle cx="256" cy="256" r="58" fill="none" stroke="#BCAEFF" strokeWidth="2.5" strokeOpacity="0.45" />
+    </svg>
+  );
+}
+
+function AgentConnectDialog({ open, project, health, onClose }: { open: boolean; project?: BoardProject | null; health: ApiHealth | null; onClose: () => void }) {
   const [copied, setCopied] = useState<string | null>(null);
   useEffect(() => {
     if (!open) return;
@@ -4325,18 +4438,11 @@ function AgentConnectDialog({ open, project, health, onClose }: { open: boolean;
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
   if (!open) return null;
-  const origin = typeof window !== "undefined" && window.location.origin.startsWith("http") ? window.location.origin : "http://127.0.0.1:4318";
-  // The dev proxy runs on 5173 but the MCP/server host is always 4318.
-  const serverBase = origin.includes("5173") ? "http://127.0.0.1:4318" : origin;
-  const httpEndpoint = `${serverBase}/mcp`;
-  const stdioConfig = `{
-  "mcpServers": {
-    "powerboard": {
-      "command": "npm",
-      "args": ["run", "mcp", "--prefix", "/Users/km/Developer/PowerBoard"]
-    }
-  }
-}`;
+  const httpEndpoint = mcpEndpointUrl();
+  // One instruction that is correct everywhere. The old stdio JSON hard-coded a dev checkout
+  // path that does not exist on an installed (TestFlight) copy, and a second stdio process
+  // would open its own store against the same board files.
+  const cliCommand = `claude mcp add --transport http powerboard ${httpEndpoint}`;
   const reachable = health?.ok !== false;
   const copy = async (key: string, text: string) => {
     try {
@@ -4360,7 +4466,7 @@ function AgentConnectDialog({ open, project, health, onClose }: { open: boolean;
             <span className="connect-icon"><Cable size={18} /></span>
             <div>
               <h2 id="connect-title">Connect an agent</h2>
-              <p>Point Claude, Cursor, or any MCP client at this board — edits stream in live.</p>
+              <p>Point Claude, Cursor, or any MCP client at PowerBoard. It can browse, create, rename and delete boards — and every edit streams onto the canvas live.</p>
             </div>
           </div>
           <span className={classNames("connect-health", reachable ? "ok" : "down")}>{reachable ? "Server live" : "Server unreachable"}</span>
@@ -4368,34 +4474,42 @@ function AgentConnectDialog({ open, project, health, onClose }: { open: boolean;
 
         <div className="connect-body">
           <div className="connect-row">
-            <span className="connect-label">This board</span>
-            <div className="connect-value">
-              <strong>{project.name}</strong>
-              <code>{project.id}</code>
-              <CopyChip chipKey="board" text={project.id} label="Copy id" />
-            </div>
-          </div>
-          <div className="connect-row">
             <span className="connect-label">MCP endpoint</span>
             <div className="connect-value">
               <code>{httpEndpoint}</code>
               <CopyChip chipKey="http" text={httpEndpoint} />
             </div>
           </div>
-
-          <div className="connect-config">
-            <div className="connect-config-head">
-              <span>Add to your MCP client config</span>
-              <CopyChip chipKey="cfg" text={stdioConfig} label="Copy config" />
+          {project ? (
+            <div className="connect-row">
+              <span className="connect-label">This board</span>
+              <div className="connect-value">
+                <strong>{project.name}</strong>
+                <code>{project.id}</code>
+                <CopyChip chipKey="board" text={project.id} label="Copy id" />
+              </div>
             </div>
-            <pre>{stdioConfig}</pre>
-          </div>
+          ) : null}
 
           <ol className="connect-steps">
             <li>Keep PowerBoard open — it serves MCP on <code>127.0.0.1:4318</code>.</li>
-            <li>Paste the config into your agent (Claude Code: <code>claude mcp add</code>, or your client’s MCP settings).</li>
-            <li>Ask it to <code>list_boards</code>, then <code>read_board</code> with the id above to edit this board.</li>
+            <li>In Claude Desktop, open <strong>Settings → Connectors → Add custom connector</strong> and paste the endpoint above.</li>
+            <li>
+              {project ? (
+                <>Ask for <em>“list my PowerBoard boards”</em>, or point it at this board by id to start editing.</>
+              ) : (
+                <>Ask for <em>“list my PowerBoard boards”</em>, then have it create, rename, or edit any of them.</>
+              )}
+            </li>
           </ol>
+
+          <div className="connect-config">
+            <div className="connect-config-head">
+              <span>Claude Code &amp; other CLI clients</span>
+              <CopyChip chipKey="cfg" text={cliCommand} label="Copy command" />
+            </div>
+            <pre>{cliCommand}</pre>
+          </div>
         </div>
 
         <div className="dialog-actions">

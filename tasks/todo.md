@@ -3,6 +3,45 @@
 Source of truth for the v2 pivot. Full rationale + feature matrix: `docs/powerboard-desktop-roadmap.html`.
 Written 2026-07-04. Status legend: [ ] todo · [~] in progress · [x] done.
 
+## Active — In-app agent onboarding, brand mark, tagline (2026-07-22)
+
+Gaps found by the user reviewing the shipped TestFlight build:
+
+1. **The app never tells you how to connect an agent.** `AgentConnectDialog` existed but was
+   rendered only when a board was open (`{project ? <AgentConnectDialog…`), and the command
+   palette that reaches it is board-scoped too. From the Boards home — the first screen every
+   new TestFlight user sees — connection instructions were **unreachable**.
+2. **The dialog's config was wrong for a shipped app.** It printed
+   `npm run mcp --prefix /Users/km/Developer/PowerBoard`, a dev-machine path that does not
+   exist for anyone who installed from TestFlight.
+3. **No logo.** Header + loading shell rendered the literal string `PB`. The Direction-D mark
+   was built for the app icon (`docs/brand/`, `apps/desktop/build/icon.svg`) but never wired
+   into the web UI; the favicon was a stale, unrelated mark.
+4. **Tagline too narrow.** "the agent-native design board" undersells mockups **and** diagrams.
+
+Intended home-screen journey — answer three questions, quietly: *what is this* (brand mark +
+tagline), *get working* (New board / open one), *plug in your agent* (the differentiator,
+visible without hunting).
+
+- [x] `BrandMark` inline-SVG component (Direction D, blur filter dropped so it stays crisp at 42px);
+      replaces `PB` in `.brand-mark` (topbar) and `.loading-mark` (loading shell)
+- [x] `apps/web/public/favicon.svg` refreshed to the same mark
+- [x] Tagline → "the agent-native visual workspace" (App.tsx + desktop package.json description)
+- [x] `AgentConnectDialog` takes `project?: BoardProject | null` — app-level copy with no board
+      open, keeps the "This board" row when one is; rendered unconditionally
+- [x] Dev-only stdio JSON replaced with instructions correct for an installed app: Claude Desktop
+      custom-connector steps + a `claude mcp add --transport http` line for CLI clients
+- [x] Home: `Connect agent` header button, quiet connect strip (endpoint + copy + live health),
+      first-run empty state promoted from a passive `<small>` to a real action
+- [x] Verify: typecheck, tests, build, run app, screenshot home + dialog
+- [ ] Commit, push, `fastlane mac beta` → TestFlight
+
+Decisions: the connect strip is **not** dismissible — one slim muted row that doubles as the live
+server-health readout (no persistence flag, differentiator stays visible). Lead with the HTTP
+endpoint everywhere: it is the only path correct for both a packaged app and a dev checkout, and
+it shares the running app's store rather than opening a second writer against the same board
+files (persistence P0 rule).
+
 ## Active — App-level MCP board management (2026-07-21) ✅ shipped
 
 Gap: the MCP surface exposed `list_boards`/`create_board`/`read_board` (already app-wide) but **no way to delete, rename, or see the files backing a board** — so an agent in Claude Desktop couldn't manage the workspace, only edit inside one board. The store already had `deleteBoard()` and `DELETE /api/boards/:id`; the missing piece was MCP exposure + two small lifecycle siblings. Board lifecycle stays at the store/API layer (like `create_board`), NOT the operations union — consistent with the Delete Board decision below.
@@ -13,7 +52,11 @@ Gap: the MCP surface exposed `list_boards`/`create_board`/`read_board` (already 
 - [x] `mcpCheck.ts`: added the 3 tools to `REQUIRED_TOOLS` (conformance gate).
 - [x] `apps/desktop/main.js`: Help → **"Connect an Agent (MCP)…"** dialog rewritten with the Claude Desktop custom-connector URL (`…/mcp`) + a Copy-URL button (`clipboard`).
 - [x] Tests: rename (persist + trim + missing/blank reject) + listBoardFiles (empty → location/assets/exports, then asset+export populated). 46 → **48 pass**. typecheck + build + mcp:check green.
-- [ ] Push MAS build to TestFlight (build & upload now — user-approved).
+- [x] Pushed MAS build `202607212259` to TestFlight — **VALID** and live to internal testers.
+      The fastlane run reported a failure, but the binary upload succeeded ("Successfully uploaded
+      the new binary"); only the post-upload processing poll died on a flaky TLS read after ~85min.
+      Confirmed VALID via the ASC API. Hardened so it can't recur: read-only `build_status` lane +
+      upload no longer blocks on the fragile poll (`b4fc59e`).
 
 ## Active — Delete Board (2026-07-13) ✅ shipped
 

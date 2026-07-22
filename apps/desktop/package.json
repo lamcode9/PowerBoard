@@ -3,7 +3,7 @@
   "productName": "PowerBoard",
   "private": true,
   "version": "0.1.0",
-  "description": "PowerBoard — the agent-native design and diagram board",
+  "description": "PowerBoard — the agent-native visual workspace",
   "author": "Kah Mun Lam",
   "type": "module",
   "main": "main.js",

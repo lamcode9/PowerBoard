@@ -71,17 +71,21 @@ button {
   color: #334155;
 }
 
+/* Holds the inline brand mark; the SVG carries its own tile, so no background here. */
 .loading-mark,
 .brand-mark {
-  display: grid;
+  display: block;
   width: 42px;
   height: 42px;
-  place-items: center;
   border-radius: var(--r-lg);
-  background: #111827;
-  color: #ffffff;
-  font-size: 12px;
-  font-weight: 700;
+  overflow: hidden;
+}
+
+.loading-mark svg,
+.brand-mark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .app-shell {
@@ -356,6 +360,91 @@ button {
 [data-theme="dark"] .text-button.home-create:hover {
   background: var(--accent-hover);
   color: var(--accent-fg);
+}
+
+.home-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Secondary to New board — ghost, so home keeps exactly one accent CTA. */
+.text-button.home-connect {
+  height: 32px;
+  border-radius: var(--r-md);
+  padding: 0 12px;
+  background: var(--control-bg);
+  color: var(--text-2);
+}
+
+.text-button.home-connect:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+/* ---- Home connect strip ---- */
+/* One slim muted row: the app's differentiator + the live endpoint + server health.
+   Quiet enough to live on screen permanently, so it needs no dismissal state. */
+.home-connect-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-bottom: 18px;
+  padding: 9px 12px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.home-connect-text strong {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.home-connect-strip code {
+  border-radius: var(--r-sm);
+  background: var(--control-bg);
+  padding: 3px 7px;
+  font-size: 11px;
+  color: var(--text-1);
+}
+
+.home-connect-strip .copy-chip {
+  margin-left: -2px;
+}
+
+.home-connect-more {
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.home-connect-more:hover {
+  text-decoration: underline;
+}
+
+.connect-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.connect-dot.ok {
+  background: #059669;
+}
+
+.connect-dot.down {
+  background: #dc2626;
+}
+
+.text-button.first-run-connect {
+  margin-top: 2px;
+  color: var(--accent);
 }
 
 .board-card-grid {
