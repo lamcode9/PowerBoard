@@ -2653,7 +2653,9 @@ export function App() {
         />
       ) : null}
 
-      <AgentConnectDialog open={connectOpen} project={project} health={storageStatus} onClose={() => setConnectOpen(false)} />
+      {/* On Home there is no board in view — the loaded project is just the last/default one, so
+          showing "This board" there was wrong. Only offer the board id when a board is actually open. */}
+      <AgentConnectDialog open={connectOpen} project={homeOpen ? null : project} health={storageStatus} onClose={() => setConnectOpen(false)} />
       <CommandPalette open={commandOpen} commands={paletteCommands} onClose={() => setCommandOpen(false)} />
       <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       {project ? <RestoreDialog boardId={project.id} open={restoreOpen} onClose={() => setRestoreOpen(false)} onRestored={setStatus} /> : null}
@@ -2749,7 +2751,7 @@ function HomeConnectStrip({ storageStatus, onConnect }: { storageStatus: ApiHeal
     <div className="home-connect-strip">
       <span className={classNames("connect-dot", reachable ? "ok" : "down")} aria-hidden="true" />
       <span className="home-connect-text">
-        <strong>Agents can edit these boards.</strong> Point Claude at
+        <strong>Agents can edit these boards.</strong> Point any MCP client at
       </span>
       <code>{endpoint}</code>
       <button type="button" className="copy-chip" onClick={() => void copyEndpoint()} aria-label="Copy MCP endpoint">
@@ -4427,10 +4429,66 @@ function BrandMark({ size }: { size?: number }) {
   );
 }
 
+// One card, one copy button, one instruction — chosen by the client the user actually has.
+// Every client below speaks the same streamable-HTTP MCP endpoint; only the place you paste it
+// differs, so the dialog shows exactly the one string that client needs and nothing else.
+// (No stdio variant: it would hard-code a dev checkout path that an installed copy doesn't have,
+// and a second stdio process would open its own store against the same board files.)
+type ConnectClient = {
+  id: string;
+  label: string;
+  paste: (endpoint: string) => string;
+  block?: boolean;
+  where: React.ReactNode;
+};
+
+const CONNECT_CLIENTS: [ConnectClient, ...ConnectClient[]] = [
+  {
+    id: "desktop",
+    label: "Claude Desktop",
+    paste: (endpoint) => endpoint,
+    where: (
+      <>
+        Open <strong>Settings → Connectors → Add custom connector</strong> and paste it as the URL.
+      </>
+    )
+  },
+  {
+    id: "cli",
+    label: "Claude Code",
+    paste: (endpoint) => `claude mcp add --transport http powerboard ${endpoint}`,
+    block: true,
+    where: <>Run it in your terminal, from any project folder.</>
+  },
+  {
+    id: "cursor",
+    label: "Cursor",
+    block: true,
+    paste: (endpoint) => `{\n  "mcpServers": {\n    "powerboard": { "url": "${endpoint}" }\n  }\n}`,
+    where: (
+      <>
+        Put it in <code>~/.cursor/mcp.json</code>, then switch <strong>powerboard</strong> on under Settings → MCP.
+      </>
+    )
+  },
+  {
+    id: "other",
+    label: "Any other client",
+    paste: (endpoint) => endpoint,
+    where: (
+      <>
+        Add PowerBoard as a <strong>streamable HTTP</strong> MCP server with this URL. No key, no login.
+      </>
+    )
+  }
+];
+
 function AgentConnectDialog({ open, project, health, onClose }: { open: boolean; project?: BoardProject | null; health: ApiHealth | null; onClose: () => void }) {
   const [copied, setCopied] = useState<string | null>(null);
+  const [clientId, setClientId] = useState(CONNECT_CLIENTS[0].id);
   useEffect(() => {
     if (!open) return;
+    setCopied(null);
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
@@ -4439,10 +4497,8 @@ function AgentConnectDialog({ open, project, health, onClose }: { open: boolean;
   }, [open, onClose]);
   if (!open) return null;
   const httpEndpoint = mcpEndpointUrl();
-  // One instruction that is correct everywhere. The old stdio JSON hard-coded a dev checkout
-  // path that does not exist on an installed (TestFlight) copy, and a second stdio process
-  // would open its own store against the same board files.
-  const cliCommand = `claude mcp add --transport http powerboard ${httpEndpoint}`;
+  const client = CONNECT_CLIENTS.find((candidate) => candidate.id === clientId) ?? CONNECT_CLIENTS[0];
+  const pasteValue = client.paste(httpEndpoint);
   const reachable = health?.ok !== false;
   const copy = async (key: string, text: string) => {
     try {
@@ -4453,11 +4509,6 @@ function AgentConnectDialog({ open, project, health, onClose }: { open: boolean;
       setCopied(null);
     }
   };
-  const CopyChip = ({ chipKey, text, label = "Copy" }: { chipKey: string; text: string; label?: string }) => (
-    <button type="button" className="copy-chip" onClick={() => void copy(chipKey, text)}>
-      {copied === chipKey ? <Check size={13} /> : <Copy size={13} />} {copied === chipKey ? "Copied" : label}
-    </button>
-  );
   return (
     <div className="dialog-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="connect-dialog" role="dialog" aria-modal="true" aria-labelledby="connect-title">
@@ -4466,50 +4517,53 @@ function AgentConnectDialog({ open, project, health, onClose }: { open: boolean;
             <span className="connect-icon"><Cable size={18} /></span>
             <div>
               <h2 id="connect-title">Connect an agent</h2>
-              <p>Point Claude, Cursor, or any MCP client at PowerBoard. It can browse, create, rename and delete boards — and every edit streams onto the canvas live.</p>
+              <p>Any MCP client can browse, create and edit your boards — every change streams onto the canvas live.</p>
             </div>
           </div>
           <span className={classNames("connect-health", reachable ? "ok" : "down")}>{reachable ? "Server live" : "Server unreachable"}</span>
         </div>
 
         <div className="connect-body">
-          <div className="connect-row">
-            <span className="connect-label">MCP endpoint</span>
-            <div className="connect-value">
-              <code>{httpEndpoint}</code>
-              <CopyChip chipKey="http" text={httpEndpoint} />
-            </div>
+          <div className="connect-clients" role="tablist" aria-label="Your MCP client">
+            {CONNECT_CLIENTS.map((candidate) => (
+              <button
+                key={candidate.id}
+                type="button"
+                role="tab"
+                aria-selected={candidate.id === client.id}
+                className={candidate.id === client.id ? "active" : ""}
+                onClick={() => { setClientId(candidate.id); setCopied(null); }}
+              >
+                {candidate.label}
+              </button>
+            ))}
           </div>
-          {project ? (
-            <div className="connect-row">
-              <span className="connect-label">This board</span>
-              <div className="connect-value">
-                <strong>{project.name}</strong>
-                <code>{project.id}</code>
-                <CopyChip chipKey="board" text={project.id} label="Copy id" />
-              </div>
+
+          <div className="connect-paste">
+            <div className="connect-paste-head">
+              <span className="connect-label">Copy this into {client.label === "Any other client" ? "your client" : client.label}</span>
+              <button type="button" className="copy-chip primary" onClick={() => void copy("paste", pasteValue)}>
+                {copied === "paste" ? <Check size={13} /> : <Copy size={13} />} {copied === "paste" ? "Copied" : "Copy"}
+              </button>
             </div>
-          ) : null}
+            {client.block ? <pre>{pasteValue}</pre> : <code className="connect-paste-value">{pasteValue}</code>}
+            <p className="connect-where">{client.where}</p>
+          </div>
 
           <ol className="connect-steps">
-            <li>Keep PowerBoard open — it serves MCP on <code>127.0.0.1:4318</code>.</li>
-            <li>In Claude Desktop, open <strong>Settings → Connectors → Add custom connector</strong> and paste the endpoint above.</li>
-            <li>
-              {project ? (
-                <>Ask for <em>“list my PowerBoard boards”</em>, or point it at this board by id to start editing.</>
-              ) : (
-                <>Ask for <em>“list my PowerBoard boards”</em>, then have it create, rename, or edit any of them.</>
-              )}
-            </li>
+            <li>Leave PowerBoard running — it serves MCP while the app is open.</li>
+            <li>Ask your agent for <em>“list my PowerBoard boards”</em> to check it worked.</li>
           </ol>
 
-          <div className="connect-config">
-            <div className="connect-config-head">
-              <span>Claude Code &amp; other CLI clients</span>
-              <CopyChip chipKey="cfg" text={cliCommand} label="Copy command" />
-            </div>
-            <pre>{cliCommand}</pre>
-          </div>
+          {project ? (
+            <p className="connect-board-note">
+              Want it to edit <strong>{project.name}</strong> specifically? Give it this board id:
+              <code>{project.id}</code>
+              <button type="button" className="link-button" onClick={() => void copy("board", project.id)}>
+                {copied === "board" ? "Copied" : "Copy id"}
+              </button>
+            </p>
+          ) : null}
         </div>
 
         <div className="dialog-actions">

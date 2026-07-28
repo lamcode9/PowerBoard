@@ -3311,24 +3311,103 @@ button {
 .copy-chip:hover {
   background: var(--control-bg-hover);
 }
-.connect-config {
+.copy-chip.primary {
+  background: var(--accent);
+  color: #fff;
+}
+.copy-chip.primary:hover {
+  filter: brightness(1.06);
+}
+
+/* Client picker — switches the single thing there is to copy. */
+.connect-clients {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.connect-clients button {
+  flex: 1;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.connect-clients button:hover {
+  color: var(--text-1);
+}
+.connect-clients button.active {
+  background: var(--surface-1);
+  color: var(--text-1);
+  box-shadow: var(--shadow-1);
+}
+.connect-paste {
   display: grid;
-  gap: 7px;
+  gap: 9px;
   padding: var(--space-3);
   border-radius: var(--r-lg);
   border: 1px solid var(--hairline);
   background: var(--surface-2);
 }
-.connect-config-head {
+.connect-paste-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+.connect-paste-value {
+  display: block;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+  color: var(--text-1);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.connect-where {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.connect-board-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+.connect-board-note code {
+  padding: 3px 7px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+}
+.link-button {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent);
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-1);
+  cursor: pointer;
 }
-.connect-config pre {
+.link-button:hover {
+  text-decoration: underline;
+}
+.connect-paste pre {
   margin: 0;
   padding: var(--space-3);
   border-radius: var(--r-md);

@@ -3,6 +3,38 @@
 Source of truth for the v2 pivot. Full rationale + feature matrix: `docs/powerboard-desktop-roadmap.html`.
 Written 2026-07-04. Status legend: [ ] todo · [~] in progress · [x] done.
 
+## Active — Connect dialog: one client, one thing to copy (2026-07-28)
+
+User review of the shipped build, opening the dialog from **Home**:
+
+1. **Wrong context.** The dialog showed a "This board — Untitled PowerBoard Board" row on the
+   Boards home. `project` is the last-loaded/default board and is non-null even when no board is
+   in view; the previous session made the dialog app-level but kept passing `project`
+   unconditionally. Fixed by passing `homeOpen ? null : project`.
+2. **Too many copy targets.** Three copy buttons (endpoint, board id, CLI command) with no signal
+   which one the agent actually needs — the top question a first-time user has.
+3. **Claude-specific by default.** Steps assumed Claude Desktop and the code block was titled
+   "Claude Code & other CLI clients", reading as if PowerBoard only speaks to Claude.
+
+Fix — the dialog now asks *which client do you have* and answers with exactly one string:
+
+- [x] Client picker (Claude Desktop · Claude Code · Cursor · Any other client) switches the single
+      copyable value: URL for connector-style clients, `claude mcp add …` for Claude Code, an
+      `mcp.json` snippet for Cursor. Exactly **one** primary Copy button visible at any time.
+- [x] Board id demoted to an optional one-line footnote with a text "Copy id" link, shown only when
+      a board is actually open
+- [x] Copy stripped of Claude-first framing ("Any MCP client can browse, create and edit your
+      boards"); home strip now reads "Point any MCP client at"
+- [x] Dead `.connect-config*` CSS removed; `.connect-clients` / `.connect-paste` / `.link-button` added
+- [x] Verify: typecheck, 48 tests, run app — home (no board row) + Cursor tab + dark mode on a board,
+      console clean
+- [ ] Commit + push, `fastlane mac beta` → TestFlight
+
+Decision: no stdio option in the picker — same reasoning as the previous session (dev-checkout path
+doesn't exist in an installed app; a second stdio process would open its own writer against the same
+board files, violating the persistence P0 rule). Every client in the list speaks the same
+streamable-HTTP endpoint; only the paste location differs.
+
 ## Active — In-app agent onboarding, brand mark, tagline (2026-07-22)
 
 Gaps found by the user reviewing the shipped TestFlight build:
