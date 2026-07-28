@@ -612,7 +612,7 @@ export class BoardStore {
     return { dir, files: exportResult.files, summary: exportResult.summary };
   }
 
-  async exportArtboardPng(boardId: string, artboardId: string): Promise<{ filePath: string }> {
+  async exportArtboardPng(boardId: string, artboardId: string, options: { scale?: number } = {}): Promise<{ filePath: string; width: number; height: number; scale: number }> {
     const project = await this.readBoard(boardId);
     const cloud = this.isCloudPrimary() ? this.requiredCloud() : this.cloud;
     await cloud?.writeBoard(project);
@@ -620,11 +620,16 @@ export class BoardStore {
     if (!artboard) {
       throw new Error(`Artboard not found: ${artboardId}`);
     }
+    // 2x by default: an artboard rasterized 1:1 is screen-resolution, and the usual reason to ask
+    // for a PNG is to print or paste it into a deck. Capped so a big poster can't exhaust memory.
+    const scale = Math.min(Math.max(options.scale ?? 2, 1), 4);
+    const width = Math.round(artboard.width * scale);
+    const height = Math.round(artboard.height * scale);
     const svg = renderArtboardSvg(project, artboardId);
     const fileName = `${safeSegment(artboard.name)}.png`;
     const dir = this.isCloudPrimary() ? `cloud://${boardId}/exports` : await this.ensureExportDir(boardId);
     const filePath = this.isCloudPrimary() ? `${dir}/${fileName}` : path.join(dir, fileName);
-    const png = await sharp(Buffer.from(svg)).png().toBuffer();
+    const png = await sharp(Buffer.from(svg), { density: Math.round(72 * scale) }).resize(width, height).png().toBuffer();
     if (!this.isCloudPrimary()) {
       await fs.writeFile(filePath, png);
     }
@@ -636,7 +641,7 @@ export class BoardStore {
       data: png,
       metadata: { artboardId }
     });
-    return { filePath };
+    return { filePath, width, height, scale };
   }
 
   async exportPageSvg(boardId: string, pageId?: string): Promise<{ filePath: string; svg: string }> {

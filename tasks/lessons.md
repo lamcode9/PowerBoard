@@ -15,3 +15,30 @@ Patterns from user corrections. Review at session start before design or product
 **Why:** A token system alone doesn't fix taste — the *distribution* of accent matters more than its value. Spending the accent on every interactive state makes nothing feel primary and reads as "web app", not "canvas tool".
 
 **How to apply:** Before shipping any PowerBoard chrome, count accent occurrences on one screen; if the accent appears anywhere other than selection/agent/primary-CTA/focus, strip it back to neutral.
+
+## 2026-07-28 — If the model can't say it, the artifact will lie
+
+**Correction:** The user asked why an agent-built org chart came out "non-perfect, non-presentation ready" — "lines are weird, no dotted-lines option etc." Reading the live board over MCP showed the agent had written a legend saying *"Dotted line = embedded / dotted-line interface"* above nine solid lines. `BoardStyleSchema` had `stroke` and `strokeWidth` and no line-style property at all, so the agent substituted a lighter grey and shipped a diagram that contradicts its own key. Worse, `export_artboard_png` rendered **zero** connectors (only `renderPageSvg` drew them), and `validate_board` returned `valid: true` for a board with two edges running through other nodes.
+
+**Rule:**
+- **A missing expressive primitive doesn't produce a missing feature — it produces a confident lie.** When an agent-built artifact is subtly wrong, first ask what it *tried* to express and couldn't. Diff the artifact's own claims (legend, labels, title) against what it actually drew; the gap points straight at the schema hole.
+- **Every render path must draw every object kind.** Artboard export, page export and the live canvas share one geometry module for exactly this reason — a per-path element filter silently deletes whole categories. If two code paths render the same model, a test must assert they agree.
+- **Validation that only checks structure gives a false green.** Anything an agent is told to run before shipping must check the properties that make the output *good*, not just parseable. Geometry diagnostics (crossings, overlaps, collisions, clipping) are warnings, not errors — and they must be computed from the same routing inputs the renderer uses, or they report collisions the renderer already solved.
+
+**Why:** Agents optimize against the tools they're given. They don't report "your schema can't express this"; they approximate, and the approximation looks deliberate. The fix is never "prompt the agent better" — it's give it the primitive, make the default output correct, and make the checker tell it the truth.
+
+**How to apply:** When a generated artifact looks "almost right", read it for self-contradiction before touching the generator. Then check whether the shortest path to a good result is a new field in the model rather than more instruction.
+
+## 2026-07-28 — "Did you fix the product, or the artifact?"
+
+**Correction:** After shipping the connector/export/validation fixes, the user asked: *"did you make product fixes? or just fix the tool used in the board? the goal is that when the agent uses it, it's always perfect — embed some best practice, or an auto-feature where the components always correct themselves."* The fixes were genuinely product-level, but the question exposed something sharper: **half of what I built was automatic and half was advisory, and I had presented them as one thing.** Routing, obstacle avoidance and label placement self-corrected at render time. Node position, size, spacing and alignment were still entirely the agent's problem, and `validate_board` reported issues nobody was obliged to read.
+
+**Rule:**
+- **Grade every fix as automatic, default, or advisory — and say which.** Automatic = happens at render/apply time with no caller involvement. Default = applied at creation unless overridden. Advisory = reported, requires someone to act. Advisory fixes only work on agents that already behave well, which is the opposite of what "always perfect" needs. Aim for automatic; settle for default; treat advisory as a last resort.
+- **Put the failure where the caller believes it succeeded.** A diagnostic in a tool nobody calls is a diagnostic that does not exist. Every export now returns the board's layout warnings beside the file path, so an agent that never validates still finds out at the exact moment it thinks it is done.
+- **An auto-corrector must be idempotent, and idempotence has to be designed for, not hoped for.** The first version drifted 8px every run because it snapped centre lines while sizes were odd multiples of 4. Fixing it meant choosing a size rhythm (2×grid) that makes every half-size a whole grid step. Only an idempotent corrector is safe to run before every export, which is what makes "always perfect" reachable rather than "perfect if you remember to run it once".
+- **Auto-correction needs a theory of intent, or it destroys deliberate work.** Every pass is gated: sizes unify only within 15%, spacing evens out only when gap variation is small *relative to node size* (a max/min ratio wrongly protects 16-vs-53px gaps between 432px cards), and rows/columns resolve to one non-overlapping assignment so the second pass cannot undo the first.
+
+**Why:** "Always perfect" is a property of defaults and invariants, not of guidance. Anything that depends on the agent choosing correctly will hold most of the time and fail exactly when it matters.
+
+**How to apply:** When asked to make output reliably good, list every fix and mark it automatic / default / advisory. If the list is mostly advisory, the work is not done — find where the value can be computed instead of chosen, and where the check can be attached to the action the caller actually takes.

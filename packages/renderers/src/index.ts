@@ -1,4 +1,21 @@
-import { arrowheadIsFilled, arrowheadPath, connectorGeometry, readPointArray, type Artboard, type BoardConnector, type BoardElement, type BoardProject, type Rect } from "@powerboard/schema";
+import {
+  arrowheadIsFilled,
+  arrowheadPath,
+  connectorAnchorSlots,
+  connectorEndpointRect,
+  connectorGeometry,
+  connectorLabelPoint,
+  connectorLabelWidth,
+  connectorObstacles,
+  readPointArray,
+  strokeDashPattern,
+  type AnchorSlot,
+  type Artboard,
+  type BoardConnector,
+  type BoardElement,
+  type BoardProject,
+  type Rect
+} from "@powerboard/schema";
 
 export interface RenderedFile {
   path: string;
@@ -134,9 +151,18 @@ export function renderArtboardSvg(project: BoardProject, artboardId: string): st
     .map((element) => renderElementSvg(project, element))
     .join("\n");
 
+  // Connectors are page-level objects, but a diagram exported without its edges is not a diagram.
+  // Draw every connector that lives entirely inside this artboard, shifted into artboard-local space.
+  const slots = connectorAnchorSlots(project);
+  const connectors = project.connectors
+    .filter((connector) => connector.fromArtboardId === artboard.id && connector.toArtboardId === artboard.id)
+    .map((connector) => renderConnectorSvg(project, connector, slots.get(connector.id), { x: -artboard.x, y: -artboard.y }))
+    .join("\n  ");
+
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${artboard.width}" height="${artboard.height}" viewBox="0 0 ${artboard.width} ${artboard.height}">
   <rect width="100%" height="100%" fill="${escapeAttr(artboard.background)}"/>
   ${elements}
+  ${connectors}
 </svg>`;
 }
 
@@ -186,6 +212,7 @@ function renderElementJsx(project: BoardProject, element: BoardElement, depth: n
     !hierarchyOnly && style.fill && style.fill !== "transparent" ? `bg-[${style.fill}]` : "",
     !hierarchyOnly && style.color ? `text-[${style.color}]` : "",
     !hierarchyOnly && style.stroke ? `border border-[${style.stroke}]` : "",
+    !hierarchyOnly && style.stroke && style.strokeStyle && style.strokeStyle !== "solid" ? `border-${style.strokeStyle}` : "",
     !hierarchyOnly && style.padding !== undefined ? `p-[${px(style.padding)}]` : "",
     !hierarchyOnly && style.paddingX !== undefined ? `px-[${px(style.paddingX)}]` : "",
     !hierarchyOnly && style.paddingY !== undefined ? `py-[${px(style.paddingY)}]` : "",
@@ -324,6 +351,8 @@ function renderElementSvg(project: BoardProject, element: BoardElement, offsetX 
   const color = element.style.color ?? "#111827";
   const fontSize = element.style.fontSize ?? 14;
   const fontFamily = escapeAttr(svgFontFamily(project, element));
+  const dash = strokeDashPattern(element.style.strokeStyle, element.style.strokeWidth ?? 1);
+  const dashAttr = dash ? ` stroke-dasharray="${dash.dashArray}"` : "";
   const children = project.elements
     .filter((child) => child.parentId === element.id && child.visible)
     .sort((a, b) => a.zIndex - b.zIndex)
@@ -333,7 +362,7 @@ function renderElementSvg(project: BoardProject, element: BoardElement, offsetX 
   switch (element.type) {
     case "frame":
     case "group":
-      return `<g opacity="${opacity}">${isHierarchyOnly(element) ? "" : `<rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}" stroke-width="${element.style.strokeWidth ?? 0}"/>`}${children}</g>`;
+      return `<g opacity="${opacity}">${isHierarchyOnly(element) ? "" : `<rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}" stroke-width="${element.style.strokeWidth ?? 0}"${dashAttr}/>`}${children}</g>`;
     case "text": {
       const { textX, textAnchor } = svgTextAlignment(element, x);
       return `<text x="${textX}" y="${y + fontSize}" width="${element.width}" fill="${escapeAttr(color)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${escapeAttr(String(element.style.fontWeight ?? 600))}" text-anchor="${textAnchor}">${escapeXml(readString(element.props.text, element.name))}</text>`;
@@ -364,12 +393,19 @@ function renderElementSvg(project: BoardProject, element: BoardElement, offsetX 
       return `<g opacity="${opacity}"><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}"/><text x="${x + element.width / 2}" y="${y + element.height / 2 + fontSize / 3}" fill="${escapeAttr(color)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="700" text-anchor="middle">${escapeXml(readString(element.props.text, element.name))}</text>${children}</g>`;
     case "shape": {
       const kind = readString(element.props.shape, "rectangle");
-      const outline = shapeOutlineSvg(kind, x, y, element.width, element.height, radius, escapeAttr(fill), escapeAttr(stroke), element.style.strokeWidth ?? 1.5);
+      const outline = shapeOutlineSvg(kind, x, y, element.width, element.height, radius, escapeAttr(fill), escapeAttr(stroke), element.style.strokeWidth ?? 1.5, dashAttr);
       const label = readString(element.props.text, "");
+      const subtitle = readString(element.props.subtitle, "");
+      // A titled node centres its pair as one optical block rather than centring the title alone.
+      const subtitleSize = Math.max(11, Math.round(fontSize * 0.72));
+      const baseline = y + element.height / 2 + fontSize / 3 - (subtitle ? subtitleSize * 0.7 : 0);
       const text = label
-        ? `<text x="${x + element.width / 2}" y="${y + element.height / 2 + fontSize / 3}" fill="${escapeAttr(color)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${escapeAttr(String(element.style.fontWeight ?? 600))}" text-anchor="middle">${escapeXml(label)}</text>`
+        ? `<text x="${x + element.width / 2}" y="${baseline}" fill="${escapeAttr(color)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${escapeAttr(String(element.style.fontWeight ?? 600))}" text-anchor="middle">${escapeXml(label)}</text>`
         : "";
-      return `<g opacity="${opacity}">${outline}${text}${children}</g>`;
+      const subtitleText = subtitle
+        ? `<text x="${x + element.width / 2}" y="${baseline + subtitleSize * 1.5}" fill="${escapeAttr(color)}" opacity="0.72" font-family="${fontFamily}" font-size="${subtitleSize}" font-weight="500" text-anchor="middle">${escapeXml(subtitle)}</text>`
+        : "";
+      return `<g opacity="${opacity}">${outline}${text}${subtitleText}${children}</g>`;
     }
     case "ink": {
       const points = readPointArray(element.props.points);
@@ -602,8 +638,8 @@ function escapePipe(value: string): string {
   return value.replace(/\|/g, "\\|");
 }
 
-function shapeOutlineSvg(kind: string, x: number, y: number, w: number, h: number, radius: number, fill: string, stroke: string, strokeWidth: number): string {
-  const attrs = `fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linejoin="round"`;
+function shapeOutlineSvg(kind: string, x: number, y: number, w: number, h: number, radius: number, fill: string, stroke: string, strokeWidth: number, dashAttr = ""): string {
+  const attrs = `fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linejoin="round"${dashAttr}`;
   const poly = (points: Array<[number, number]>) => `<polygon points="${points.map(([px, py]) => `${roundForSvg(x + px * w)},${roundForSvg(y + py * h)}`).join(" ")}" ${attrs}/>`;
   switch (kind) {
     case "ellipse":
@@ -698,9 +734,10 @@ export function renderPageSvg(project: BoardProject, pageId?: string): string {
     .join("\n  ");
 
   const artboardIds = new Set(artboards.map((artboard) => artboard.id));
+  const slots = connectorAnchorSlots(project);
   const connectors = project.connectors
     .filter((connector) => artboardIds.has(connector.fromArtboardId) && artboardIds.has(connector.toArtboardId))
-    .map((connector) => renderConnectorSvg(project, connector))
+    .map((connector) => renderConnectorSvg(project, connector, slots.get(connector.id)))
     .join("\n  ");
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(maxX - minX)}" height="${Math.round(maxY - minY)}" viewBox="${Math.round(minX)} ${Math.round(minY)} ${Math.round(maxX - minX)} ${Math.round(maxY - minY)}">
@@ -710,26 +747,20 @@ export function renderPageSvg(project: BoardProject, pageId?: string): string {
 </svg>`;
 }
 
-export function connectorEndpointRect(project: BoardProject, artboardId: string, elementId?: string): Rect | undefined {
-  const artboard = project.artboards.find((candidate) => candidate.id === artboardId);
-  if (!artboard) return undefined;
-  if (!elementId) {
-    return { x: artboard.x, y: artboard.y, width: artboard.width, height: artboard.height };
-  }
-  const element = project.elements.find((candidate) => candidate.id === elementId);
-  if (!element) return undefined;
-  const position = absoluteElementPosition(project, element);
-  return { x: artboard.x + position.x, y: artboard.y + position.y, width: element.width, height: element.height };
-}
-
-function renderConnectorSvg(project: BoardProject, connector: BoardConnector): string {
+function renderConnectorSvg(project: BoardProject, connector: BoardConnector, toSlot?: AnchorSlot, origin?: { x: number; y: number }): string {
   const fromRect = connectorEndpointRect(project, connector.fromArtboardId, connector.fromElementId);
   const toRect = connectorEndpointRect(project, connector.toArtboardId, connector.toElementId);
   if (!fromRect || !toRect) return "";
-  const geometry = connectorGeometry(fromRect, toRect, connector);
+  const obstacles = connectorObstacles(project, connector);
+  const geometry = connectorGeometry(fromRect, toRect, connector, { obstacles, toSlot });
   const stroke = escapeAttr(connector.style.stroke ?? "#44403C");
   const strokeWidth = connector.style.strokeWidth ?? 2;
-  const parts: string[] = [`<path d="${geometry.d}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round"/>`];
+  const dash = strokeDashPattern(connector.style.strokeStyle, strokeWidth);
+  const dashAttr = dash ? ` stroke-dasharray="${dash.dashArray}"` : "";
+  const parts: string[] = [
+    `<path d="${geometry.d}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="${dash?.lineCap ?? "round"}" stroke-linejoin="round"${dashAttr}/>`
+  ];
+  // Arrowheads stay solid on a dashed line — a half-drawn arrow reads as a rendering bug.
   if (connector.arrowEnd !== "none") {
     const head = arrowheadPath(geometry.end, geometry.endAngle, connector.arrowEnd);
     parts.push(`<path d="${head}" fill="${arrowheadIsFilled(connector.arrowEnd) ? stroke : "none"}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linejoin="round"/>`);
@@ -739,13 +770,15 @@ function renderConnectorSvg(project: BoardProject, connector: BoardConnector): s
     parts.push(`<path d="${head}" fill="${arrowheadIsFilled(connector.arrowStart) ? stroke : "none"}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linejoin="round"/>`);
   }
   if (connector.label) {
-    const labelWidth = connector.label.length * 7.2 + 20;
+    const labelWidth = connectorLabelWidth(connector.label);
+    const { point } = connectorLabelPoint(geometry.samples, connector.labelPosition, labelWidth, [...obstacles, fromRect, toRect]);
     parts.push(
-      `<rect x="${roundForSvg(geometry.labelPoint.x - labelWidth / 2)}" y="${roundForSvg(geometry.labelPoint.y - 13)}" width="${roundForSvg(labelWidth)}" height="26" rx="13" fill="#FFFFFF" stroke="#E2E8F0"/>`,
-      `<text x="${roundForSvg(geometry.labelPoint.x)}" y="${roundForSvg(geometry.labelPoint.y + 4.5)}" fill="#334155" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle">${escapeXml(connector.label)}</text>`
+      `<rect x="${roundForSvg(point.x - labelWidth / 2)}" y="${roundForSvg(point.y - 13)}" width="${roundForSvg(labelWidth)}" height="26" rx="13" fill="#FFFFFF" stroke="#E2E8F0"/>`,
+      `<text x="${roundForSvg(point.x)}" y="${roundForSvg(point.y + 4.5)}" fill="#334155" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle">${escapeXml(connector.label)}</text>`
     );
   }
-  return `<g>${parts.join("")}</g>`;
+  const transform = origin && (origin.x !== 0 || origin.y !== 0) ? ` transform="translate(${roundForSvg(origin.x)} ${roundForSvg(origin.y)})"` : "";
+  return `<g${transform}>${parts.join("")}</g>`;
 }
 
 /** Mermaid flowchart export — agents and docs love this for flows and org charts. */

@@ -72,6 +72,7 @@ import {
   Undo2,
   Upload,
   WifiOff,
+  Wand2,
   Workflow,
   ZoomIn,
   ZoomOut
@@ -80,12 +81,21 @@ import type { Artboard, BoardConnector, BoardElement, BoardOperation, BoardProje
 import {
   arrowheadIsFilled,
   arrowheadPath,
+  connectorAnchorSlots,
+  connectorEndpointRect,
   connectorGeometry,
+  connectorLabelPoint,
+  connectorLabelWidth,
+  connectorObstacles,
   createElementFromPreset,
   createId,
   DEVICE_PRESETS,
   readPointArray,
+  POLISH_GRID,
+  POLISH_TOLERANCE,
   shapeKinds,
+  strokeDashPattern,
+  strokeStyles,
   type Rect
 } from "@powerboard/schema";
 import {
@@ -175,6 +185,20 @@ type AgentActivity = {
   operationType?: string;
   at: string;
 };
+
+/**
+ * "An agent has the board right now" — fed by the `agent.presence` heartbeat (every MCP tool, reads
+ * included) and by landed edits. `phase` is what the canvas animates: `reading` breathes, `editing`
+ * tightens. Expires after {@link AGENT_PRESENCE_TTL_MS} of silence.
+ */
+type AgentPresence = {
+  tool: string;
+  ids: string[];
+  phase: "reading" | "editing";
+};
+
+/** Long enough to bridge the gap between tool calls in a burst, short enough that a stall reads as done. */
+const AGENT_PRESENCE_TTL_MS = 5000;
 
 type DragPreview = {
   id: string;
@@ -325,6 +349,7 @@ export function App() {
   const [connectOpen, setConnectOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [agentFeed, setAgentFeed] = useState<AgentFeedEntry[]>([]);
+  const [agentPresence, setAgentPresence] = useState<AgentPresence | null>(null);
   const [marquee, setMarquee] = useState<MarqueeState | null>(null);
   const [snapGuides, setSnapGuides] = useState<SnapGuides>(NO_GUIDES);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
@@ -350,6 +375,7 @@ export function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const screenshotInputRef = useRef<HTMLInputElement | null>(null);
   const agentActivityTimersRef = useRef<number[]>([]);
+  const agentPresenceTimerRef = useRef<number | null>(null);
   const projectRef = useRef<BoardProject | null>(null);
   const selectedIdsRef = useRef<string[]>([]);
   const dragRef = useRef<DragState | null>(null);
@@ -371,6 +397,9 @@ export function App() {
       }
       for (const timer of agentActivityTimersRef.current) {
         window.clearTimeout(timer);
+      }
+      if (agentPresenceTimerRef.current !== null) {
+        window.clearTimeout(agentPresenceTimerRef.current);
       }
     };
   }, []);
@@ -607,7 +636,14 @@ export function App() {
     if (!socketUrl) return;
     const ws = new WebSocket(socketUrl);
     ws.onmessage = (event) => {
-      const message = JSON.parse(String(event.data)) as { type?: string; project?: BoardProject; selection?: string[]; agentActivity?: unknown };
+      const message = JSON.parse(String(event.data)) as {
+        type?: string;
+        project?: BoardProject;
+        selection?: string[];
+        agentActivity?: unknown;
+        tool?: string;
+        ids?: unknown;
+      };
       if (message.type === "board.changed" && message.project) {
         projectRef.current = message.project;
         setProject(message.project);
@@ -617,7 +653,12 @@ export function App() {
         if (isAgentActivity(message.agentActivity)) {
           flashAgentActivity(message.agentActivity);
           recordAgentFeed(message.agentActivity, message.project);
+          markAgentPresence({ tool: message.agentActivity.operationType ?? "edit", ids: message.agentActivity.ids, phase: "editing" });
         }
+      }
+      if (message.type === "agent.presence" && typeof message.tool === "string") {
+        const ids = Array.isArray(message.ids) ? message.ids.filter((id): id is string => typeof id === "string") : [];
+        markAgentPresence({ tool: message.tool, ids, phase: "reading" });
       }
       if (message.type === "selection.changed" && message.selection) {
         selectedIdsRef.current = message.selection;
@@ -666,10 +707,30 @@ export function App() {
     return boundsForSelection(project, selectedIds);
   }, [project, selectedIds]);
 
+  /** World bounds the agent reticle should lock onto — null keeps the veil up but drops the lock. */
+  const agentReticle = useMemo(() => {
+    if (!project || !agentPresence?.ids.length) return null;
+    const bounds = boundsForSelection(project, agentPresence.ids);
+    return bounds ? { bounds, phase: agentPresence.phase, tool: agentPresence.tool } : null;
+  }, [project, agentPresence]);
+
   const selectedElementCount = useMemo(
     () => (project ? selectedIds.filter((id) => project.elements.some((element) => element.id === id)).length : 0),
     [project, selectedIds]
   );
+
+  /**
+   * Extend the "agent is working" window. A tool call with no id-ish input keeps the previous target so
+   * the reticle holds its lock instead of blinking out between calls in a burst.
+   */
+  function markAgentPresence(next: AgentPresence) {
+    setAgentPresence((current) => ({ ...next, ids: next.ids.length ? next.ids : current?.ids ?? [] }));
+    if (agentPresenceTimerRef.current !== null) window.clearTimeout(agentPresenceTimerRef.current);
+    agentPresenceTimerRef.current = window.setTimeout(() => {
+      agentPresenceTimerRef.current = null;
+      setAgentPresence(null);
+    }, AGENT_PRESENCE_TTL_MS);
+  }
 
   function flashAgentActivity(activity: AgentActivity) {
     const ids = uniqueStrings(activity.ids);
@@ -1392,6 +1453,25 @@ export function App() {
       spacingY: 64
     });
     setStatus(`Applied ${layout.replace(/-/g, " ")} layout`);
+  }
+
+  /** One-click version of the auto-corrector agents get through MCP — same operation, same result. */
+  async function runPolish() {
+    const current = projectRef.current;
+    if (!current) return;
+    const elementIds = selectedIdsRef.current.filter((id) => current.elements.some((element) => element.id === id));
+    if (!elementIds.length && !activeArtboard) {
+      setStatus("Select elements (or open a frame) to tidy up");
+      return;
+    }
+    await runOperation({
+      type: "polish_layout",
+      elementIds: elementIds.length ? elementIds : undefined,
+      artboardId: elementIds.length ? undefined : activeArtboard?.id,
+      grid: POLISH_GRID,
+      tolerance: POLISH_TOLERANCE
+    });
+    setStatus("Tidied up — aligned, evened out and snapped to the grid");
   }
 
   async function addShape(kind: (typeof shapeKinds)[number], label: string) {
@@ -2273,6 +2353,8 @@ export function App() {
                     <button className="menu-item" disabled={selectedIds.length < 3} onClick={() => { void runLayout("distribute-horizontal"); close(); }}><AlignHorizontalDistributeCenter size={15} /> Distribute horizontally</button>
                     <button className="menu-item" disabled={selectedIds.length < 3} onClick={() => { void runLayout("distribute-vertical"); close(); }}><AlignVerticalDistributeCenter size={15} /> Distribute vertically</button>
                     <div className="menu-divider" />
+                    <button className="menu-item" onClick={() => { void runPolish(); close(); }}><Wand2 size={15} /> Tidy up (align, even out, snap)</button>
+                    <div className="menu-divider" />
                     <button className="menu-item" onClick={() => { void runLayout("tree"); close(); }}><Network size={15} /> Tree layout (org chart)</button>
                     <button className="menu-item" onClick={() => { void runLayout("flow"); close(); }}><Workflow size={15} /> Flow layout (left→right)</button>
                   </>
@@ -2491,6 +2573,7 @@ export function App() {
                 />
               ))}
             {inkDraft ? <InkDraftLayer draft={inkDraft} project={project} /> : null}
+            {agentReticle ? <AgentReticle bounds={agentReticle.bounds} phase={agentReticle.phase} tool={agentReticle.tool} zoom={zoom} /> : null}
             {snapGuides.vertical.map((x) => (
               <div key={`v-${x}`} className="snap-guide vertical" style={{ left: x }} />
             ))}
@@ -2532,6 +2615,7 @@ export function App() {
             ) : null}
           </div>
         </div>
+        <AgentPresenceVeil live={Boolean(agentPresence)} />
         {tool !== "select" ? (
           <div className="mode-pill" role="status">
             {tool === "connect" ? <Spline size={15} /> : <PenTool size={15} />}
@@ -2576,7 +2660,7 @@ export function App() {
         </CollapsiblePanel>
 
         <CollapsiblePanel id="agent-activity" icon={<Bot size={16} />} title="Agent activity" collapsed={Boolean(collapsedPanels["agent-activity"])} onToggle={togglePanel}>
-          <AgentFeed entries={agentFeed} live={agentActiveIds.size > 0} onFocusTargets={focusAgentTargets} onConnect={() => setConnectOpen(true)} />
+          <AgentFeed entries={agentFeed} phase={agentPresence?.phase} onFocusTargets={focusAgentTargets} onConnect={() => setConnectOpen(true)} />
         </CollapsiblePanel>
 
         <CollapsiblePanel id="flows" icon={<Send size={16} />} title="Flows & connectors" collapsed={Boolean(collapsedPanels.flows)} onToggle={togglePanel}>
@@ -3596,18 +3680,45 @@ function ShapePrimitive({ element }: { element: BoardElement }) {
   const stroke = readString(element.style.stroke, "#44403C");
   const strokeWidth = element.style.strokeWidth ?? 1.5;
   const text = readString(element.props.text, "");
+  const subtitle = readString(element.props.subtitle, "");
+  const dash = strokeDashPattern(element.style.strokeStyle, strokeWidth);
   return (
     <div className="shape-primitive">
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <ShapeOutline kind={kind} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />
+        <ShapeOutline kind={kind} fill={fill} stroke={stroke} strokeWidth={strokeWidth} dash={dash} />
       </svg>
-      {text ? <span className="shape-label" style={{ color: element.style.color ?? "#1E3A5F" }}>{text}</span> : null}
+      {text || subtitle ? (
+        <span className="shape-text" style={{ color: element.style.color ?? "#1E3A5F" }}>
+          {text ? <span className="shape-label">{text}</span> : null}
+          {subtitle ? <span className="shape-subtitle">{subtitle}</span> : null}
+        </span>
+      ) : null}
     </div>
   );
 }
 
-function ShapeOutline({ kind, fill, stroke, strokeWidth }: { kind: string; fill: string; stroke: string; strokeWidth: number }) {
-  const common = { fill, stroke, strokeWidth, vectorEffect: "non-scaling-stroke" as const, strokeLinejoin: "round" as const };
+function ShapeOutline({
+  kind,
+  fill,
+  stroke,
+  strokeWidth,
+  dash
+}: {
+  kind: string;
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+  dash?: { dashArray: string; lineCap: "butt" | "round" };
+}) {
+  const common = {
+    fill,
+    stroke,
+    strokeWidth,
+    vectorEffect: "non-scaling-stroke" as const,
+    strokeLinejoin: "round" as const,
+    strokeDasharray: dash?.dashArray,
+    strokeLinecap: dash?.lineCap
+  };
   const poly = (points: Array<[number, number]>) => <polygon points={points.map(([x, y]) => `${x},${y}`).join(" ")} {...common} />;
   switch (kind) {
     case "ellipse":
@@ -3671,27 +3782,14 @@ function MockTable({ element }: { element: BoardElement }) {
   );
 }
 
+/** Board space → canvas space. Geometry itself lives in @powerboard/schema so exports match exactly. */
+function toCanvasSpace(rect: Rect): Rect {
+  return { x: CANVAS_ORIGIN_X + rect.x, y: CANVAS_ORIGIN_Y + rect.y, width: rect.width, height: rect.height };
+}
+
 function connectorWorldRect(project: BoardProject, artboardId: string, elementId: string | undefined): Rect | null {
-  const artboard = project.artboards.find((candidate) => candidate.id === artboardId);
-  if (!artboard) return null;
-  if (!elementId) {
-    return { x: CANVAS_ORIGIN_X + artboard.x, y: CANVAS_ORIGIN_Y + artboard.y, width: artboard.width, height: artboard.height };
-  }
-  const element = project.elements.find((candidate) => candidate.id === elementId);
-  if (!element) return null;
-  let x = CANVAS_ORIGIN_X + artboard.x + element.x;
-  let y = CANVAS_ORIGIN_Y + artboard.y + element.y;
-  let parentId = element.parentId;
-  const seen = new Set<string>([element.id]);
-  while (parentId && !seen.has(parentId)) {
-    seen.add(parentId);
-    const parent = project.elements.find((candidate) => candidate.id === parentId);
-    if (!parent) break;
-    x += parent.x;
-    y += parent.y;
-    parentId = parent.parentId;
-  }
-  return { x, y, width: element.width, height: element.height };
+  const rect = connectorEndpointRect(project, artboardId, elementId);
+  return rect ? toCanvasSpace(rect) : null;
 }
 
 function ConnectorLayer({
@@ -3717,6 +3815,12 @@ function ConnectorLayer({
   // Counter-scale so the handle is a constant ~8px dot with a ≥16px hit area at any zoom.
   const dotRadius = 4 / zoom;
   const hitRadius = 8 / zoom;
+  // Routing inputs are board-wide, so derive them once per board change rather than per connector.
+  const anchorSlots = useMemo(() => connectorAnchorSlots(project), [project]);
+  const obstaclesByConnector = useMemo(
+    () => new Map(project.connectors.map((connector) => [connector.id, connectorObstacles(project, connector).map(toCanvasSpace)])),
+    [project]
+  );
   return (
     <svg className="connector-layer" width={CANVAS_WIDTH} height={CANVAS_HEIGHT} viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}>
       {project.connectors.map((connector) => {
@@ -3727,10 +3831,22 @@ function ConnectorLayer({
         const draftPoint = waypointDraft && waypointDraft.id === connector.id ? { x: waypointDraft.x, y: waypointDraft.y } : null;
         // Preview the dragged waypoint so the spine follows the cursor before we persist.
         const effective = draftPoint ? { ...connector, waypoints: [draftPoint] } : connector;
-        const geometry = connectorGeometry(fromRect, toRect, effective);
+        const geometry = connectorGeometry(fromRect, toRect, effective, {
+          obstacles: obstaclesByConnector.get(connector.id) ?? [],
+          toSlot: anchorSlots.get(connector.id)
+        });
         const stroke = String(connector.style.stroke ?? "#44403C");
         const agentActive = agentActiveIds.has(connector.id);
         const strokeWidth = (connector.style.strokeWidth ?? 2) + (selected ? 1.5 : 0);
+        const dash = strokeDashPattern(connector.style.strokeStyle, connector.style.strokeWidth ?? 2);
+        const labelWidth = connector.label ? connectorLabelWidth(connector.label) : 0;
+        const labelAt = connector.label
+          ? connectorLabelPoint(geometry.samples, connector.labelPosition, labelWidth, [
+              ...(obstaclesByConnector.get(connector.id) ?? []),
+              fromRect,
+              toRect
+            ]).point
+          : geometry.labelPoint;
         const endHead = arrowheadPath(geometry.end, geometry.endAngle, connector.arrowEnd);
         const startHead = connector.arrowStart !== "none" ? arrowheadPath(geometry.start, geometry.startAngle + Math.PI, connector.arrowStart) : "";
         // Handle sits on the active waypoint if there is one, else at the straight-line midpoint.
@@ -3738,7 +3854,7 @@ function ConnectorLayer({
         // If the midpoint handle sits on the label ("fl●w"), lift the label clear while selected —
         // a constant screen offset so it holds at any zoom.
         const labelLift =
-          selected && connector.label && Math.hypot(geometry.labelPoint.x - handleAt.x, geometry.labelPoint.y - handleAt.y) < 24 / zoom
+          selected && connector.label && Math.hypot(labelAt.x - handleAt.x, labelAt.y - handleAt.y) < 24 / zoom
             ? 20 / zoom
             : 0;
         return (
@@ -3755,13 +3871,22 @@ function ConnectorLayer({
                 onSelect([connector.id], event.shiftKey);
               }}
             />
-            <path className="connector-spine" d={geometry.d} stroke={stroke} strokeWidth={strokeWidth} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+            <path
+              className="connector-spine"
+              d={geometry.d}
+              stroke={stroke}
+              strokeWidth={strokeWidth}
+              fill="none"
+              strokeLinecap={dash?.lineCap ?? "round"}
+              strokeLinejoin="round"
+              strokeDasharray={dash?.dashArray}
+            />
             {endHead ? <path d={endHead} stroke={stroke} strokeWidth={strokeWidth} fill={arrowheadIsFilled(connector.arrowEnd) ? stroke : "none"} strokeLinejoin="round" /> : null}
             {startHead ? <path d={startHead} stroke={stroke} strokeWidth={strokeWidth} fill={arrowheadIsFilled(connector.arrowStart) ? stroke : "none"} strokeLinejoin="round" /> : null}
             {connector.label ? (
               <g className="connector-label">
-                <rect x={geometry.labelPoint.x - connector.label.length * 3.6 - 8} y={geometry.labelPoint.y - 11 - labelLift} width={connector.label.length * 7.2 + 16} height={22} rx={11} />
-                <text x={geometry.labelPoint.x} y={geometry.labelPoint.y + 4 - labelLift} textAnchor="middle">
+                <rect x={labelAt.x - labelWidth / 2} y={labelAt.y - 11 - labelLift} width={labelWidth} height={22} rx={11} />
+                <text x={labelAt.x} y={labelAt.y + 4 - labelLift} textAnchor="middle">
                   {connector.label}
                 </text>
               </g>
@@ -3932,12 +4057,13 @@ function ElementInspector({
       {element.type === "line" ? <Field label="Direction" value={readString(element.props.direction, "horizontal")} onChange={(direction) => onChange({ props: { direction } })} /> : null}
       {element.type === "sparkline" ? <Field label="Values" value={formatNumberList(readNumberArray(element.props.values, []))} onChange={(values) => onChange({ props: { values: parseNumberList(values) } })} /> : null}
       {"title" in element.props ? <Field label="Title" value={readString(element.props.title, "")} onChange={(title) => onChange({ props: { title } })} /> : null}
-      {"subtitle" in element.props ? <Field label="Subtitle" value={readString(element.props.subtitle, "")} onChange={(subtitle) => onChange({ props: { subtitle } })} /> : null}
+      {"subtitle" in element.props || element.type === "shape" ? <Field label="Subtitle" value={readString(element.props.subtitle, "")} onChange={(subtitle) => onChange({ props: { subtitle } })} /> : null}
       {"body" in element.props ? <Field label="Body" value={readString(element.props.body, "")} onChange={(body) => onChange({ props: { body } })} /> : null}
       <ColorField label="Fill" value={element.style.fill ?? "#FFFFFF"} onChange={(fill) => onChange({ style: { fill } })} />
       <ColorField label="Text" value={element.style.color ?? "#111827"} onChange={(color) => onChange({ style: { color } })} />
       <ColorField label="Stroke" value={element.style.stroke ?? "#64748B"} onChange={(stroke) => onChange({ style: { stroke } })} />
       <NumberField label="Stroke width" value={element.style.strokeWidth ?? 0} min={0} max={12} step={0.5} onChange={(strokeWidth) => onChange({ style: { strokeWidth } })} />
+      <SegmentedControl label="Stroke style" value={element.style.strokeStyle ?? "solid"} options={STROKE_STYLE_OPTIONS} onChange={(strokeStyle) => onChange({ style: { strokeStyle } })} />
       <NumberField label="Radius" value={element.style.radius ?? 0} min={0} max={80} onChange={(radius) => onChange({ style: { radius } })} />
       <NumberField label="Opacity" value={element.style.opacity ?? 1} min={0.1} max={1} step={0.05} onChange={(opacity) => onChange({ style: { opacity } })} />
       <NumberField label="Font" value={element.style.fontSize ?? 14} min={8} max={72} onChange={(fontSize) => onChange({ style: { fontSize } })} />
@@ -3993,6 +4119,8 @@ const CONNECTOR_PORT_OPTIONS: Array<{ value: BoardConnector["fromPort"]; label: 
   { value: "s", label: "Bottom" },
   { value: "w", label: "Left" }
 ];
+
+const STROKE_STYLE_OPTIONS = strokeStyles.map((value) => ({ value, label: value[0]!.toUpperCase() + value.slice(1) }));
 
 /** Tiny arrowhead preview glyph for the segmented pickers. */
 function ArrowGlyph({ kind }: { kind: BoardConnector["arrowEnd"] }) {
@@ -4090,6 +4218,12 @@ function ConnectorInspector({
       <SegmentedControl label="End cap" value={connector.arrowEnd} options={arrowOptions} onChange={(arrowEnd) => onChange({ arrowEnd })} />
       <SegmentedControl label="Leaves start from" value={connector.fromPort} options={CONNECTOR_PORT_OPTIONS.map((option) => ({ value: option.value, label: option.label }))} onChange={(fromPort) => onChange({ fromPort })} />
       <SegmentedControl label="Enters target at" value={connector.toPort} options={CONNECTOR_PORT_OPTIONS.map((option) => ({ value: option.value, label: option.label }))} onChange={(toPort) => onChange({ toPort })} />
+      <SegmentedControl
+        label="Line style"
+        value={connector.style.strokeStyle ?? "solid"}
+        options={STROKE_STYLE_OPTIONS}
+        onChange={(strokeStyle) => onChange({ style: { strokeStyle } })}
+      />
       <ColorField label="Line color" value={connector.style.stroke ?? "#44403C"} onChange={(stroke) => onChange({ style: { stroke } })} />
       <NumberField label="Thickness" value={connector.style.strokeWidth ?? 2} min={1} max={8} step={0.5} onChange={(strokeWidth) => onChange({ style: { strokeWidth } })} />
       <button className="wide-action danger" onClick={onDelete}>
@@ -4373,6 +4507,47 @@ function DeleteBoardDialog({ board, busy, onCancel, onConfirm }: { board: BoardS
   );
 }
 
+/** Screen-space padding between the locked target and the reticle brackets, before the zoom divide. */
+const RETICLE_PAD_PX = 11;
+
+/**
+ * The agent's focus lock: four corner brackets that *travel* between targets on an eased flight, so a
+ * burst of agent work reads as one attention moving around the board rather than a series of flashes.
+ * `reading` breathes wide and slow; `editing` tightens and glows. Motion lives in CSS (reduce-motion safe).
+ */
+function AgentReticle({ bounds, phase, tool, zoom }: { bounds: Bounds; phase: AgentPresence["phase"]; tool: string; zoom: number }) {
+  const pad = RETICLE_PAD_PX / zoom;
+  return (
+    <div
+      className={classNames("agent-reticle", `is-${phase}`)}
+      style={{ left: bounds.x - pad, top: bounds.y - pad, width: bounds.width + pad * 2, height: bounds.height + pad * 2 }}
+      aria-hidden="true"
+    >
+      <span className="agent-reticle-corner tl" />
+      <span className="agent-reticle-corner tr" />
+      <span className="agent-reticle-corner bl" />
+      <span className="agent-reticle-corner br" />
+      <span className="agent-reticle-label" style={{ transform: `scale(${1 / zoom})` }}>
+        {tool}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Ambient "the board is under agent control" signal: a hairline on the viewport edge with a single
+ * light travelling its perimeter. Stays mounted so it can cross-fade instead of snapping, and parks its
+ * animation when idle.
+ */
+function AgentPresenceVeil({ live }: { live: boolean }) {
+  return (
+    <svg className={classNames("agent-presence-veil", live && "is-live")} aria-hidden="true">
+      <rect className="agent-veil-base" width="100%" height="100%" rx="12" pathLength={100} />
+      <rect className="agent-veil-sheen" width="100%" height="100%" rx="12" pathLength={100} />
+    </svg>
+  );
+}
+
 /**
  * The PowerBoard mark (brand Direction D: board frame + live agent pulse), matching the macOS
  * app icon. Inline rather than an <img> so it needs no network fetch and stays crisp on HiDPI.
@@ -4614,7 +4789,7 @@ function elementToStyle(element: BoardElement): React.CSSProperties {
     color: element.style.color,
     borderColor: vectorPrimitive ? undefined : element.style.stroke,
     borderWidth: vectorPrimitive ? undefined : element.style.strokeWidth,
-    borderStyle: !vectorPrimitive && element.style.stroke ? "solid" : undefined,
+    borderStyle: !vectorPrimitive && element.style.stroke ? (element.style.strokeStyle ?? "solid") : undefined,
     borderRadius: vectorPrimitive ? undefined : element.style.radius,
     boxShadow: element.style.shadow,
     opacity: element.style.opacity,

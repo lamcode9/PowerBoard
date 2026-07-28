@@ -246,6 +246,9 @@ app.post("/mcp", async (req, res) => {
       backup.cancel(boardId);
       broadcast(boardId, { type: "board.removed", boardId });
     },
+    onAgentPresence: (presence) => {
+      broadcast(presence.boardId, { type: "agent.presence", ...presence });
+    },
     statusExtras: () => ({ backup: backup.status() })
   });
 

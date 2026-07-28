@@ -1,15 +1,106 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { ZodError } from "zod";
-import { ArtboardSchema, BoardElementSchema, BoardOperation, BoardProjectSchema, ConnectorSchema, createElementFromPreset, createId, OperationSchema, validateBoardStructure } from "@powerboard/schema";
+import {
+  ArtboardSchema,
+  BoardElementSchema,
+  BoardConnector,
+  BoardOperation,
+  BoardProject,
+  BoardProjectSchema,
+  ConnectorSchema,
+  createElementFromPreset,
+  createId,
+  OperationSchema,
+  POLISH_GRID,
+  POLISH_TOLERANCE,
+  validateBoardStructure
+} from "@powerboard/schema";
 import { agentActivityForOperation, agentActivityForSelection, AgentBoardActivity, BoardStore } from "./boardService.js";
+
+/**
+ * Geometry problems that make a board look unfinished, as opposed to structurally invalid. Every
+ * export tool returns these beside its file path so an agent that never calls validate_board still
+ * finds out — the failure has to surface at the moment it believes it is done.
+ */
+const LAYOUT_DIAGNOSTIC_CODES = new Set([
+  "connector-crosses-element",
+  "connector-endpoints-collide",
+  "connector-label-collides",
+  "elements-overlap",
+  "element-outside-artboard"
+]);
+
+/** Element types that read as diagram nodes rather than app-mockup surfaces. */
+const DIAGRAM_NODE_TYPES = new Set(["shape", "sticky", "frame", "card", "group"]);
+
+/**
+ * The schema-wide connector default is `curved`, which is right for app-flow arrows between
+ * artboards and wrong for a diagram, where elbows are the convention. Rather than fork the schema,
+ * apply the diagram convention at the moment of creation — but only when the caller did not state a
+ * routing itself, so an explicit choice is never overridden.
+ */
+function withDiagramDefaults(connector: BoardConnector, project: BoardProject, raw: Record<string, unknown>): BoardConnector {
+  if (raw.routing !== undefined) return connector;
+  const endpoints = [connector.fromElementId, connector.toElementId];
+  if (endpoints.some((id) => !id)) return connector;
+  const bothAreNodes = endpoints.every((id) => {
+    const element = project.elements.find((candidate) => candidate.id === id);
+    return element ? DIAGRAM_NODE_TYPES.has(element.type) : false;
+  });
+  return bothAreNodes ? { ...connector, routing: "orthogonal" } : connector;
+}
+
+function layoutDiagnosticsFor(project: BoardProject): { clean: boolean; issues: string[]; hint?: string } {
+  const issues = validateBoardStructure(project)
+    .issues.filter((issue) => LAYOUT_DIAGNOSTIC_CODES.has(issue.code))
+    .map((issue) => `${issue.code}: ${issue.message}`);
+  if (issues.length === 0) return { clean: true, issues };
+  return { clean: false, issues, hint: "Run polish_layout on this artboard, then re-export. Anything still listed needs a content change (shorter label, more spacing)." };
+}
 
 interface BoardMcpOptions {
   onBoardChanged?: (boardId: string, activity?: AgentBoardActivity) => Promise<void> | void;
   /** Fired after an application-level board deletion so live clients can drop it from the board list. */
   onBoardRemoved?: (boardId: string) => Promise<void> | void;
+  /**
+   * Fired when any tool *starts* — reads included. `board.changed` only lands after a write, so on its
+   * own the canvas reads as idle while an agent is inspecting or between ops. This is the signal that
+   * lets the UI say "an agent is working right now" instead of "an agent just finished something".
+   */
+  onAgentPresence?: (presence: AgentPresence) => void;
   /** Extra live status for get_board_status (e.g. backup health from the HTTP server). */
   statusExtras?: () => Record<string, unknown>;
+}
+
+/** A single "an agent is touching this board" heartbeat. `ids` is a best-effort focus hint, not a guarantee. */
+export interface AgentPresence {
+  boardId: string;
+  tool: string;
+  ids: string[];
+  at: string;
+}
+
+/**
+ * Id-ish inputs, lifted so a *read* can point the canvas at what the agent is looking at. Writes get
+ * exact targets from `agentActivityForOperation`; this is only the hint for everything before that.
+ */
+const PRESENCE_ID_KEYS = ["artboardId", "elementId", "connectorId", "parentId", "sourceArtboardId", "pageId"] as const;
+const PRESENCE_ID_LIST_KEYS = ["ids", "elementIds", "artboardIds", "selection"] as const;
+
+function presenceTargetIds(input: Record<string, unknown> | undefined): string[] {
+  if (!input) return [];
+  const ids = new Set<string>();
+  for (const key of PRESENCE_ID_KEYS) {
+    const value = input[key];
+    if (typeof value === "string" && value) ids.add(value);
+  }
+  for (const key of PRESENCE_ID_LIST_KEYS) {
+    const value = input[key];
+    if (!Array.isArray(value)) continue;
+    for (const entry of value) if (typeof entry === "string" && entry) ids.add(entry);
+  }
+  return [...ids];
 }
 
 type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
@@ -86,6 +177,10 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     }
     server.registerTool(name, config as never, (async (input: Record<string, unknown> = {}) => {
       const key = typeof input?.idempotencyKey === "string" ? input.idempotencyKey : undefined;
+      const presenceBoardId = typeof input?.boardId === "string" ? input.boardId : undefined;
+      if (presenceBoardId) {
+        options.onAgentPresence?.({ boardId: presenceBoardId, tool: name, ids: presenceTargetIds(input), at: new Date().toISOString() });
+      }
       const cached = idempotencyGet(key, name);
       if (cached) return cached;
       try {
@@ -253,7 +348,10 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     "add_element",
     {
       title: "Add element",
-      description: "Add a semantic design element to a board. Provide either a full element or a preset type plus artboardId/x/y.",
+      description:
+        "Add a semantic design element to a board. Provide either a full element or a preset type plus artboardId/x/y. " +
+        "For diagram nodes use type 'shape' with props {shape, text, subtitle} — one element carries its own title and caption, so apply_layout can move whole nodes. " +
+        "Composing a node out of a frame plus separate text elements looks the same but breaks auto-layout, which moves the frame and leaves the labels behind.",
       inputSchema: {
         boardId: z.string(),
         element: z.unknown().optional(),
@@ -427,7 +525,9 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     {
       title: "Add connector",
       description:
-        "Add a connector between artboards or elements. Connector v2 fields: fromElementId/toElementId (element anchoring), fromPort/toPort (auto|n|s|e|w), routing (straight|orthogonal|curved), arrowStart/arrowEnd (none|arrow|triangle|dot|diamond), waypoints [{x,y}] in page coordinates, label, labelPosition 0..1.",
+        "Add a connector between artboards or elements. Connector v2 fields: fromElementId/toElementId (element anchoring), fromPort/toPort (auto|n|s|e|w), routing (straight|orthogonal|curved), arrowStart/arrowEnd (none|arrow|triangle|dot|diamond), waypoints [{x,y}] in page coordinates, cornerRadius (elbow softening; 0 = hard corners), label, labelPosition 0..1, style {stroke, strokeWidth, strokeStyle}. " +
+        "strokeStyle is solid|dashed|dotted — use it for dotted-line/secondary relationships instead of encoding them as a lighter colour, or the legend will not match the drawing. " +
+        "Orthogonal routes place their cross-bar mid-span and steer around other nodes automatically, and edges converging on one side fan out, so you rarely need waypoints — add them only to force a specific path.",
       inputSchema: {
         boardId: z.string(),
         connector: z.unknown()
@@ -435,7 +535,10 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     },
     async ({ boardId, connector }) => {
       const parsed = ConnectorSchema.parse(connector);
-      const project = await applyAgentOperation(boardId, { type: "add_connector", connector: parsed });
+      const project = await applyAgentOperation(boardId, {
+        type: "add_connector",
+        connector: withDiagramDefaults(parsed, await store.readBoard(boardId), (connector as Record<string, unknown>) ?? {})
+      });
       return text(project);
     }
   );
@@ -501,6 +604,37 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     async ({ boardId, layout, artboardId, elementIds, spacingX, spacingY }) => {
       const project = await applyAgentOperation(boardId, { type: "apply_layout", layout, artboardId, elementIds, spacingX: spacingX ?? 80, spacingY: spacingY ?? 64 });
       return text(project);
+    }
+  );
+
+  registerTool(
+    "polish_layout",
+    {
+      title: "Polish layout",
+      description:
+        "Auto-correct an existing layout so it reads as presentation-ready: align rows and columns on their centres, unify sizes that were meant to match, even out spacing that was meant to be even, separate overlapping nodes, snap everything to an 8px grid, pull strays back inside the artboard, and repair connector ports left facing the wrong way plus waypoints stranded inside nodes. " +
+        "Deliberately conservative — it only tightens what is already nearly aligned, so an intentionally irregular composition survives. Idempotent: polishing twice changes nothing. " +
+        "Use this before exporting a poster. It complements apply_layout rather than replacing it: apply_layout computes a layout from scratch (tree/flow), polish_layout tidies the one you have.",
+      inputSchema: {
+        boardId: z.string(),
+        artboardId: z.string().optional(),
+        elementIds: z.array(z.string()).optional(),
+        grid: z.number().positive().optional(),
+        tolerance: z.number().positive().optional()
+      }
+    },
+    async ({ boardId, artboardId, elementIds, grid, tolerance }) => {
+      const before = await store.readBoard(boardId);
+      const project = await applyAgentOperation(boardId, { type: "polish_layout", artboardId, elementIds, grid: grid ?? POLISH_GRID, tolerance: tolerance ?? POLISH_TOLERANCE });
+      // Report what actually moved — a silent "done" gives the agent no way to judge the result.
+      const previous = new Map(before.elements.map((element) => [element.id, element]));
+      const adjusted = project.elements
+        .filter((element) => {
+          const original = previous.get(element.id);
+          return original && (original.x !== element.x || original.y !== element.y || original.width !== element.width || original.height !== element.height);
+        })
+        .map((element) => element.name);
+      return text({ adjusted: adjusted.length, elements: adjusted, layout: layoutDiagnosticsFor(project), board: project });
     }
   );
 
@@ -608,7 +742,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
       description: "Export a whole page (artboards + connectors) as one SVG file.",
       inputSchema: { boardId: z.string(), pageId: z.string().optional() }
     },
-    async ({ boardId, pageId }) => text(await store.exportPageSvg(boardId, pageId))
+    async ({ boardId, pageId }) => text({ ...(await store.exportPageSvg(boardId, pageId)), layout: layoutDiagnosticsFor(await store.readBoard(boardId)) })
   );
 
   registerTool(
@@ -618,7 +752,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
       description: "Export a whole page (artboards + connectors) as a single-page PDF.",
       inputSchema: { boardId: z.string(), pageId: z.string().optional() }
     },
-    async ({ boardId, pageId }) => text(await store.exportPagePdf(boardId, pageId))
+    async ({ boardId, pageId }) => text({ ...(await store.exportPagePdf(boardId, pageId)), layout: layoutDiagnosticsFor(await store.readBoard(boardId)) })
   );
 
   registerTool(
@@ -688,10 +822,12 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     "export_artboard_png",
     {
       title: "Export artboard PNG",
-      description: "Export an artboard to a PNG file under the board exports folder.",
-      inputSchema: { boardId: z.string(), artboardId: z.string() }
+      description:
+        "Export an artboard to a PNG under the board exports folder, including the connectors inside that artboard. Rasterizes at 2x by default for print/deck use — pass scale 1 for a screen-size image, up to 4 for large-format print. " +
+        "The result carries the board's layout diagnostics: if `layout.clean` is false, the image has visible problems (lines through nodes, overlaps, clipped elements) — run polish_layout and export again.",
+      inputSchema: { boardId: z.string(), artboardId: z.string(), scale: z.number().min(1).max(4).optional() }
     },
-    async ({ boardId, artboardId }) => text(await store.exportArtboardPng(boardId, artboardId))
+    async ({ boardId, artboardId, scale }) => text({ ...(await store.exportArtboardPng(boardId, artboardId, { scale })), layout: layoutDiagnosticsFor(await store.readBoard(boardId)) })
   );
 
   registerTool(
@@ -718,7 +854,10 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     "validate_board",
     {
       title: "Validate board",
-      description: "Validate a board file by id, or validate a provided project object.",
+      description:
+        "Validate a board file by id, or validate a provided project object. Reports structural problems (ids, parent cycles, missing roles) AND layout problems that make a diagram unpresentable: " +
+        "connector-crosses-element, connector-endpoints-collide, elements-overlap, element-outside-artboard. " +
+        "Clear the layout warnings before exporting a poster — they are exactly what makes an otherwise valid board look wrong.",
       inputSchema: {
         boardId: z.string().optional(),
         project: z.unknown().optional()

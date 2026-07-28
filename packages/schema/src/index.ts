@@ -1,4 +1,17 @@
 import { z } from "zod";
+// Geometry lives in ./connector.ts; it imports only types back, so this stays a one-way runtime edge.
+import {
+  connectorAnchorSlots,
+  connectorEndpointRect,
+  connectorGeometry,
+  connectorLabelPoint,
+  connectorLabelWidth,
+  connectorObstacleElements,
+  elementWorldRect,
+  rectsNest,
+  rectsOverlap,
+  segmentIntersectsRect
+} from "./connector.js";
 
 export const POWERBOARD_SCHEMA_VERSION = 1;
 
@@ -46,6 +59,14 @@ export const shapeKinds = [
   "document",
   "arrow-right"
 ] as const;
+
+/** House grid. Every polished coordinate lands on a multiple of this. */
+export const POLISH_GRID = 8;
+/** Nodes whose centres sit within this many px are treated as one row/column. */
+export const POLISH_TOLERANCE = 28;
+
+export const strokeStyles = ["solid", "dashed", "dotted"] as const;
+export type StrokeStyle = (typeof strokeStyles)[number];
 
 export const connectorPorts = ["auto", "n", "s", "e", "w"] as const;
 export const connectorRoutings = ["straight", "orthogonal", "curved"] as const;
@@ -114,6 +135,9 @@ export const BoardStyleSchema = z.object({
   fill: z.string().optional(),
   stroke: z.string().optional(),
   strokeWidth: Numberish.nonnegative().optional(),
+  // One line-style property for every stroked thing — connectors, shape/frame/rect outlines.
+  // Diagrams need "this edge is a dotted-line relationship" as a first-class idea, not a colour hint.
+  strokeStyle: z.enum(strokeStyles).optional(),
   color: z.string().optional(),
   opacity: z.number().min(0).max(1).optional(),
   radius: Numberish.nonnegative().optional(),
@@ -212,6 +236,9 @@ export const ConnectorSchema = z.object({
   arrowStart: z.enum(connectorArrowheads).default("none"),
   arrowEnd: z.enum(connectorArrowheads).default("arrow"),
   waypoints: z.array(z.object({ x: Numberish, y: Numberish })).default([]),
+  // Elbow softening for orthogonal routes. Undefined = the CONNECTOR_CORNER_RADIUS house default;
+  // 0 = hard corners for schematic/technical diagrams that want them.
+  cornerRadius: Numberish.nonnegative().optional(),
   label: z.string().optional(),
   labelPosition: z.number().min(0).max(1).default(0.5),
   style: BoardStyleSchema.default({})
@@ -400,6 +427,14 @@ export const OperationSchema = z.discriminatedUnion("type", [
     elementIds: z.array(z.string()).optional(),
     spacingX: Numberish.positive().default(80),
     spacingY: Numberish.positive().default(64)
+  }),
+  z.object({
+    type: z.literal("polish_layout"),
+    artboardId: z.string().optional(),
+    elementIds: z.array(z.string()).optional(),
+    grid: Numberish.positive().default(POLISH_GRID),
+    /** How far apart two nodes may sit and still be treated as "meant to line up". */
+    tolerance: Numberish.positive().default(POLISH_TOLERANCE)
   }),
   z.object({ type: z.literal("set_selection"), selection: z.array(z.string()) })
 ]);
@@ -825,6 +860,8 @@ export function validateBoardStructure(input: BoardProject): BoardValidationRepo
     }
   }
 
+  issues.push(...layoutDiagnostics(project));
+
   const errors = issues.filter((issue) => issue.severity === "error").length;
   const warnings = issues.length - errors;
   return {
@@ -833,6 +870,111 @@ export function validateBoardStructure(input: BoardProject): BoardValidationRepo
     issues,
     hierarchy: inspectBoardHierarchy(project)
   };
+}
+
+/**
+ * Geometry diagnostics: the difference between a board that parses and a board that presents.
+ * Structural validation alone will happily sign off on a diagram whose edges cut through its own
+ * nodes — which is exactly how a non-presentation-ready chart gets exported. Everything here is a
+ * warning: geometry is judgement, and a deliberate crossing shouldn't fail a board.
+ */
+function layoutDiagnostics(project: BoardProject): BoardValidationIssue[] {
+  const issues: BoardValidationIssue[] = [];
+  const artboardById = new Map(project.artboards.map((artboard) => [artboard.id, artboard]));
+
+  // Root elements that stray outside their own artboard get clipped in every export.
+  for (const element of project.elements) {
+    const artboard = artboardById.get(element.artboardId);
+    if (!artboard || element.parentId || !element.visible) continue;
+    if (element.x < -1 || element.y < -1 || element.x + element.width > artboard.width + 1 || element.y + element.height > artboard.height + 1) {
+      issues.push({
+        severity: "warning",
+        code: "element-outside-artboard",
+        message: `Element extends past its artboard and will be clipped on export: ${element.name}`,
+        artboardId: element.artboardId,
+        elementId: element.id
+      });
+    }
+  }
+
+  // Diagnose the geometry the renderers will actually draw — same obstacles, same fan-out slots —
+  // or validation flags collisions the canvas already resolved.
+  const slots = connectorAnchorSlots(project);
+  const anchorPoints = new Map<string, string[]>();
+  for (const connector of project.connectors) {
+    const fromRect = connectorEndpointRect(project, connector.fromArtboardId, connector.fromElementId);
+    const toRect = connectorEndpointRect(project, connector.toArtboardId, connector.toElementId);
+    if (!fromRect || !toRect) continue;
+
+    const obstacles = connectorObstacleElements(project, connector);
+    const geometry = connectorGeometry(fromRect, toRect, connector, {
+      obstacles: obstacles.map(({ rect }) => rect),
+      toSlot: slots.get(connector.id)
+    });
+    const blocked = obstacles.filter(({ rect }) =>
+      geometry.samples.some((point, index) => index > 0 && segmentIntersectsRect(geometry.samples[index - 1]!, point, rect))
+    );
+    if (blocked.length) {
+      issues.push({
+        severity: "warning",
+        code: "connector-crosses-element",
+        message: `Connector passes through ${blocked.map(({ element }) => element.name).join(", ")}: ${connector.label ?? connector.id}. Move a node, add a waypoint, or re-run apply_layout.`,
+        elementId: connector.id
+      });
+    }
+
+    if (connector.label) {
+      const width = connectorLabelWidth(connector.label);
+      const placed = connectorLabelPoint(geometry.samples, connector.labelPosition, width, [...obstacles.map(({ rect }) => rect), fromRect, toRect]);
+      if (!placed.fits) {
+        issues.push({
+          severity: "warning",
+          code: "connector-label-collides",
+          message: `No room on this connector for the label "${connector.label}" — it will overlap a node. Shorten it, space the nodes further apart, or drop the label.`,
+          elementId: connector.id
+        });
+      }
+    }
+
+    // Two edges landing on the same pixel read as one edge.
+    const key = `${Math.round(geometry.end.x)}:${Math.round(geometry.end.y)}`;
+    anchorPoints.set(key, [...(anchorPoints.get(key) ?? []), connector.id]);
+  }
+
+  for (const [, connectorIds] of anchorPoints) {
+    if (connectorIds.length < 2) continue;
+    issues.push({
+      severity: "warning",
+      code: "connector-endpoints-collide",
+      message: `Connectors terminate at the same point and overlap: ${connectorIds.join(", ")}`,
+      elementId: connectorIds[0]
+    });
+  }
+
+  // Sibling nodes that overlap. Containers legitimately enclose their contents, so nesting is fine.
+  const roots = project.elements.filter((element) => !element.parentId && element.visible && (element.type === "shape" || element.type === "frame" || element.type === "card" || element.type === "sticky"));
+  for (let i = 0; i < roots.length; i++) {
+    for (let j = i + 1; j < roots.length; j++) {
+      const a = roots[i]!;
+      const b = roots[j]!;
+      if (a.artboardId !== b.artboardId) continue;
+      const rectA = elementWorldRect(project, a);
+      const rectB = elementWorldRect(project, b);
+      if (!rectA || !rectB) continue;
+      if (rectsNest(rectA, rectB)) continue;
+      if (rectsOverlap(rectA, rectB, 2)) {
+        issues.push({
+          severity: "warning",
+          code: "elements-overlap",
+          message: `Nodes overlap: ${a.name} and ${b.name}`,
+          artboardId: a.artboardId,
+          elementId: a.id
+        });
+      }
+    }
+  }
+
+  return issues;
 }
 
 export function inspectBoardHierarchy(input: BoardProject): BoardHierarchyArtboard[] {
@@ -1032,6 +1174,10 @@ export function applyBoardOperation(project: BoardProject, rawOperation: BoardOp
       applyAutoLayout(next, operation);
       break;
     }
+    case "polish_layout": {
+      applyPolishLayout(next, operation);
+      break;
+    }
     case "set_selection":
       next.selection = filterValidSelection(next, operation.selection);
       break;
@@ -1151,6 +1297,322 @@ function applyAutoLayout(project: BoardProject, operation: LayoutOperation): voi
   }
 
   project.selection = targets.map((element) => element.id);
+}
+
+type PolishOperation = Extract<BoardOperation, { type: "polish_layout" }>;
+
+/**
+ * Normalize an existing layout instead of recomputing one — `apply_layout` computes, `polish_layout`
+ * tidies, and the two never overlap. Every pass is deliberately conservative: it tightens what is
+ * *already nearly* aligned, sized or evenly spaced, so a deliberately irregular composition survives
+ * untouched while sloppiness gets cleaned up. Deterministic and idempotent — polishing twice is a
+ * no-op, which is what lets it run safely before every export.
+ */
+function applyPolishLayout(project: BoardProject, operation: PolishOperation): void {
+  const targets = resolvePolishTargets(project, operation);
+  if (targets.length === 0) {
+    throw new Error("polish_layout found no target elements. Pass elementIds or an artboardId with root elements.");
+  }
+  const { grid, tolerance } = operation;
+
+  // Sizes settle first, onto a 2×grid rhythm. That makes every half-height a whole grid step, which
+  // is what lets centre-alignment land on the grid without a follow-up snap — and a follow-up snap
+  // is precisely what made an earlier version drift 8px every time it ran.
+  snapSizes(targets, grid);
+
+  // Rows first, then columns: rows only touch y and columns only touch x, so they cannot fight.
+  // Each node belongs to exactly one alignment group — its strongest. Aligning rows and then columns
+  // independently lets the second pass undo the first: a card in a tidy row of five gets dragged out
+  // of line by one unrelated node that happens to share its centre-x. Largest group wins, so the row
+  // of five keeps its member and the incidental pair of two is dropped.
+  for (const group of strongestGroups(targets, tolerance)) {
+    const along = group.axis === "row" ? "x" : "y";
+    const across = group.axis === "row" ? "y" : "x";
+    // Spacing is *measured before* sizes change and *applied after*. Unifying sizes grows nodes
+    // around their centres, which eats the gaps — judging regularity on the post-growth numbers
+    // reads an even row as ragged and leaves neighbours touching.
+    const spacing = measureSpacing(group.members, along, grid);
+    alignCentres(group.members, across, grid);
+    unifySize(group.members, "height", grid);
+    unifySize(group.members, "width", grid);
+    applySpacing(group.members, along, grid, spacing);
+  }
+
+  snapPositions(targets, grid);
+  separateOverlaps(targets, grid);
+  containInArtboards(project, targets, grid);
+  repairConnectors(project);
+
+  project.selection = targets.map((element) => element.id);
+}
+
+function resolvePolishTargets(project: BoardProject, operation: PolishOperation): BoardElement[] {
+  if (operation.elementIds?.length) {
+    const wanted = new Set(operation.elementIds);
+    return project.elements.filter((element) => wanted.has(element.id));
+  }
+  if (operation.artboardId) {
+    return project.elements.filter(
+      (element) => element.artboardId === operation.artboardId && !element.parentId && element.visible && element.type !== "screenshotOverlay" && !element.locked
+    );
+  }
+  return [];
+}
+
+const centreOf = (element: BoardElement, axis: "x" | "y"): number =>
+  axis === "y" ? element.y + element.height / 2 : element.x + element.width / 2;
+
+/**
+ * Greedy single-pass clustering along one axis — nodes at the same visual level land together.
+ *
+ * Sharing a centre line is not enough on its own. A 2300-wide section band and a 432-wide card can
+ * share a centre-x without being a column in any meaningful sense, and treating them as one drags
+ * the card halfway down the artboard. Membership therefore also requires comparable cross-axis size,
+ * and excludes any pair where one encloses the other — a container and its contents are never peers.
+ */
+function clusterByCentre(targets: BoardElement[], axis: "x" | "y", tolerance: number): BoardElement[][] {
+  const crossSize = axis === "x" ? ("width" as const) : ("height" as const);
+  const sorted = [...targets].sort((a, b) => centreOf(a, axis) - centreOf(b, axis));
+  const groups: BoardElement[][] = [];
+  for (const element of sorted) {
+    const current = groups[groups.length - 1];
+    const previous = current?.[current.length - 1];
+    const comparable =
+      previous !== undefined &&
+      centreOf(element, axis) - centreOf(previous, axis) <= tolerance &&
+      Math.max(element[crossSize], previous[crossSize]) / Math.max(1, Math.min(element[crossSize], previous[crossSize])) <= 1.5 &&
+      !current!.some((member) => rectsNest(rectOf(member), rectOf(element)));
+    if (comparable) current!.push(element);
+    else groups.push([element]);
+  }
+  return groups.filter((group) => group.length > 1);
+}
+
+const rectOf = (element: BoardElement) => ({ x: element.x, y: element.y, width: element.width, height: element.height });
+
+/**
+ * Resolve rows and columns into a single non-overlapping assignment: biggest groups claim their
+ * members first, and a group that has fewer than two members left is dropped. Rows win ties because
+ * horizontal runs are the more common intent in both diagrams and mockups.
+ */
+function strongestGroups(targets: BoardElement[], tolerance: number): Array<{ axis: "row" | "column"; members: BoardElement[] }> {
+  const candidates = [
+    ...clusterByCentre(targets, "y", tolerance).map((members) => ({ axis: "row" as const, members })),
+    ...clusterByCentre(targets, "x", tolerance).map((members) => ({ axis: "column" as const, members }))
+  ].sort((a, b) => b.members.length - a.members.length || (a.axis === "row" ? -1 : 1));
+
+  const claimed = new Set<string>();
+  const resolved: Array<{ axis: "row" | "column"; members: BoardElement[] }> = [];
+  for (const candidate of candidates) {
+    const free = candidate.members.filter((element) => !claimed.has(element.id));
+    if (free.length < 2) continue;
+    for (const element of free) claimed.add(element.id);
+    resolved.push({ axis: candidate.axis, members: free });
+  }
+  return resolved;
+}
+
+/**
+ * Every member of the group lands on one shared, grid-snapped centre line. Because sizes are already
+ * multiples of 2×grid, `centre - size/2` is itself grid-aligned — so the result needs no further
+ * rounding, and running this again recomputes the identical centre. That is what makes polish
+ * idempotent, and idempotence is what makes it safe to run before every export.
+ */
+function alignCentres(group: BoardElement[], axis: "x" | "y", grid: number): void {
+  const centre = snap(group.reduce((sum, element) => sum + centreOf(element, axis), 0) / group.length, grid);
+  for (const element of group) {
+    if (axis === "y") element.y = centre - element.height / 2;
+    else element.x = centre - element.width / 2;
+  }
+}
+
+/**
+ * Nodes within 15% of each other were almost certainly meant to match — a 118 next to a 120 is a
+ * mistake, a 120 next to a 400 is a decision. Only the near-misses get unified, and only upward so
+ * no content is ever squeezed.
+ */
+function unifySize(group: BoardElement[], dimension: "width" | "height", grid: number): void {
+  const sizes = group.map((element) => element[dimension]);
+  const min = Math.min(...sizes);
+  const max = Math.max(...sizes);
+  if (min <= 0 || max / min > 1.15 || max === min) return;
+  const unified = snapSize(max, grid);
+  for (const element of group) {
+    if (dimension === "height") {
+      element.y = centreOf(element, "y") - unified / 2;
+      element.height = unified;
+    } else {
+      element.x = centreOf(element, "x") - unified / 2;
+      element.width = unified;
+    }
+  }
+}
+
+interface Spacing {
+  /** Was the run already evenly spaced, i.e. is even spacing what the author was reaching for? */
+  even: boolean;
+  /** The gap to use when it was. */
+  target: number;
+}
+
+/**
+ * Judge spacing regularity from the geometry as the author left it, before any resizing.
+ *
+ * The test is how much the gaps vary *relative to the size of the things being spaced*, not the
+ * ratio between them. Gaps of 16 and 53 between 432-wide cards are the same intended gap typed
+ * carelessly; a ratio test calls that 3.3× and wrongly protects it. A real grouping decision shows
+ * up as a break comparable to a whole node — and that is what survives.
+ */
+function measureSpacing(group: BoardElement[], axis: "x" | "y", grid: number): Spacing {
+  const gaps = gapsAlong(group, axis);
+  if (gaps.length < 2) return { even: false, target: grid * 2 };
+  const size = axis === "x" ? ("width" as const) : ("height" as const);
+  const spread = Math.max(...gaps) - Math.min(...gaps);
+  const even = Math.min(...gaps) >= 0 && spread <= 0.5 * median(group.map((element) => element[size]));
+  return { even, target: Math.max(grid * 2, snap(median(gaps), grid)) };
+}
+
+function gapsAlong(group: BoardElement[], axis: "x" | "y"): number[] {
+  const size = axis === "x" ? ("width" as const) : ("height" as const);
+  const sorted = [...group].sort((a, b) => a[axis] - b[axis]);
+  const gaps: number[] = [];
+  for (let index = 1; index < sorted.length; index++) {
+    gaps.push(sorted[index]![axis] - (sorted[index - 1]![axis] + sorted[index - 1]![size]));
+  }
+  return gaps;
+}
+
+/**
+ * Re-space a run. An evenly-spaced run is rebuilt on its median gap, anchored at the leading node so
+ * the block does not drift. A deliberately irregular one keeps its rhythm — but either way no two
+ * neighbours are left touching or overlapping, which resizing on its own can easily cause.
+ */
+function applySpacing(group: BoardElement[], axis: "x" | "y", grid: number, spacing: Spacing): void {
+  const size = axis === "x" ? ("width" as const) : ("height" as const);
+  const sorted = [...group].sort((a, b) => a[axis] - b[axis]);
+  const minimum = grid * 2;
+  let cursor = sorted[0]![axis] + sorted[0]![size];
+  for (let index = 1; index < sorted.length; index++) {
+    const element = sorted[index]!;
+    if (spacing.even) {
+      element[axis] = cursor + spacing.target;
+    } else if (element[axis] - cursor < minimum) {
+      element[axis] = cursor + minimum;
+    }
+    cursor = element[axis] + element[size];
+  }
+}
+
+/** Push overlapping siblings apart along whichever axis needs the least movement. */
+function separateOverlaps(targets: BoardElement[], grid: number): void {
+  for (let pass = 0; pass < 4; pass++) {
+    let moved = false;
+    for (let i = 0; i < targets.length; i++) {
+      for (let j = i + 1; j < targets.length; j++) {
+        const a = targets[i]!;
+        const b = targets[j]!;
+        if (a.artboardId !== b.artboardId) continue;
+        const rectA = { x: a.x, y: a.y, width: a.width, height: a.height };
+        const rectB = { x: b.x, y: b.y, width: b.width, height: b.height };
+        // A container legitimately encloses its contents — that is nesting, not a collision.
+        if (rectsNest(rectA, rectB) || !rectsOverlap(rectA, rectB, 2)) continue;
+        const overlapX = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+        const overlapY = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+        const push = snap(Math.min(overlapX, overlapY) / 2 + grid, grid);
+        if (overlapX <= overlapY) {
+          const direction = centreOf(a, "x") <= centreOf(b, "x") ? -1 : 1;
+          a.x += push * direction;
+          b.x -= push * direction;
+        } else {
+          const direction = centreOf(a, "y") <= centreOf(b, "y") ? -1 : 1;
+          a.y += push * direction;
+          b.y -= push * direction;
+        }
+        moved = true;
+      }
+    }
+    if (!moved) return;
+  }
+}
+
+function snapPositions(targets: BoardElement[], grid: number): void {
+  for (const element of targets) {
+    element.x = snap(element.x, grid);
+    element.y = snap(element.y, grid);
+  }
+}
+
+function snapSizes(targets: BoardElement[], grid: number): void {
+  for (const element of targets) {
+    element.width = snapSize(element.width, grid);
+    element.height = snapSize(element.height, grid);
+  }
+}
+
+/**
+ * Sizes land on a 2×grid rhythm and only ever round *up* — growing a node can never clip its text,
+ * whereas shrinking one silently can.
+ */
+function snapSize(value: number, grid: number): number {
+  const step = grid * 2;
+  return Math.max(step, Math.ceil(value / step) * step);
+}
+
+/** Pull strays back inside their artboard so nothing is silently clipped on export. */
+function containInArtboards(project: BoardProject, targets: BoardElement[], grid: number): void {
+  const artboardById = new Map(project.artboards.map((artboard) => [artboard.id, artboard]));
+  for (const element of targets) {
+    const artboard = artboardById.get(element.artboardId);
+    if (!artboard || element.width > artboard.width || element.height > artboard.height) continue;
+    element.x = snap(Math.min(Math.max(element.x, 0), artboard.width - element.width), grid);
+    element.y = snap(Math.min(Math.max(element.y, 0), artboard.height - element.height), grid);
+  }
+}
+
+/**
+ * Connector hygiene after nodes move: a port pinned to the side now facing *away* from its partner
+ * drags the line the long way round, and a waypoint left stranded inside a node forces the spine
+ * through it. Both are artefacts of editing, never intent, so both are cleared.
+ */
+function repairConnectors(project: BoardProject): void {
+  const nodeRects = project.elements
+    .filter((element) => element.visible && !element.parentId)
+    .map((element) => elementWorldRect(project, element))
+    .filter((rect): rect is NonNullable<typeof rect> => Boolean(rect));
+
+  for (const connector of project.connectors) {
+    const fromRect = connectorEndpointRect(project, connector.fromArtboardId, connector.fromElementId);
+    const toRect = connectorEndpointRect(project, connector.toArtboardId, connector.toElementId);
+    if (!fromRect || !toRect) continue;
+
+    connector.waypoints = connector.waypoints.filter((point) => !nodeRects.some((rect) => pointInsideRect(point, rect)));
+
+    if (connector.fromPort !== "auto" && facesAway(fromRect, toRect, connector.fromPort)) connector.fromPort = "auto";
+    if (connector.toPort !== "auto" && facesAway(toRect, fromRect, connector.toPort)) connector.toPort = "auto";
+  }
+}
+
+function facesAway(rect: { x: number; y: number; width: number; height: number }, other: { x: number; y: number; width: number; height: number }, port: "n" | "s" | "e" | "w"): boolean {
+  const dx = other.x + other.width / 2 - (rect.x + rect.width / 2);
+  const dy = other.y + other.height / 2 - (rect.y + rect.height / 2);
+  if (port === "n") return dy > rect.height / 2;
+  if (port === "s") return dy < -rect.height / 2;
+  if (port === "w") return dx > rect.width / 2;
+  return dx < -rect.width / 2;
+}
+
+function pointInsideRect(point: { x: number; y: number }, rect: { x: number; y: number; width: number; height: number }): boolean {
+  return point.x > rect.x && point.x < rect.x + rect.width && point.y > rect.y && point.y < rect.y + rect.height;
+}
+
+function snap(value: number, grid: number): number {
+  return Math.round(value / grid) * grid;
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
 }
 
 function resolveLayoutTargets(project: BoardProject, operation: LayoutOperation): BoardElement[] {

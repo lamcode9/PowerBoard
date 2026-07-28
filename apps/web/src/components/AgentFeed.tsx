@@ -15,18 +15,22 @@ export interface AgentFeedEntry {
  */
 export function AgentFeed({
   entries,
-  live,
+  phase,
   onFocusTargets,
   onConnect
 }: {
   entries: AgentFeedEntry[];
-  live?: boolean;
+  /** Live agent presence — absent means no agent currently has the board. */
+  phase?: "reading" | "editing";
   onFocusTargets: (ids: string[]) => void;
   onConnect?: () => void;
 }) {
   if (!entries.length) {
+    // A presence ping can arrive before any edit lands (the agent is still inspecting) — the badge has to
+    // survive the empty state, or the very moment an agent picks up the board would show nothing.
     return (
       <div className="agent-feed-empty">
+        {phase ? <AgentLiveBadge phase={phase} /> : null}
         <AgentEmptyMotif />
         <p>No agent activity yet.</p>
         <small>Point an agent at the MCP endpoint — its edits stream in here and each touched element pulses on the canvas.</small>
@@ -40,12 +44,7 @@ export function AgentFeed({
   }
   return (
     <div className="agent-feed">
-      {live ? (
-        <div className="agent-live-badge" role="status" aria-live="polite">
-          <span className="agent-live-dot" aria-hidden="true" />
-          editing…
-        </div>
-      ) : null}
+      {phase ? <AgentLiveBadge phase={phase} /> : null}
       {entries.map((entry) => (
         <button key={entry.id} className="agent-feed-row" onClick={() => onFocusTargets(entry.targets)} title="Click to focus the edited items">
           <span className="agent-feed-dot" aria-hidden="true" />
@@ -57,6 +56,19 @@ export function AgentFeed({
           </span>
         </button>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Distinguishes "an agent is looking at the board" from "an agent is changing it" — the two phases the
+ * canvas reticle also animates, so the panel and the canvas never disagree about what's happening.
+ */
+function AgentLiveBadge({ phase }: { phase: "reading" | "editing" }) {
+  return (
+    <div className={`agent-live-badge is-${phase}`} role="status" aria-live="polite">
+      <span className="agent-live-dot" aria-hidden="true" />
+      {phase === "editing" ? "editing…" : "reading the board…"}
     </div>
   );
 }

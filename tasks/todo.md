@@ -3,6 +3,130 @@
 Source of truth for the v2 pivot. Full rationale + feature matrix: `docs/powerboard-desktop-roadmap.html`.
 Written 2026-07-04. Status legend: [ ] todo · [~] in progress · [x] done.
 
+## Active — Diagram quality: why agents ship non-presentation-ready charts (2026-07-28)
+
+Evidence: live board `board_hf75v_veggid` ("AI Embedded Organization"), built entirely over MCP.
+Read via `read_board` / `export_page_svg` / `export_artboard_png`. Five real defects, one chain:
+
+1. **`export_artboard_png` drops every connector.** `renderArtboardSvg` renders elements only —
+   `renderPageSvg` is the sole path that draws connectors. The board has 9 connectors; the exported
+   PNG shows **zero lines**. The most natural "give me the poster" action produces a diagram with
+   no edges at all. This alone explains "non-presentation-ready".
+2. **No dashed/dotted stroke exists anywhere in the schema.** `BoardStyleSchema` has
+   `stroke`/`strokeWidth` and nothing else. The agent wanted a dotted-line interface, couldn't
+   express it, faked it with a lighter grey (`#94A3B8` vs `#475569`) — and shipped a legend that
+   says "Dotted line = embedded / dotted-line interface" over nine solid lines. **The artifact lies
+   because the model couldn't say what it meant.**
+3. **Orthogonal routing puts the cross-bar against the target instead of mid-span.** `orthogonalRoute`
+   elbows at `entry.y` (24px above the target), so sibling edges pile into one lane at the child's
+   head. Classic org-chart look needs a mid-span trunk.
+4. **No obstacle avoidance.** Two edges on this board run straight through other nodes:
+   `c_cos_biz` (`M 790 470 … L 790 886`) passes through **AI Enablement**; `c_enable_cto`
+   (`… L 1536 675 …` at y=675) passes through **Technical Substrate** and drops its label chip
+   inside that filled box.
+5. **No fan-out on shared anchors.** `c_cos_biz` and `c_fde_biz` both terminate at exactly
+   `(1300, 910)` — two arrowheads stacked on one pixel.
+
+And the reason the agent never noticed: **`validate_board` is purely structural.** It checks ids,
+parent cycles, semantic roles, shape kinds. It has no geometric diagnostics, so a poster with lines
+through boxes and colliding labels validates `valid: true`. The MCP etiquette tells agents to
+validate before exporting; validation then tells them everything is fine.
+
+Secondary: the agent hand-composed each of 14 nodes as `frame` + 2 root-level `text` elements
+(44 elements for 14 nodes). `shape` — the canonical diagram node (D5) — only renders a single
+`props.text`, so a title+subtitle node is impossible as one element. That forces hand-placement and
+makes `apply_layout: "tree"` unusable (it would move the frames and leave the labels behind).
+
+### Fix — in dependency order
+
+- [x] **P0 Schema.** `BoardStyleSchema.strokeStyle: solid|dashed|dotted` (serves connectors *and*
+      shape/frame/rect outlines — one property, not a connector-only fork). Connector
+      `cornerRadius?` for rounded elbows. Shared `strokeDashArray(style, width)` helper so canvas
+      and SVG dash identically. `shape` gains `props.subtitle`.
+- [x] **P0 Routing** (`packages/schema/src/connector.ts`): mid-span trunk for orthogonal routes,
+      rounded corners, obstacle-aware trunk-lane selection, target-side anchor fan-out.
+      Fan-out on the **target** side only — a shared outgoing trunk is the correct org-chart look.
+      Centralize `elementWorldRect` / `connectorEndpointRect` / `connectorObstacles` here and delete
+      the duplicates in `apps/web` and `packages/renderers`.
+- [x] **P0 Export parity**: `renderArtboardSvg` draws the connectors whose endpoints both resolve
+      inside that artboard, in artboard-local coordinates. Fixes `export_artboard_png` and the
+      PNG in `export_selection_handoff`.
+- [x] **P0 Canvas + SVG renderer** honour `strokeStyle`, `cornerRadius`, obstacles and fan-out —
+      identical geometry in both, per the connector-v2 contract.
+- [x] **P1 Layout diagnostics in `validate_board`**: `connector-crosses-element`,
+      `connector-endpoints-collide`, `connector-label-collides`, `elements-overlap`,
+      `element-outside-artboard`. All warnings — geometry is judgement, and a deliberate crossing
+      must not make a board invalid. Diagnostics run the *same* obstacles and fan-out slots the
+      renderers use, or validation flags collisions the canvas already resolved (caught by a test).
+      This is what makes "picture-perfect" repeatable — the agent gets told.
+- [ ] **NOT done — `text-overflows-box`.** Deferred: the canvas wraps text in a div while
+      `renderElementSvg` emits a single unwrapped `<text>`, so long strings overflow only in the
+      SVG/PNG export. The diagnostic is worth little until that parity bug is fixed; they should
+      ship together as their own piece of work.
+- [x] **P1 Inspector**: line style control (Solid/Dashed/Dotted) on the connector panel and the
+      shape/frame outline; subtitle field on shapes.
+- [x] **P1 MCP descriptions** teach the new fields and the diagnostics loop.
+- [x] **Verify**: typecheck, tests, re-route the live board and re-export the PNG — lines present,
+      dotted where the legend claims, nothing crossing a node.
+
+Deferred (flagged, not in this pass): the `chart` element renders bare bars — no axis, baseline,
+gridlines, value or category labels. Fine as a mockup placeholder, not presentation-grade. Separate
+piece of work.
+
+### Phase 2 — make it self-correcting, not advisory (2026-07-28)
+
+User's challenge after phase 1: *"the goal is to make the product fixes so that when the agent uses
+it, it's always perfect — embed some best practice, or an auto-feature where the components always
+correct themselves to look picture-perfect and print-ready."*
+
+Correct read of the gap. Phase 1 made **connector geometry** self-correcting (routing, avoidance,
+fan-out, label placement all happen at render time with no agent involvement). It left **node
+geometry** entirely to the agent, and made `validate_board` a report nobody is obliged to read.
+An agent that never calls `validate_board` still ships a ragged board.
+
+Three levers, weakest to strongest:
+
+- [x] **Opinionated defaults** — `add_connector` picks `orthogonal` when both endpoints are diagram
+      nodes, instead of the schema-wide `curved` default that suits app flows. Best practice applied
+      at the moment of creation, without the agent knowing to ask.
+- [x] **`polish_layout` — a deterministic auto-corrector.** One operation that normalizes an existing
+      layout rather than recomputing it (that is `apply_layout`'s job — the two stay MECE). Passes:
+      align rows/columns on their centres, unify sizes that were *meant* to match, equalize gaps that
+      were *meant* to be even, separate overlaps, snap to an 8px grid, repair connector ports that now
+      face the wrong way, drop waypoints stranded inside nodes, pull strays back inside the artboard.
+      **Conservative by design:** it only tightens what is already nearly-aligned, so a deliberately
+      irregular layout survives. One undo entry.
+- [x] **Exports carry their own diagnostics** — every export tool returns the board's layout warnings
+      beside the file path. The agent cannot ship a poster without being told what is wrong with it,
+      even if it never calls `validate_board`. This is the loop-closer: the failure surfaces at the
+      exact moment the agent thinks it is done.
+- [x] **Print-ready raster** — `export_artboard_png` gains a `scale` (default 2× for print density,
+      capped at 4×) and reports the pixel dimensions it produced.
+      **`margin` was NOT built.** The artboard background already extends past the content on this
+      board, so a render-time margin would have been guesswork about where the poster edge belongs;
+      it needs a real decision about whether margin is an artboard property or an export option.
+- [x] **Verify**: tests for each polish pass; deliberately wreck a copy of the real board, polish it,
+      and confirm the export comes back clean.
+- [x] Human parity: **Arrange → Tidy up** in the toolbar runs the same operation, so the auto-corrector
+      is not agent-only.
+
+Three bugs the tests and the live run caught, each a design flaw rather than a typo:
+
+1. **Not idempotent** — snapping a centre to the grid while heights were odd multiples of 4 drifted
+   every node 8px per run. Fixed by snapping *sizes* to a 2xgrid rhythm first, which makes every
+   half-size a whole grid step, so `centre - size/2` is grid-aligned with no follow-up rounding.
+   Idempotence is the property that makes polish safe to run before every export.
+2. **Resizing ate the spacing** — unifying widths grows nodes around their centres, so gaps measured
+   *after* that read an even row as ragged and left two cards flush against each other. Spacing is
+   now measured before sizes change and applied after. The regularity test also changed from a
+   max/min ratio to gap variation relative to node size: gaps of 16 and 53 between 432-wide cards
+   are one intended gap typed carelessly, but a ratio test calls that 3.3x and wrongly protects it.
+3. **The column pass undid the row pass** — a card in a tidy row of five was dragged out of line by
+   one unrelated node sharing its centre-x. Rows and columns are now resolved into a single
+   non-overlapping assignment (largest group claims its members first), plus cluster membership
+   requires comparable cross-axis size and excludes container/content pairs — without that, a
+   2300-wide band and a 432-wide card counted as a "column" and threw the card 400px down.
+
 ## Active — Connect dialog: one client, one thing to copy (2026-07-28)
 
 User review of the shipped build, opening the dialog from **Home**:
@@ -233,6 +357,35 @@ Goal: from "clean web app" to best-in-class canvas tool (Linear/Figma/Excalidraw
 - [ ] **P6 — Canvas craft:** verify/refine ⌘Z, space-pan, cursor-centered zoom, ⌘0/⌘1, marquee, inertial pan; polish selection ring/snap/connector handles on the token scale.
 - [ ] **P7 — A11y floor + taste pass:** focus rings everywhere, icon-button labels, AA both modes, large-text survival; §10 squint / remove-until-breaks / cheap-tell hunt / best-in-class compare.
 - Open decisions (see plan doc): board-content palette (a/b/c); bundle Inter (~110KB, rec yes); sequence P1→P3 before P4 (or P4 in parallel after P1).
+
+## Phase 9 · P4a — Agent presence field (2026-07-28)
+
+Goal: an "an agent is working right now" signal, not just an after-the-fact echo. Root cause found: the
+only live agent signal today is `agentActivity` on `board.changed`, which fires *after* a write — so
+between/before ops the canvas looks idle even while an agent is mid-burst. Fix at the source: emit
+presence when a tool *starts* (reads included).
+
+- [x] **Presence protocol:** `onAgentPresence` on `BoardMcpOptions`, fired from the central `registerTool`
+      wrapper before every handler; `presenceTargetIds()` lifts id-ish inputs so reads carry a target.
+      Broadcast as `agent.presence` from `/mcp` (`index.ts`).
+- [x] **Presence state (web):** `agentPresence` = `{ tool, ids, phase: reading|editing, at }`, extended by
+      each ping/edit, expires after 5s of silence; holds the last target when a call carries no ids.
+- [x] **Focus reticle:** world-space corner-bracket lock that *travels* between targets (400ms eased),
+      breathes while held, tightens + glows on `editing`, labelled with the live tool name (1/zoom).
+- [x] **Presence veil:** viewport-edge hairline with a light sweeping the perimeter (SVG dashoffset),
+      cross-fades in/out; paused when idle.
+- [x] **Badge:** AgentFeed live badge is phase-aware ("reading board…" / "editing…").
+- [x] Reduce-motion variants (static lock + static ring, no travel); dark mode via accent tokens.
+- [x] Verified in the running app with real MCP bursts over HTTP `/mcp`: presence broadcasts on reads,
+      reticle travels across artboards mid-flight, `editing…`/`reading the board…` badge flips, veil
+      fades out and parks ~5s after silence. Light + dark. 48/48 tests, typecheck + build + mcp:check
+      clean, console clean.
+- [x] **Dev-ergonomics fix found while verifying:** a dev stack started while PowerBoard.app is open
+      silently proxies to the *installed* build (both want :4318), so edits appear to do nothing. Vite
+      proxy target is now `POWERBOARD_SERVER_URL`-configurable + a `powerboard-dev-alt-port` launch
+      config (server 4319 / web 5174).
+- [ ] Optional follow-up: off-screen agent work shows only the veil — consider a directional edge marker
+      pointing at the current target.
 
 ## Phase 6 — Later (parked until user says go)
 
