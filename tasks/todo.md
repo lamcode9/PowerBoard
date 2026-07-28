@@ -28,7 +28,11 @@ Fix — the dialog now asks *which client do you have* and answers with exactly 
 - [x] Dead `.connect-config*` CSS removed; `.connect-clients` / `.connect-paste` / `.link-button` added
 - [x] Verify: typecheck, 48 tests, run app — home (no board row) + Cursor tab + dark mode on a board,
       console clean
-- [ ] Commit + push, `fastlane mac beta` → TestFlight
+- [x] Commit + push (`a545bd9`), `fastlane mac beta` → build **202607281500** (v0.1.0), upload clean
+      in 94s, **VALID** in ASC ~4min later. Verified the shipped `app.asar` carried this session's
+      code before trusting it: new header copy / Cursor `mcpServers` snippet / "Any other client" /
+      "Point any MCP client at" all present; `Claude Code &`, `Point Claude at` and the stray
+      `This board` row all absent; CFBundleVersion 202607281500.
 
 Decision: no stdio option in the picker — same reasoning as the previous session (dev-checkout path
 doesn't exist in an installed app; a second stdio process would open its own writer against the same
