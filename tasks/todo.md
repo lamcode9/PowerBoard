@@ -109,6 +109,14 @@ Three levers, weakest to strongest:
       and confirm the export comes back clean.
 - [x] Human parity: **Arrange → Tidy up** in the toolbar runs the same operation, so the auto-corrector
       is not agent-only.
+- [x] Shipped: commit `50e2a74`, pushed to main, `fastlane mac beta` → build **202607281830** (v0.1.0),
+      **VALID** in ASC ~8 min after upload. Verified the shipped `app.asar` carried this session's code
+      before trusting it — `polish_layout`, `strokeStyle`, `connector-crosses-element`, the
+      "Tidy up (align, even out, snap)" menu item and `agent-reticle` all present; the old
+      `label.length * 7.2` chip heuristic gone; CFBundleVersion 202607281830.
+      The commit also carries the in-flight agent-presence work (reticle, veil, phased live badge) —
+      interleaved in `App.tsx`/`styles.css` so it could not be split out; verified working in the
+      running app (presence veil fires on MCP heartbeats) before shipping.
 
 Three bugs the tests and the live run caught, each a design flaw rather than a typo:
 
