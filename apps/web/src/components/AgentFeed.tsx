@@ -49,11 +49,17 @@ export function AgentFeed({
     // A presence ping can arrive before any edit lands (the agent is still inspecting) — the badge has to
     // survive the empty state, or the very moment an agent picks up the board would show nothing.
     return (
+      // Laid out as a row, not a poster. Standing empty it used to be taller than the inspector beside
+      // it; the full explanation lives in the Connect dialog this button opens.
       <div className="agent-feed-empty">
         {badges}
-        <AgentEmptyMotif />
-        <p>No agent activity yet.</p>
-        <small>Point an agent at the MCP endpoint — its edits stream in here and each touched element pulses on the canvas. Several agents can work the same board at once.</small>
+        <div className="agent-feed-empty-row">
+          <AgentEmptyMotif />
+          <div className="agent-feed-empty-body">
+            <p>No agent activity yet.</p>
+            <small>Agent edits stream in here and pulse on the canvas.</small>
+          </div>
+        </div>
         {onConnect ? (
           <button type="button" className="agent-empty-connect" onClick={onConnect}>
             <Bot size={14} /> Connect an agent

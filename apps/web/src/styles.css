@@ -98,7 +98,9 @@ button {
     "left canvas right"
     "status status status";
   grid-template-columns: var(--left-panel-width) minmax(0, 1fr) var(--right-panel-width);
-  grid-template-rows: 64px minmax(0, 1fr) 30px;
+  /* 52px, not 64px: the brand became a one-line breadcrumb, so the bar no longer has to carry two
+     lines of text. Twelve pixels back to the canvas on every board. */
+  grid-template-rows: 52px minmax(0, 1fr) 30px;
   width: 100vw;
   height: 100vh;
   background: #dfe7f1;
@@ -125,7 +127,7 @@ button {
   min-width: 0;
   border-bottom: 1px solid #cbd5e1;
   background: #f8fafc;
-  padding: 10px 14px;
+  padding: 6px 12px;
 }
 
 .brand-block {
@@ -944,13 +946,14 @@ button {
   flex-direction: column;
 }
 
+/* Sentence case at 600, not caps at 700. Seven caps headings down one panel read as seven alarms;
+   a panel title only has to be findable, and weight + colour already do that. */
 .panel-heading {
   margin: 0;
-  color: #1e293b;
+  color: var(--text-1);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0;
-  text-transform: uppercase;
 }
 
 .component-grid {
@@ -1492,13 +1495,16 @@ button {
   align-items: center;
   gap: var(--space-2);
   border-radius: var(--r-sm);
-  background: var(--accent);
-  color: var(--accent-fg);
-  box-shadow: var(--shadow-2);
+  /* Neutral chip, not an accent fill. This label sits *on top of the design* at every selection;
+     saturating it made the chrome louder than the artwork and stole the accent's only job —
+     marking what's active. Weight and contrast are enough to read it. */
+  background: color-mix(in srgb, var(--text-1) 88%, transparent);
+  color: var(--panel-bg);
+  box-shadow: var(--shadow-1);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 20px;
-  padding: 0 8px;
+  padding: 0 7px;
   pointer-events: none;
   white-space: nowrap;
 }
@@ -1834,18 +1840,19 @@ button {
 
 .field {
   display: grid;
-  gap: 6px;
-  /* Token flips to a lighter slate in dark mode so 11px bold labels clear AA (was a hardcoded
-     #64748b that stayed dark-on-dark at 3.67:1). */
+  gap: 5px;
+  /* Token flips to a lighter slate in dark mode so the label clears AA (was a hardcoded
+     #64748b that stayed dark-on-dark at 3.67:1). Sentence case, not caps: an inspector with
+     twenty shouting labels has no hierarchy left to spend on the values. */
   color: var(--text-2);
   font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.005em;
 }
 
 .field input {
   min-width: 0;
-  height: 34px;
+  height: 30px;
   border: 1px solid #d7dee8;
   border-radius: var(--r-md);
   background: #ffffff;
@@ -1854,6 +1861,160 @@ button {
   font-weight: 500;
   padding: 0 9px;
   text-transform: none;
+}
+
+/* ---- Compact numeric field: one row, label in the gutter, label scrubs ----
+   The pattern every design tool converges on (Figma, Sketch, Paper). It replaced a
+   range+number pair that spent four rows per coordinate and could never hit an exact value. */
+.field.compact {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 0;
+  height: 30px;
+  border-radius: var(--r-md);
+  background: var(--control-bg);
+  overflow: hidden;
+}
+
+.field.compact:focus-within {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+/* ---- Named numeric row: label left, compact control right ----
+   Same silhouette as a colour row, so Appearance reads as one list of properties. Used wherever a
+   single-letter gutter glyph would be a guess (stroke width, radius, opacity, font size). */
+.field.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 114px;
+  align-items: center;
+  column-gap: var(--space-2);
+  height: 30px;
+}
+
+.field-row-label {
+  overflow: hidden;
+  cursor: ew-resize;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  touch-action: none;
+  user-select: none;
+}
+
+.field-row-control {
+  display: grid;
+  height: 30px;
+  border-radius: var(--r-md);
+  background: var(--control-bg);
+  overflow: hidden;
+}
+
+.field.row:focus-within .field-row-control,
+.field.compact:focus-within {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.field.row.scrubbing .field-row-control {
+  background: var(--control-bg-active);
+}
+
+.field.row .field-row-label:hover,
+.field.row.scrubbing .field-row-label {
+  color: var(--text-1);
+}
+
+.field-glyph {
+  display: grid;
+  align-content: center;
+  justify-content: center;
+  color: var(--text-2);
+  cursor: ew-resize;
+  font-size: 10.5px;
+  font-weight: 600;
+  /* The glyph is a drag handle; never let the drag turn into a text selection. */
+  touch-action: none;
+  user-select: none;
+}
+
+.field.compact:hover .field-glyph,
+.field.compact.scrubbing .field-glyph {
+  color: var(--text-1);
+}
+
+.field.compact.scrubbing {
+  background: var(--control-bg-active);
+}
+
+.field.compact input,
+.field.compact input:focus,
+.field.row .field-row-control input,
+.field.row .field-row-control input:focus {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 12.5px;
+  padding: 0 8px 0 2px;
+}
+
+.field.row .field-row-control input {
+  padding-left: 9px;
+}
+
+/* The spinners duplicate the scrub handle and steal 16px of an already narrow field. */
+.field.compact input::-webkit-outer-spin-button,
+.field.compact input::-webkit-inner-spin-button,
+.field.row input::-webkit-outer-spin-button,
+.field.row input::-webkit-inner-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.field.compact input[type="number"],
+.field.row input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* ---- Inspector groups ---- */
+.inspector-group {
+  display: grid;
+  gap: var(--space-2);
+  border-top: 1px solid var(--hairline);
+  padding-top: var(--space-3);
+}
+
+.inspector-group.collapsed {
+  gap: 0;
+}
+
+.inspector-group-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0;
+  text-align: left;
+}
+
+.inspector-group-title:hover {
+  color: var(--text-1);
+}
+
+.inspector-group-title svg {
+  flex: 0 0 auto;
+}
+
+.inspector-group-body {
+  display: grid;
+  gap: var(--space-2);
 }
 
 .readonly-field input {
@@ -1871,7 +2032,7 @@ button {
 
 .readonly-value-row button {
   display: inline-flex;
-  height: 34px;
+  height: 30px;
   align-items: center;
   justify-content: center;
   gap: 5px;
@@ -1894,17 +2055,32 @@ button {
   padding: 0;
 }
 
+/* Name, swatch, hex — one row. The old template stacked the label and then left the hex input in a
+   42px slot, so every colour read as a truncated "#FF" under a full-height label. */
 .color-field {
-  grid-template-columns: 1fr 42px minmax(0, 1fr);
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr) 30px 84px;
+  align-items: center;
+  column-gap: var(--space-2);
+  height: 30px;
 }
 
-.color-field span {
-  grid-column: 1 / -1;
+.color-field > span {
+  align-self: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .color-field input[type="color"] {
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
   padding: 3px;
+}
+
+.color-field input:not([type="color"]) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
 }
 
 .segmented-row {
@@ -1979,11 +2155,10 @@ button {
 }
 
 .id-details summary {
-  color: #475569;
+  color: var(--text-2);
   cursor: pointer;
   font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
+  font-weight: 600;
 }
 
 .id-details .readonly-field {
@@ -1996,6 +2171,59 @@ button {
   place-items: center;
   color: #64748b;
   text-align: center;
+}
+
+/* ---- Document state (nothing selected) ---- */
+.document-head {
+  display: grid;
+  gap: 1px;
+}
+
+.document-head strong {
+  overflow: hidden;
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-head small {
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.document-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  border-radius: var(--r-md);
+  background: var(--hairline);
+  overflow: hidden;
+}
+
+.document-stats > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  background: var(--control-bg);
+  padding: 7px 9px;
+}
+
+.document-stats dt {
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.document-stats dd {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .muted {
@@ -2444,20 +2672,35 @@ button {
 }
 .agent-feed-empty {
   display: grid;
-  justify-items: center;
-  gap: 6px;
-  padding: 18px 12px;
+  justify-items: start;
+  gap: var(--space-2);
+  padding: 2px 0 4px;
   color: var(--text-2);
-  text-align: center;
+}
+.agent-feed-empty-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+.agent-feed-empty-body {
+  display: grid;
+  gap: 2px;
 }
 .agent-feed-empty p {
   margin: 0;
+  color: var(--text-1);
   font-weight: 500;
   font-size: 12px;
 }
 .agent-feed-empty small {
   font-size: 11px;
+  line-height: 1.35;
   opacity: 0.85;
+}
+.agent-feed-empty .agent-empty-motif {
+  width: 32px;
+  height: 32px;
 }
 
 /* ---- Phase 4: live agent canvas ---- */
@@ -2588,7 +2831,6 @@ button {
   color: var(--text-2);
   font-size: 11px;
   font-weight: 600;
-  text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 .toggle-row {
@@ -3077,6 +3319,32 @@ button {
   font-weight: 500;
 }
 
+/* Board view: breadcrumb on one line, so the bar can be 52px instead of 64px. */
+.brand-title.crumb {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.brand-title.crumb h1 {
+  max-width: 190px;
+}
+
+.brand-title.crumb > svg {
+  flex: 0 0 auto;
+  color: var(--text-2);
+}
+
+.brand-crumb {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+
 /* ---- Segmented groups + tool switcher: no group boxes — buttons float on the bar ---- */
 .toolbar-group.segmented {
   height: 38px;
@@ -3214,9 +3482,7 @@ button {
 .menu-field span {
   color: var(--text-2);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-weight: 600;
 }
 .menu-field select {
   height: 32px;
@@ -3506,9 +3772,7 @@ button {
 .connect-label {
   color: var(--text-2);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-weight: 600;
 }
 .connect-value {
   display: flex;
@@ -3905,9 +4169,7 @@ button {
   color: var(--text-2);
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.05em;
   text-overflow: ellipsis;
-  text-transform: uppercase;
   white-space: nowrap;
 }
 .pane-resize-handle {

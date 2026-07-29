@@ -1,0 +1,201 @@
+<title>PowerBoard vs paper.design — UI gap &amp; fix report</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --ink: #16181d; --ink-2: #5a6270; --line: #e3e7ee; --bg: #ffffff; --surface: #f7f8fb;
+    --accent: #5b62d6; --good: #0f766e; --bad: #b91c1c;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink: #e5edf7; --ink-2: #93a4bd; --line: #232c3b; --bg: #0c111b; --surface: #131a26;
+            --accent: #8a93f0; --good: #2dd4bf; --bad: #fb7185; }
+  }
+  :root[data-theme="dark"] {
+    --ink: #e5edf7; --ink-2: #93a4bd; --line: #232c3b; --bg: #0c111b; --surface: #131a26;
+    --accent: #8a93f0; --good: #2dd4bf; --bad: #fb7185;
+  }
+  :root[data-theme="light"] {
+    --ink: #16181d; --ink-2: #5a6270; --line: #e3e7ee; --bg: #ffffff; --surface: #f7f8fb;
+    --accent: #5b62d6; --good: #0f766e; --bad: #b91c1c;
+  }
+  body {
+    margin: 0 auto; max-width: 860px; padding: 56px 24px 96px;
+    background: var(--bg); color: var(--ink);
+    font: 16px/1.62 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1 { font-size: 34px; line-height: 1.15; letter-spacing: -0.02em; margin: 0 0 8px; }
+  h2 { font-size: 21px; letter-spacing: -0.01em; margin: 52px 0 14px; padding-top: 20px; border-top: 1px solid var(--line); }
+  h3 { font-size: 15px; margin: 28px 0 8px; }
+  p, li { color: var(--ink); }
+  .lede { color: var(--ink-2); font-size: 17px; margin: 0 0 4px; }
+  .meta { color: var(--ink-2); font-size: 13px; margin: 0 0 8px; }
+  code, .mono { font-family: var(--mono); font-size: 0.88em; }
+  code { background: var(--surface); border-radius: 4px; padding: 1px 5px; }
+  .scroller { overflow-x: auto; margin: 18px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 560px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--ink-2); font-weight: 600; font-size: 12px; letter-spacing: 0.02em; }
+  td.num { font-family: var(--mono); white-space: nowrap; }
+  .win { color: var(--good); font-weight: 600; }
+  .loss { color: var(--bad); font-weight: 600; }
+  .callout { border-left: 3px solid var(--accent); background: var(--surface); border-radius: 0 8px 8px 0; padding: 14px 18px; margin: 20px 0; }
+  .callout p { margin: 0; }
+  ul { padding-left: 20px; }
+  li { margin: 5px 0; }
+  .tag { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 600;
+         background: var(--surface); color: var(--ink-2); border: 1px solid var(--line); }
+  .done { color: var(--good); border-color: currentColor; }
+  .later { color: var(--ink-2); }
+  footer { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--ink-2); font-size: 13px; }
+</style>
+
+<h1>PowerBoard vs paper.design</h1>
+<p class="lede">A UI-and-design gap read, and the fixes that shipped from it.</p>
+<p class="meta">2026-07-29 · benchmark: paper.design editor · scope: visual and interaction craft only</p>
+
+<div class="callout">
+  <p><strong>The finding in one line:</strong> PowerBoard's gap to Paper was never the canvas — it was the
+  <em>inspector</em>. One selected element rendered a panel <strong>1481px tall inside a 626px column</strong>,
+  built from 21 flat fields and <strong>9 range sliders</strong>. Paper puts X / Y / rotation / W / H / flip in
+  two ~28px rows. That single control choice cascaded into everything else that felt unfinished.</p>
+</div>
+
+<h2>How this was measured</h2>
+<p>
+  Paper.app is installed on this machine but access to drive it was declined, so the Paper side is read from the
+  editor capture on <span class="mono">paper.design</span> (a real screenshot of the shipping app: layer tree,
+  tool rail, and a Document / Layout inspector) plus the prior deep-dive in
+  <code>Documents/paper-design-gap-plan-2026-05-07.md</code>, which was written with the live app and its MCP
+  surface in hand. The PowerBoard side is measured, not estimated — the running app at 1280×720, dark theme,
+  with one element selected, queried through the DOM.
+</p>
+
+<h2>What was actually wrong</h2>
+
+<h3>1. The inspector — the dominant gap</h3>
+<ul>
+  <li><strong>Range sliders for spatial values.</strong> <code>NumberField</code> rendered
+      <code>input[type=range]</code> <em>and</em> <code>input[type=number]</code> for every numeric property.
+      A slider can never land on an exact coordinate, and it cost four stacked rows per value. Nine of them
+      in one panel.</li>
+  <li><strong>No grouping.</strong> 21 controls in one undifferentiated column — nothing had rank, so
+      everything past the fold was effectively gone.</li>
+  <li><strong>Machine metadata led the panel.</strong> <code>Internal ID</code> and <code>Path</code> were
+      fields #1 and #2, above <code>Name</code>. Paper never shows an id in the design surface.</li>
+  <li><strong>Every label was 11px UPPERCASE BOLD, stacked above its control</strong> — roughly doubling each
+      row and leaving no typographic room to distinguish a heading from a field.</li>
+  <li><strong>z-index exposed as a 0–999 box</strong> labelled "Layer". That is the data model leaking, not a
+      control: depth is Forward / Back.</li>
+  <li><strong>Colour rows were broken.</strong> <code>.color-field</code> declared three columns
+      (<code>1fr 42px minmax(0,1fr)</code>) for a full-width label plus two inputs, so the hex field landed in
+      the 42px slot and every colour rendered as a truncated <span class="mono">"#FF"</span>. Pre-existing, and
+      invisible until the panel got short enough to scroll to it.</li>
+</ul>
+
+<h3>2. Information architecture</h3>
+<ul>
+  <li><strong>The layer tree was permanently below the fold.</strong> Layers began at
+      <span class="mono">y=709</span> inside a 626px-tall panel, behind 449px of App Kit and 151px of Assets.
+      The structure tree is the surface a designer touches most; Paper leads its left panel with it.</li>
+  <li><strong>The empty state outweighed the tool.</strong> With nothing selected, Agent activity occupied
+      265px against the Inspector's 246px — a poster ("Select a frame, element, or connector.") beating the
+      working panel. Paper's no-selection state is the <em>Document</em> state: page, zoom, and real controls.</li>
+  <li><strong>Backup held 200px above the fold</strong> for information the status bar already reports.</li>
+</ul>
+
+<h3>3. Chrome weight</h3>
+<ul>
+  <li>Seven ALL-CAPS icon headings stacked down each panel (APP KIT, ASSETS, LAYERS, INSPECTOR, AGENT ACTIVITY,
+      FLOWS &amp; CONNECTORS, BACKUP) plus caps on every field label. Paper's are sentence case at low weight.</li>
+  <li>A 64px top bar carrying a two-line brand block, because the board title stacked over a "⌂ Boards" sub-line
+      that never read as navigation.</li>
+  <li>The selected element's name badge was a saturated accent pill sitting <em>on top of the artwork</em> —
+      louder than the design it labelled, and spending the accent on something that isn't the active state.</li>
+</ul>
+
+<h2>What shipped</h2>
+
+<div class="scroller">
+<table>
+  <thead>
+    <tr><th>Measure (1280×720, one element selected)</th><th>Before</th><th>After</th><th>Δ</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Element inspector height</td><td class="num">1481px</td><td class="num">812px</td><td class="num win">−45%</td></tr>
+    <tr><td>Range sliders in the panel</td><td class="num">9</td><td class="num">0</td><td class="num win">−9</td></tr>
+    <tr><td>Layer tree top edge (panel is 638px tall)</td><td class="num">709px</td><td class="num">97px</td><td class="num win">above the fold</td></tr>
+    <tr><td>Right panel, nothing selected</td><td class="num">874px scroll / 626px</td><td class="num">638px / 638px</td><td class="num win">no scroll</td></tr>
+    <tr><td>Top bar</td><td class="num">64px</td><td class="num">52px</td><td class="num win">−12px</td></tr>
+    <tr><td>Canvas height</td><td class="num">626px</td><td class="num">638px</td><td class="num win">+12px</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>The changes</h3>
+<ul>
+  <li><span class="tag done">shipped</span> <strong>Drag-scrub numeric fields.</strong> The label is the handle —
+      pointer-drag adjusts (2px per step, shift ×10), the input still takes an exact typed value. Two variants:
+      a 24px gutter glyph where the letter is universal (X, Y, W, H) and a named row where it would be a guess
+      (Stroke width, Corner radius, Opacity, Font size). A mystery glyph is worse than the row it saves.</li>
+  <li><span class="tag done">shipped</span> <strong>The wrapper is a <code>&lt;div&gt;</code>, not a
+      <code>&lt;label&gt;</code>.</strong> Caught in verification: a label hands focus to its control on any
+      click inside it, so finishing a scrub left the number input focused and swallowed the next ⌘Z, Delete, or
+      arrow-nudge. The input carries its own <code>aria-label</code>.</li>
+  <li><span class="tag done">shipped</span> <strong>Inspector groups</strong> — collapsible Layout / Content /
+      Appearance / Arrange bands, with Reference (internal id, hierarchy path) collapsed at the bottom. Agent
+      identifiers stay one click away without leading the panel. Same treatment on the frame inspector.</li>
+  <li><span class="tag done">shipped</span> <strong>Colour rows fixed and compacted</strong> to
+      <span class="mono">name · swatch · hex</span> on one 30px line.</li>
+  <li><span class="tag done">shipped</span> <strong>Nothing-selected renders a Document panel</strong> — board
+      name, page, frame / element / connector / asset counts, zoom and Fit all — instead of a poster.</li>
+  <li><span class="tag done">shipped</span> <strong>Layers leads the left panel and flex-grows.</strong> Agent
+      activity's empty state became a row; Backup starts collapsed.</li>
+  <li><span class="tag done">shipped</span> <strong>Sentence case app-wide</strong> (<code>.panel-heading</code>,
+      <code>.field span</code>, pane labels, menu field labels) and a one-line breadcrumb brand
+      (<span class="mono">⌂ Boards › Board name</span>) that let the top bar drop to 52px.</li>
+  <li><span class="tag done">shipped</span> <strong>The element name badge went neutral</strong> — a
+      <code>color-mix</code> ink chip instead of an accent fill, so chrome stops out-shouting the artwork.</li>
+</ul>
+
+<p class="meta">
+  Verified: <code>npm run typecheck</code>, <code>npm run build</code>, <code>npm test</code> (73 passing);
+  drag-scrub, focus behaviour, both themes, and a clean console checked in the running app.
+</p>
+
+<h3>One earlier read that was wrong</h3>
+<p>
+  The floating zoom pill looked centred over the artboard in the first screenshot. It isn't — it is pinned to
+  the canvas's bottom-right (<code>right: calc(var(--right-panel-width) + 18px)</code>), the same place Paper
+  keeps its zoom control. No change made.
+</p>
+
+<h2>Feature gap — catalogued, not built</h2>
+<p>The user's instruction was to summarise these, not implement them. In rough order of leverage:</p>
+<div class="scroller">
+<table>
+  <thead><tr><th>Gap</th><th>Paper</th><th>PowerBoard</th><th>Weight</th></tr></thead>
+  <tbody>
+    <tr><td><strong>CSS-native layout</strong></td><td>Flex, gap, padding, constraints, clip; the canvas <em>is</em> HTML/CSS</td><td>Absolute x/y/w/h; <code>layout</code> exists in schema, renderer mostly ignores it</td><td class="loss">Largest — architectural</td></tr>
+    <tr><td><strong>Draw-to-create tools</strong></td><td>Tool rail: frame, rect, text, image, SVG</td><td>Click a palette button; nothing is drawn on canvas</td><td class="loss">High</td></tr>
+    <tr><td><strong>Styling depth</strong></td><td>Gradients, image fills, multiple fills, borders, shadow + inner shadow, filters, blend modes, per-corner radius</td><td>One fill, one stroke, one radius, one opacity</td><td class="loss">High</td></tr>
+    <tr><td><strong>Typography</strong></td><td>Full type panel, variable fonts, OpenType</td><td>Font size only in the inspector (family / weight / line-height exist in schema, unexposed)</td><td class="loss">Medium</td></tr>
+    <tr><td><strong>Layer tree editing</strong></td><td>Inline rename, drag reorder, drag reparent, search, filter</td><td>Nesting + lock/visibility/delete; rename via inspector; no drag reparent</td><td class="loss">Medium</td></tr>
+    <tr><td><strong>Canvas settings</strong></td><td>Pixel grid, snap-to-pixel, guides, nudge settings, invert zoom</td><td>Dot grid, snap guides on drag; no settings surface</td><td class="loss">Medium</td></tr>
+    <tr><td><strong>Multi-select inspector</strong></td><td>Mixed values, batch edit, selection colour inventory + replace</td><td>Align/distribute + group/duplicate/delete only</td><td class="loss">Medium</td></tr>
+    <tr><td><strong>Import / generation</strong></td><td>Figma + SVG + web import, AI image and SVG generation, shaders, video export</td><td>Image and screenshot upload</td><td class="later">Low — mostly outside PowerBoard's job</td></tr>
+    <tr><td><strong>Where PowerBoard is ahead</strong></td><td colspan="3">Semantic roles and hierarchy paths on every element; a validated operation model every writer shares; layout diagnostics and <code>polish_layout</code> self-correction; designed multi-agent presence (per-agent lanes, reticles, live feed); offline-first local storage with iCloud snapshots.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  If one feature gap gets picked up next, it is <strong>CSS-native layout</strong>. It is the reason Paper's
+  agent loop produces code that survives handoff, and it is the only item on the list that the rest depend on.
+  Everything else is additive; that one is foundational.
+</p>
+
+<footer>
+  PowerBoard · <span class="mono">docs/design/powerboard-vs-paper-ui-gap.html</span> · plan and checklist in
+  <span class="mono">tasks/todo.md</span>
+</footer>

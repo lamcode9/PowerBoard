@@ -3,6 +3,68 @@
 Source of truth for the v2 pivot. Full rationale + feature matrix: `docs/powerboard-desktop-roadmap.html`.
 Written 2026-07-04. Status legend: [ ] todo · [~] in progress · [x] done.
 
+## Active — Paper.design UI parity: the inspector is the gap (2026-07-29)
+
+Benchmarked against paper.design's editor (hero capture on paper.design + `Documents/paper-design-gap-plan-2026-05-07.md`;
+the installed Paper.app could not be opened — access denied — so the read is from public material + prior notes).
+Measured PowerBoard live at 1280×720, dark theme, one element selected. Full write-up:
+`docs/design/powerboard-vs-paper-ui-gap.html`.
+
+**The measurements that matter.** One selected element renders an inspector **1481px tall inside a 626px panel** —
+21 fields, **9 range sliders**, all full-width, all with 11px UPPERCASE BOLD labels stacked above. Paper fits
+X/Y/rotation/W/H/flip into **two ~28px rows**. Second: **Layers starts at y=709 in a 626px-tall panel** — the
+structure tree, the most-used surface in any design tool, is permanently below the fold behind 449px of App Kit +
+151px of Assets. Third: with nothing selected, **Agent activity (265px) is bigger than the Inspector (246px)** — an
+empty-state poster outweighing the working panel, where Paper shows real Document properties. Fourth: canvas is
+**56.6% of a 1280px screen** (724px of 1280); 43% is chrome.
+
+This pass is **design/UI only** — no new capability. Feature gaps (flex/auto-layout, gradients, multi-fill,
+shadows, AI generation, import) are catalogued in the doc and explicitly NOT built here.
+
+### Fix — in dependency order
+
+- [x] **P0 `NumberField` — delete the slider.** A range input is the wrong control for an unbounded spatial
+      coordinate: you can never hit an exact value and it costs 4× the height. Replace with one compact numeric
+      field whose label is a **drag-scrub handle** (Figma/Paper muscle memory), still clamped by min/max, still
+      keyboard-typable. Removes 9 sliders from a single-element inspector.
+- [x] **P0 Compact field vocabulary.** `.field.compact`: label lives *inside* the control's left gutter as a dim
+      glyph, one ~30px row, no stacked caps label. `.field-grid.two-col` pairs X|Y and W|H.
+- [x] **P0 Inspector sections.** Element inspector regrouped: identity header (name + role, no section chrome) →
+      **Layout** (X Y / W H) → **Text** (only when the element has text props) → **Appearance** (fill, text, stroke +
+      width + style, radius, opacity, font) → **Arrange** (order, lock, visible) → **Reference** (collapsed:
+      internal id + path). Machine metadata stops being fields #1 and #2.
+- [x] **P1 Nothing-selected = Document panel.** Replace the 180px "Select a frame, element, or connector" poster
+      with real document properties (board, page, counts, canvas background) — the panel earns its space when
+      nothing is selected, as Paper's does.
+- [x] **P1 Right-panel budget.** Compress the agent-activity empty state; collapse Backup by default.
+- [x] **P1 Left-panel order.** Layers first and `flex: 1` so the tree is always visible; App Kit and Assets below.
+- [x] **P1 Topbar 64 → 52px** (48 would have clipped the 38px toolbar controls), single-line breadcrumb brand
+      (⌂ Boards › Board name), so the canvas gets the height back.
+- [x] **P1 Quiet the chrome.** Drop `text-transform: uppercase` from `.panel-heading` and `.field span`; sentence
+      case at 600 weight. One change, applies app-wide.
+- [x] **P2 Canvas overlap.** Element name badge is now a neutral ink chip, not an accent fill, so chrome stops
+      out-shouting the artwork. **Zoom pill: no change needed** — it was already pinned to the canvas's
+      bottom-right (`right: calc(var(--right-panel-width) + 18px)`), same as Paper; the first read was wrong.
+- [x] **Verify**: typecheck, build, tests; re-measure inspector height and canvas share in the running app; both
+      themes; keyboard focus intact.
+
+
+**Result (measured, same 1280×720 dark board):** element inspector 1481px → **812px** (−45%); range sliders
+9 → **0**; layer tree top 709px → **97px** (above the fold); right panel with nothing selected 874px-in-626px
+→ **638/638, no scroll**; top bar 64 → **52px**; canvas height 626 → **638px**. Typecheck, build and 73 tests
+pass; drag-scrub, post-scrub focus, both themes and console verified in the running app.
+
+**Two bugs found and fixed along the way, neither in scope:** `.color-field` declared three grid columns for a
+full-width label + two inputs, so the hex input sat in a 42px slot and every colour rendered as a truncated
+`#FF` — pre-existing, invisible until the panel got short enough to scroll to it. And wrapping a scrub handle
+in a `<label>` handed focus to its own number input on pointer-up, so the next ⌘Z / Delete / arrow-nudge went
+to the field instead of the board; the numeric fields are `<div>` + `aria-label` now.
+
+**Feature gap deliberately NOT built** (summarised in the doc): CSS-native flex/auto-layout — the largest and
+the one the rest depend on — plus draw-to-create tools, gradients/multi-fill/shadows/filters, a real typography
+panel, drag-reparent in the layer tree, canvas settings (pixel grid, snap, nudge), multi-select mixed values,
+and import/AI generation.
+
 ## Active — Diagram quality: why agents ship non-presentation-ready charts (2026-07-28)
 
 Evidence: live board `board_hf75v_veggid` ("AI Embedded Organization"), built entirely over MCP.

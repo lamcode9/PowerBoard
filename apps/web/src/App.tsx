@@ -351,7 +351,9 @@ export function App() {
     setStatusTone("error");
   }
   const [agentActiveUntilById, setAgentActiveUntilById] = useState<Record<string, number>>({});
-  const [collapsedPanels, setCollapsedPanels] = useState<Record<string, boolean>>({});
+  // Backup is a reassurance surface, not a working one — the status bar already reports the last
+  // snapshot. Collapsed by default so it stops taking 200px above the fold from the inspector.
+  const [collapsedPanels, setCollapsedPanels] = useState<Record<string, boolean>>({ backup: true });
   const [panePrefs, setPanePrefs] = useState<PanePrefs>(readPanePrefs);
   const leftPaneOpen = panePrefs.leftOpen;
   const rightPaneOpen = panePrefs.rightOpen;
@@ -2343,9 +2345,12 @@ export function App() {
                 <p>the agent-native visual workspace</p>
               </div>
             ) : (
-              <div className="brand-title">
+              /* One line, read as a breadcrumb. The stacked title + "Boards" sub-line forced a 64px
+                 top bar and still didn't say it was navigation. */
+              <div className="brand-title crumb">
+                <span className="brand-crumb"><Home size={11} /> Boards</span>
+                <ChevronRight size={11} aria-hidden="true" />
                 <h1>{project?.name ?? "PowerBoard"}</h1>
-                <p><Home size={11} /> Boards</p>
               </div>
             )}
           </a>
@@ -2487,6 +2492,32 @@ export function App() {
           </button>
         </div>
 
+        {/* Structure before palette. The layer tree is the surface a designer touches most, and it
+            used to start ~80px below the fold behind the whole component palette. It now leads the
+            panel and flex-grows, so it is visible without scrolling at any window height. */}
+        <CollapsiblePanel id="layers" icon={<Layers3 size={16} />} title="Layers" className="layers-section" collapsed={Boolean(collapsedPanels.layers)} onToggle={togglePanel}>
+          {project.artboards.length ? (
+            <div className="layers-list">
+              {project.artboards.map((artboard) => (
+                <FrameLayerGroup
+                  key={artboard.id}
+                  artboard={artboard}
+                  project={project}
+                  indexes={elementIndexes}
+                  selectedIds={selectedIds}
+                  onSelect={select}
+                  onUpdate={(elementId, patch) => runOperation({ type: "update_element", elementId, patch })}
+                  onDelete={(elementId) => runOperation({ type: "delete_element", elementId })}
+                  onUpdateArtboard={(patch) => runOperation({ type: "update_artboard", artboardId: artboard.id, patch })}
+                  onDeleteArtboard={() => runOperation({ type: "delete_artboard", artboardId: artboard.id })}
+                />
+              ))}
+            </div>
+          ) : (
+            <p className="muted">No frames yet. Add a device frame or diagram canvas from the toolbar.</p>
+          )}
+        </CollapsiblePanel>
+
         {paletteMode === "mockup" ? (
           <CollapsiblePanel id="app-kit" icon={<Component size={16} />} title="App Kit" collapsed={Boolean(collapsedPanels["app-kit"])} onToggle={togglePanel}>
             <div className="component-grid">
@@ -2558,28 +2589,6 @@ export function App() {
           </div>
         </CollapsiblePanel>
 
-        <CollapsiblePanel id="layers" icon={<Layers3 size={16} />} title="Layers" className="layers-section" collapsed={Boolean(collapsedPanels.layers)} onToggle={togglePanel}>
-          {project.artboards.length ? (
-            <div className="layers-list">
-              {project.artboards.map((artboard) => (
-                <FrameLayerGroup
-                  key={artboard.id}
-                  artboard={artboard}
-                  project={project}
-                  indexes={elementIndexes}
-                  selectedIds={selectedIds}
-                  onSelect={select}
-                  onUpdate={(elementId, patch) => runOperation({ type: "update_element", elementId, patch })}
-                  onDelete={(elementId) => runOperation({ type: "delete_element", elementId })}
-                  onUpdateArtboard={(patch) => runOperation({ type: "update_artboard", artboardId: artboard.id, patch })}
-                  onDeleteArtboard={() => runOperation({ type: "delete_artboard", artboardId: artboard.id })}
-                />
-              ))}
-            </div>
-          ) : (
-            <p className="muted">No frames yet. Add a device frame or diagram canvas from the toolbar.</p>
-          )}
-        </CollapsiblePanel>
         </aside>
       ) : null}
       {!chromeHidden && leftPaneOpen ? (
@@ -2706,11 +2715,12 @@ export function App() {
           ) : selectedArtboard ? (
             <ArtboardInspector artboard={selectedArtboard} onChange={updateArtboard} onDelete={() => runOperation({ type: "delete_artboard", artboardId: selectedArtboard.id })} />
           ) : (
-            <div className="empty-inspector">
-              <MousePointer2 size={22} />
-              <p>Select a frame, element, or connector.</p>
-              <small>Double-click text to edit it. Press ? for shortcuts.</small>
-            </div>
+            <DocumentInspector
+              project={project}
+              zoom={zoom}
+              onResetZoom={() => { zoomAtViewportCenter(1); setStatus("Zoom 100%"); }}
+              onFitAll={fitAll}
+            />
           )}
         </CollapsiblePanel>
 
@@ -4072,6 +4082,57 @@ function SelectionInspector({
   );
 }
 
+/**
+ * What the inspector shows when nothing is selected.
+ *
+ * It used to be a 180px poster — a cursor glyph and "Select a frame, element, or connector." — which
+ * made the panel emptiest exactly where it had the most room. A design tool's no-selection state is
+ * the *document* state: this reports what the board actually contains and hands over the two view
+ * actions you reach for before you've picked anything.
+ */
+function DocumentInspector({
+  project,
+  zoom,
+  onResetZoom,
+  onFitAll
+}: {
+  project: BoardProject;
+  zoom: number;
+  onResetZoom: () => void;
+  onFitAll: () => void;
+}) {
+  const page = project.pages[0];
+  const stats: Array<[string, string]> = [
+    ["Frames", String(project.artboards.length)],
+    ["Elements", String(project.elements.length)],
+    ["Connectors", String(project.connectors.length)],
+    ["Assets", String(project.assets.length)]
+  ];
+  return (
+    <div className="inspector-fields document-inspector">
+      <div className="document-head">
+        <strong>{project.name}</strong>
+        <small>{page ? page.name : "Page 1"}</small>
+      </div>
+      <dl className="document-stats">
+        {stats.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="segmented-row">
+        <button onClick={onResetZoom}>{Math.round(zoom * 100)}%</button>
+        <button onClick={onFitAll}>
+          <Maximize2 size={14} /> Fit all
+        </button>
+      </div>
+      <p className="muted">Select a frame, element, or connector to edit it. Double-click text to type. Press ? for shortcuts.</p>
+    </div>
+  );
+}
+
 function ElementInspector({
   project,
   element,
@@ -4083,58 +4144,86 @@ function ElementInspector({
   onChange: (patch: Record<string, unknown>) => void;
   onReorder: (delta: number) => void;
 }) {
+  // A Content band with nothing in it is worse than no band — only render it when this element type
+  // actually carries editable copy or a kind selector.
+  const hasContentFields =
+    "text" in element.props ||
+    "title" in element.props ||
+    "subtitle" in element.props ||
+    "body" in element.props ||
+    ["button", "badge", "sticky", "text", "shape", "icon", "line", "sparkline"].includes(element.type);
   return (
     <div className="inspector-fields">
-      <ReadOnlyField label="Internal ID" value={element.id} copyable />
-      <ReadOnlyField label="Path" value={elementPath(project, element)} />
+      {/* Identity first and without section chrome: what this element *is* outranks any one property.
+          The internal id and hierarchy path used to sit above it — machine metadata as fields #1 and #2. */}
       <Field label="Name" value={element.name} onChange={(name) => onChange({ name })} />
       <Field label="Role" value={element.semanticRole ?? ""} onChange={(semanticRole) => onChange({ semanticRole })} />
-      <div className="field-grid two-col">
-        <NumberField label="X" value={element.x} min={-5000} max={5000} onChange={(x) => onChange({ x: Math.round(x) })} />
-        <NumberField label="Y" value={element.y} min={-5000} max={5000} onChange={(y) => onChange({ y: Math.round(y) })} />
-        <NumberField label="Width" value={element.width} min={12} max={3000} onChange={(width) => onChange({ width: Math.round(width) })} />
-        <NumberField label="Height" value={element.height} min={12} max={3000} onChange={(height) => onChange({ height: Math.round(height) })} />
-      </div>
-      {"text" in element.props || ["button", "badge", "sticky", "text"].includes(element.type) ? <Field label="Text" value={readString(element.props.text, "")} onChange={(text) => onChange({ props: { text } })} /> : null}
-      {element.type === "shape" ? (
-        <label className="field">
-          <span>Shape</span>
-          <select value={readString(element.props.shape, "rectangle")} onChange={(event) => onChange({ props: { shape: event.target.value } })}>
-            {shapeKinds.map((kind) => (
-              <option key={kind} value={kind}>
-                {labelFor(kind.replace(/-/g, " "))}
-              </option>
-            ))}
-          </select>
-        </label>
+
+      <InspectorGroup title="Layout">
+        <div className="field-grid two-col">
+          <NumberField label="X" glyph="X" value={element.x} min={-5000} max={5000} onChange={(x) => onChange({ x: Math.round(x) })} />
+          <NumberField label="Y" glyph="Y" value={element.y} min={-5000} max={5000} onChange={(y) => onChange({ y: Math.round(y) })} />
+          <NumberField label="Width" glyph="W" value={element.width} min={12} max={3000} onChange={(width) => onChange({ width: Math.round(width) })} />
+          <NumberField label="Height" glyph="H" value={element.height} min={12} max={3000} onChange={(height) => onChange({ height: Math.round(height) })} />
+        </div>
+      </InspectorGroup>
+
+      {hasContentFields ? (
+        <InspectorGroup title="Content">
+          {"text" in element.props || ["button", "badge", "sticky", "text"].includes(element.type) ? <Field label="Text" value={readString(element.props.text, "")} onChange={(text) => onChange({ props: { text } })} /> : null}
+          {element.type === "shape" ? (
+            <label className="field">
+              <span>Shape</span>
+              <select value={readString(element.props.shape, "rectangle")} onChange={(event) => onChange({ props: { shape: event.target.value } })}>
+                {shapeKinds.map((kind) => (
+                  <option key={kind} value={kind}>
+                    {labelFor(kind.replace(/-/g, " "))}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {element.type === "icon" ? <Field label="Material icon" value={readString(element.props.materialIcon ?? element.props.icon, "add_circle")} onChange={(materialIcon) => onChange({ props: { materialIcon } })} /> : null}
+          {element.type === "line" ? <Field label="Direction" value={readString(element.props.direction, "horizontal")} onChange={(direction) => onChange({ props: { direction } })} /> : null}
+          {element.type === "sparkline" ? <Field label="Values" value={formatNumberList(readNumberArray(element.props.values, []))} onChange={(values) => onChange({ props: { values: parseNumberList(values) } })} /> : null}
+          {"title" in element.props ? <Field label="Title" value={readString(element.props.title, "")} onChange={(title) => onChange({ props: { title } })} /> : null}
+          {"subtitle" in element.props || element.type === "shape" ? <Field label="Subtitle" value={readString(element.props.subtitle, "")} onChange={(subtitle) => onChange({ props: { subtitle } })} /> : null}
+          {"body" in element.props ? <Field label="Body" value={readString(element.props.body, "")} onChange={(body) => onChange({ props: { body } })} /> : null}
+        </InspectorGroup>
       ) : null}
-      {element.type === "icon" ? <Field label="Material icon" value={readString(element.props.materialIcon ?? element.props.icon, "add_circle")} onChange={(materialIcon) => onChange({ props: { materialIcon } })} /> : null}
-      {element.type === "line" ? <Field label="Direction" value={readString(element.props.direction, "horizontal")} onChange={(direction) => onChange({ props: { direction } })} /> : null}
-      {element.type === "sparkline" ? <Field label="Values" value={formatNumberList(readNumberArray(element.props.values, []))} onChange={(values) => onChange({ props: { values: parseNumberList(values) } })} /> : null}
-      {"title" in element.props ? <Field label="Title" value={readString(element.props.title, "")} onChange={(title) => onChange({ props: { title } })} /> : null}
-      {"subtitle" in element.props || element.type === "shape" ? <Field label="Subtitle" value={readString(element.props.subtitle, "")} onChange={(subtitle) => onChange({ props: { subtitle } })} /> : null}
-      {"body" in element.props ? <Field label="Body" value={readString(element.props.body, "")} onChange={(body) => onChange({ props: { body } })} /> : null}
-      <ColorField label="Fill" value={element.style.fill ?? "#FFFFFF"} onChange={(fill) => onChange({ style: { fill } })} />
-      <ColorField label="Text" value={element.style.color ?? "#111827"} onChange={(color) => onChange({ style: { color } })} />
-      <ColorField label="Stroke" value={element.style.stroke ?? "#64748B"} onChange={(stroke) => onChange({ style: { stroke } })} />
-      <NumberField label="Stroke width" value={element.style.strokeWidth ?? 0} min={0} max={12} step={0.5} onChange={(strokeWidth) => onChange({ style: { strokeWidth } })} />
-      <SegmentedControl label="Stroke style" value={element.style.strokeStyle ?? "solid"} options={STROKE_STYLE_OPTIONS} onChange={(strokeStyle) => onChange({ style: { strokeStyle } })} />
-      <NumberField label="Radius" value={element.style.radius ?? 0} min={0} max={80} onChange={(radius) => onChange({ style: { radius } })} />
-      <NumberField label="Opacity" value={element.style.opacity ?? 1} min={0.1} max={1} step={0.05} onChange={(opacity) => onChange({ style: { opacity } })} />
-      <NumberField label="Font" value={element.style.fontSize ?? 14} min={8} max={72} onChange={(fontSize) => onChange({ style: { fontSize } })} />
-      <NumberField label="Layer" value={element.zIndex} min={0} max={999} onChange={(zIndex) => onChange({ zIndex: Math.round(zIndex) })} />
-      <div className="segmented-row">
-        <button onClick={() => onChange({ locked: !element.locked })}>{element.locked ? <Lock size={15} /> : <LockOpen size={15} />} {element.locked ? "Locked" : "Unlocked"}</button>
-        <button onClick={() => onChange({ visible: !element.visible })}>{element.visible ? <Eye size={15} /> : <EyeOff size={15} />} {element.visible ? "Visible" : "Hidden"}</button>
-      </div>
-      <div className="segmented-row">
-        <button onClick={() => onReorder(1)}>
-          <BringToFront size={15} /> Forward
-        </button>
-        <button onClick={() => onReorder(-1)}>
-          <Layers3 size={15} /> Back
-        </button>
-      </div>
+
+      <InspectorGroup title="Appearance">
+        <ColorField label="Fill" value={element.style.fill ?? "#FFFFFF"} onChange={(fill) => onChange({ style: { fill } })} />
+        <ColorField label="Text" value={element.style.color ?? "#111827"} onChange={(color) => onChange({ style: { color } })} />
+        <ColorField label="Stroke" value={element.style.stroke ?? "#64748B"} onChange={(stroke) => onChange({ style: { stroke } })} />
+        <NumberField label="Stroke width" value={element.style.strokeWidth ?? 0} min={0} max={12} step={0.5} onChange={(strokeWidth) => onChange({ style: { strokeWidth } })} />
+        <SegmentedControl label="Stroke style" value={element.style.strokeStyle ?? "solid"} options={STROKE_STYLE_OPTIONS} onChange={(strokeStyle) => onChange({ style: { strokeStyle } })} />
+        <NumberField label="Corner radius" value={element.style.radius ?? 0} min={0} max={80} onChange={(radius) => onChange({ style: { radius } })} />
+        <NumberField label="Opacity" value={element.style.opacity ?? 1} min={0.1} max={1} step={0.05} onChange={(opacity) => onChange({ style: { opacity } })} />
+        <NumberField label="Font size" value={element.style.fontSize ?? 14} min={8} max={72} onChange={(fontSize) => onChange({ style: { fontSize } })} />
+      </InspectorGroup>
+
+      <InspectorGroup title="Arrange">
+        {/* Depth is Forward/Back, not a 0–999 z-index box: the number was a model leak, not a control. */}
+        <div className="segmented-row">
+          <button onClick={() => onReorder(1)}>
+            <BringToFront size={15} /> Forward
+          </button>
+          <button onClick={() => onReorder(-1)}>
+            <Layers3 size={15} /> Back
+          </button>
+        </div>
+        <div className="segmented-row">
+          <button onClick={() => onChange({ locked: !element.locked })}>{element.locked ? <Lock size={15} /> : <LockOpen size={15} />} {element.locked ? "Locked" : "Unlocked"}</button>
+          <button onClick={() => onChange({ visible: !element.visible })}>{element.visible ? <Eye size={15} /> : <EyeOff size={15} />} {element.visible ? "Visible" : "Hidden"}</button>
+        </div>
+      </InspectorGroup>
+
+      {/* Agent-facing identifiers stay reachable — one click — without leading the panel. */}
+      <InspectorGroup title="Reference" defaultOpen={false}>
+        <ReadOnlyField label="Internal ID" value={element.id} copyable />
+        <ReadOnlyField label="Path" value={elementPath(project, element)} />
+      </InspectorGroup>
     </div>
   );
 }
@@ -4142,27 +4231,39 @@ function ElementInspector({
 function ArtboardInspector({ artboard, onChange, onDelete }: { artboard: Artboard; onChange: (patch: Partial<Artboard>) => void; onDelete: () => void }) {
   return (
     <div className="inspector-fields">
-      <ReadOnlyField label="Internal ID" value={artboard.id} copyable />
       <Field label="Name" value={artboard.name} onChange={(name) => onChange({ name })} />
-      <ColorField label="Background" value={artboard.background} onChange={(background) => onChange({ background })} />
-      <div className="field-grid two-col">
-        <NumberField label="X" value={artboard.x} min={-20000} max={20000} onChange={(x) => onChange({ x: Math.round(x) })} />
-        <NumberField label="Y" value={artboard.y} min={-20000} max={20000} onChange={(y) => onChange({ y: Math.round(y) })} />
-        <NumberField label="Width" value={artboard.width} min={240} max={2400} onChange={(width) => onChange({ width: Math.round(width) })} />
-        <NumberField label="Height" value={artboard.height} min={240} max={2400} onChange={(height) => onChange({ height: Math.round(height) })} />
-      </div>
-      <label className="toggle-row">
-        <input type="checkbox" checked={artboard.frameless} onChange={(event) => onChange({ frameless: event.target.checked })} />
-        <span>Frameless (diagram canvas — no device chrome)</span>
-      </label>
-      <div className="segmented-row">
-        <button onClick={() => onChange({ locked: !artboard.locked })}>{artboard.locked ? <Lock size={15} /> : <LockOpen size={15} />} {artboard.locked ? "Locked" : "Unlocked"}</button>
-        <button onClick={() => onChange({ visible: !artboard.visible })}>{artboard.visible ? <Eye size={15} /> : <EyeOff size={15} />} {artboard.visible ? "Visible" : "Hidden"}</button>
-      </div>
-      <button className="wide-action danger" onClick={onDelete}>
-        <Trash2 size={15} /> Delete frame
-      </button>
-      <p className="muted">{artboard.type} · {Math.round(artboard.width)} x {Math.round(artboard.height)}</p>
+      <p className="muted">{artboard.type} · {Math.round(artboard.width)} × {Math.round(artboard.height)}</p>
+
+      <InspectorGroup title="Layout">
+        <div className="field-grid two-col">
+          <NumberField label="X" glyph="X" value={artboard.x} min={-20000} max={20000} onChange={(x) => onChange({ x: Math.round(x) })} />
+          <NumberField label="Y" glyph="Y" value={artboard.y} min={-20000} max={20000} onChange={(y) => onChange({ y: Math.round(y) })} />
+          <NumberField label="Width" glyph="W" value={artboard.width} min={240} max={2400} onChange={(width) => onChange({ width: Math.round(width) })} />
+          <NumberField label="Height" glyph="H" value={artboard.height} min={240} max={2400} onChange={(height) => onChange({ height: Math.round(height) })} />
+        </div>
+      </InspectorGroup>
+
+      <InspectorGroup title="Appearance">
+        <ColorField label="Background" value={artboard.background} onChange={(background) => onChange({ background })} />
+        <label className="toggle-row">
+          <input type="checkbox" checked={artboard.frameless} onChange={(event) => onChange({ frameless: event.target.checked })} />
+          <span>Frameless (diagram canvas — no device chrome)</span>
+        </label>
+      </InspectorGroup>
+
+      <InspectorGroup title="Arrange">
+        <div className="segmented-row">
+          <button onClick={() => onChange({ locked: !artboard.locked })}>{artboard.locked ? <Lock size={15} /> : <LockOpen size={15} />} {artboard.locked ? "Locked" : "Unlocked"}</button>
+          <button onClick={() => onChange({ visible: !artboard.visible })}>{artboard.visible ? <Eye size={15} /> : <EyeOff size={15} />} {artboard.visible ? "Visible" : "Hidden"}</button>
+        </div>
+        <button className="wide-action danger" onClick={onDelete}>
+          <Trash2 size={15} /> Delete frame
+        </button>
+      </InspectorGroup>
+
+      <InspectorGroup title="Reference" defaultOpen={false}>
+        <ReadOnlyField label="Internal ID" value={artboard.id} copyable />
+      </InspectorGroup>
     </div>
   );
 }
@@ -4335,23 +4436,149 @@ function Field({ label, value, onChange }: { label: string; value: string; onCha
   );
 }
 
+/** One row: name, swatch, hex — the shape every design tool uses for a colour, and half the height
+ *  of the stacked label + swatch + hex it replaced. */
 function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   return (
     <label className="field color-field">
       <span>{label}</span>
-      <input type="color" aria-label={`${label} color picker`} value={normalizeColor(value)} onChange={(event) => onChange(event.target.value)} />
-      <input value={value} aria-label={`${label} hex value`} onChange={(event) => onChange(event.target.value)} />
+      <input type="color" aria-label={`${label} colour picker`} value={normalizeColor(value)} onChange={(event) => onChange(event.target.value)} />
+      <input value={value} aria-label={`${label} hex value`} spellCheck={false} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
 }
 
-function NumberField({ label, value, min, max, step = 1, onChange }: { label: string; value: number; min: number; max: number; step?: number; onChange: (value: number) => void }) {
+/**
+ * Compact numeric field. The label doubles as a **drag-scrub handle** — the gesture every design tool
+ * shares (Figma, Sketch, Paper) — while the input still takes an exact typed number.
+ *
+ * This replaces a `range` + `number` pair. A slider is the wrong control for an unbounded spatial
+ * coordinate: it can never land on an exact value, and it cost four stacked rows per coordinate, which
+ * is most of why a one-element inspector was taller than the panel that held it.
+ *
+ * `glyph` is the in-gutter label (X, Y, W, H, ∅, …); `label` stays the accessible name.
+ */
+function NumberField({
+  label,
+  glyph,
+  value,
+  min,
+  max,
+  step = 1,
+  onChange
+}: {
+  label: string;
+  glyph?: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  onChange: (value: number) => void;
+}) {
+  const origin = useRef<{ x: number; value: number } | null>(null);
+  const [scrubbing, setScrubbing] = useState(false);
+  // Fractional steps (opacity 0.05, stroke width 0.5) must not accumulate float dust as you drag.
+  const decimals = useMemo(() => {
+    const text = String(step);
+    return text.includes(".") ? text.split(".")[1]!.length : 0;
+  }, [step]);
+  const quantize = (next: number) => Number(Math.min(max, Math.max(min, next)).toFixed(decimals));
+
+  function beginScrub(event: React.PointerEvent<HTMLSpanElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    origin.current = { x: event.clientX, value };
+    setScrubbing(true);
+  }
+  function moveScrub(event: React.PointerEvent<HTMLSpanElement>) {
+    const start = origin.current;
+    if (!start) return;
+    // 2px of travel per step keeps fine adjustment precise; shift multiplies by 10 for coarse moves.
+    const steps = Math.round((event.clientX - start.x) / 2);
+    const next = quantize(start.value + steps * step * (event.shiftKey ? 10 : 1));
+    if (next !== value) onChange(next);
+  }
+  function endScrub(event: React.PointerEvent<HTMLSpanElement>) {
+    if (!origin.current) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    origin.current = null;
+    setScrubbing(false);
+  }
+
+  // X/Y/W/H are universal and read fine as a single letter in the gutter. Everything else gets its
+  // name spelled out to the left of the control, matching the colour rows — a mystery glyph is worse
+  // than the row it saves.
+  const scrubHandlers = {
+    onPointerDown: beginScrub,
+    onPointerMove: moveScrub,
+    onPointerUp: endScrub,
+    onPointerCancel: endScrub
+  };
+  const scrubTitle = `${label} — drag to adjust, shift for ×10`;
+
+  if (!glyph) {
+    return (
+      // A <div>, not a <label>: a label hands focus to its control on any click inside it, so ending a
+      // scrub left the number input focused and the next ⌘Z / Delete / arrow-nudge went to the field
+      // instead of the board. The input carries its own aria-label.
+      <div className={classNames("field row", scrubbing && "scrubbing")}>
+        <span className="field-row-label" title={scrubTitle} {...scrubHandlers}>
+          {label}
+        </span>
+        <span className="field-row-control">
+          <input
+            type="number"
+            aria-label={label}
+            value={value}
+            min={min}
+            max={max}
+            step={step}
+            onChange={(event) => {
+              const raw = Number(event.target.value);
+              if (Number.isFinite(raw)) onChange(quantize(raw));
+            }}
+          />
+        </span>
+      </div>
+    );
+  }
+
   return (
-    <label className="field">
-      <span>{label}</span>
-      <input type="range" aria-label={`${label} slider`} value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} />
-      <input type="number" aria-label={label} value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} />
-    </label>
+    <div className={classNames("field compact", scrubbing && "scrubbing")}>
+      <span className="field-glyph" role="presentation" title={scrubTitle} {...scrubHandlers}>
+        {glyph}
+      </span>
+      <input
+        type="number"
+        aria-label={label}
+        value={value}
+        min={min}
+        max={max}
+        step={step}
+        onChange={(event) => {
+          const raw = Number(event.target.value);
+          if (Number.isFinite(raw)) onChange(quantize(raw));
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * A titled, collapsible band inside the inspector. Without these the element inspector was one
+ * undifferentiated stack of ~21 controls, so nothing had rank and everything below the fold was lost.
+ */
+function InspectorGroup({ title, defaultOpen = true, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className={classNames("inspector-group", !open && "collapsed")}>
+      <button type="button" className="inspector-group-title" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        <span>{title}</span>
+      </button>
+      {open ? <div className="inspector-group-body">{children}</div> : null}
+    </section>
   );
 }
 
