@@ -65,6 +65,36 @@ the one the rest depend on — plus draw-to-create tools, gradients/multi-fill/s
 panel, drag-reparent in the layer tree, canvas settings (pixel grid, snap, nudge), multi-select mixed values,
 and import/AI generation.
 
+- [x] Shipped: commit `caeef83`, pushed to main, `fastlane mac beta` → build **202607291510** (v0.1.0),
+      **VALID** in ASC ~4 min after upload. Verified the shipped `app.asar` carried this session's code before
+      trusting it — `drag to adjust, shift`, `inspector-group`, `document-stats`, `field-row-control` and
+      `brand-crumb` all present in `dist/web/assets`, **zero `type:"range"`** in the bundle (the 9 sliders are
+      genuinely gone from the shipped binary, not just from source); CFBundleVersion 202607291510.
+
+### Follow-up found while answering "is CSS-native layout superior?" (2026-07-29)
+
+Not built — recorded so it isn't lost. **`layout.mode` is inert across the whole stack, and the React export
+silently lies about it.**
+
+- `packages/schema/src/index.ts:75` already ships `layoutModes = ["absolute","stack","grid","constraints"]`
+  with `direction`/`columns`/`gap`/`padding`/`align`/`justify` on `ElementLayoutSchema`.
+- The canvas ignores it entirely: `elementToStyle` (`apps/web/src/App.tsx:5069`) always emits
+  `left/top/width/height` and never `display:flex`; it reads `layout.align`/`layout.justify` only as a
+  fallback for the style fields.
+- The React/Tailwind renderer emits `flex flex-col gap-[12px]` on a `stack` parent **and `absolute` on every
+  child** — absolutely-positioned children are out of flex flow, so the gap/align/justify classes are no-ops.
+  Verified by rendering a stack parent with two children. It also emits `flex flex-col` twice on card elements.
+- The seed board's three `mode:"stack"` elements have **zero children** — nothing to stack, so nothing ever
+  looked wrong.
+
+Either make `stack` real or drop the field; today the export claims a layout it does not have. **Recommendation
+if built:** auto-layout frames (`stack` only — direction, gap, padding, align, justify, hug/fill sizing), keep
+`absolute` for diagrams (D5 already allows both per element), leave `grid`/`constraints` alone. The argument is
+agent economics, not CSS parity: under absolute positioning "insert a row" forces an agent to recompute every
+sibling's x/y — which is why `polish_layout` exists — whereas flow makes structural edits local. Architectural,
+not a patch: children's x/y become derived, in-stack drag must mean reorder, `apply_layout`/`polish_layout`
+semantics change, and existing boards need migration.
+
 ## Active — Diagram quality: why agents ship non-presentation-ready charts (2026-07-28)
 
 Evidence: live board `board_hf75v_veggid` ("AI Embedded Organization"), built entirely over MCP.
