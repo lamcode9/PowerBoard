@@ -119,6 +119,7 @@ import {
   uploadAsset,
   type BoardSummary
 } from "./api";
+import { agentRgb } from "./agentColor";
 import { cameraTransform, panCamera, zoomCameraAroundPoint, type Camera, type ViewportPoint } from "./canvasCamera";
 import { CommandPalette, type PaletteCommand } from "./components/CommandPalette";
 import { AgentFeed, type AgentFeedEntry } from "./components/AgentFeed";
@@ -184,21 +185,35 @@ type AgentActivity = {
   ids: string[];
   operationType?: string;
   at: string;
+  agentId?: string;
+  agentName?: string;
 };
 
 /**
- * "An agent has the board right now" — fed by the `agent.presence` heartbeat (every MCP tool, reads
+ * "This agent has the board right now" — fed by the `agent.presence` heartbeat (every MCP tool, reads
  * included) and by landed edits. `phase` is what the canvas animates: `reading` breathes, `editing`
  * tightens. Expires after {@link AGENT_PRESENCE_TTL_MS} of silence.
+ *
+ * Kept per agent, not per board: several agents can hold one board at once, and a single slot would
+ * make the last ping erase whoever else is working — the collaborator you can't see is worse than no
+ * signal at all.
  */
 type AgentPresence = {
+  agentId: string;
+  agentName: string;
   tool: string;
   ids: string[];
   phase: "reading" | "editing";
+  /** epoch ms of the last ping — the sweeper expires lanes off this rather than one timer per agent. */
+  at: number;
 };
+
+/** Matches the server's fallback identity: an agent that never gave a name still gets one stable lane. */
+const ANONYMOUS_AGENT_ID = "agent";
 
 /** Long enough to bridge the gap between tool calls in a burst, short enough that a stall reads as done. */
 const AGENT_PRESENCE_TTL_MS = 5000;
+const AGENT_PRESENCE_SWEEP_MS = 500;
 
 type DragPreview = {
   id: string;
@@ -349,7 +364,7 @@ export function App() {
   const [connectOpen, setConnectOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [agentFeed, setAgentFeed] = useState<AgentFeedEntry[]>([]);
-  const [agentPresence, setAgentPresence] = useState<AgentPresence | null>(null);
+  const [agentPresences, setAgentPresences] = useState<Record<string, AgentPresence>>({});
   const [marquee, setMarquee] = useState<MarqueeState | null>(null);
   const [snapGuides, setSnapGuides] = useState<SnapGuides>(NO_GUIDES);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
@@ -375,7 +390,6 @@ export function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const screenshotInputRef = useRef<HTMLInputElement | null>(null);
   const agentActivityTimersRef = useRef<number[]>([]);
-  const agentPresenceTimerRef = useRef<number | null>(null);
   const projectRef = useRef<BoardProject | null>(null);
   const selectedIdsRef = useRef<string[]>([]);
   const dragRef = useRef<DragState | null>(null);
@@ -397,9 +411,6 @@ export function App() {
       }
       for (const timer of agentActivityTimersRef.current) {
         window.clearTimeout(timer);
-      }
-      if (agentPresenceTimerRef.current !== null) {
-        window.clearTimeout(agentPresenceTimerRef.current);
       }
     };
   }, []);
@@ -643,6 +654,8 @@ export function App() {
         agentActivity?: unknown;
         tool?: string;
         ids?: unknown;
+        agentId?: string;
+        agentName?: string;
       };
       if (message.type === "board.changed" && message.project) {
         projectRef.current = message.project;
@@ -651,14 +664,27 @@ export function App() {
         setSelectedIds(message.project.selection);
         rememberBoard(message.project);
         if (isAgentActivity(message.agentActivity)) {
-          flashAgentActivity(message.agentActivity);
-          recordAgentFeed(message.agentActivity, message.project);
-          markAgentPresence({ tool: message.agentActivity.operationType ?? "edit", ids: message.agentActivity.ids, phase: "editing" });
+          const activity = message.agentActivity;
+          flashAgentActivity(activity);
+          recordAgentFeed(activity, message.project);
+          markAgentPresence({
+            agentId: activity.agentId ?? ANONYMOUS_AGENT_ID,
+            agentName: activity.agentName ?? readString((message.project.metadata as Record<string, unknown>).lastAgentEditedBy, "Agent"),
+            tool: activity.operationType ?? "edit",
+            ids: activity.ids,
+            phase: "editing"
+          });
         }
       }
       if (message.type === "agent.presence" && typeof message.tool === "string") {
         const ids = Array.isArray(message.ids) ? message.ids.filter((id): id is string => typeof id === "string") : [];
-        markAgentPresence({ tool: message.tool, ids, phase: "reading" });
+        markAgentPresence({
+          agentId: message.agentId ?? ANONYMOUS_AGENT_ID,
+          agentName: message.agentName ?? "Agent",
+          tool: message.tool,
+          ids,
+          phase: "reading"
+        });
       }
       if (message.type === "selection.changed" && message.selection) {
         selectedIdsRef.current = message.selection;
@@ -707,12 +733,37 @@ export function App() {
     return boundsForSelection(project, selectedIds);
   }, [project, selectedIds]);
 
-  /** World bounds the agent reticle should lock onto — null keeps the veil up but drops the lock. */
-  const agentReticle = useMemo(() => {
-    if (!project || !agentPresence?.ids.length) return null;
-    const bounds = boundsForSelection(project, agentPresence.ids);
-    return bounds ? { bounds, phase: agentPresence.phase, tool: agentPresence.tool } : null;
-  }, [project, agentPresence]);
+  /** Presence lanes, oldest arrival first so the badge row doesn't reshuffle on every ping. */
+  const livePresences = useMemo(() => Object.values(agentPresences).sort((a, b) => a.agentId.localeCompare(b.agentId)), [agentPresences]);
+
+  /** One reticle per agent that has a locatable target — an agent with no target keeps the veil but drops the lock. */
+  const agentReticles = useMemo(() => {
+    if (!project) return [];
+    return livePresences
+      .map((presence) => {
+        if (!presence.ids.length) return null;
+        const bounds = boundsForSelection(project, presence.ids);
+        return bounds ? { ...presence, bounds } : null;
+      })
+      .filter((entry): entry is AgentPresence & { bounds: Bounds } => entry !== null);
+  }, [project, livePresences]);
+
+  /**
+   * One sweep expires every stale lane, rather than a timer per agent: with several agents pinging in
+   * bursts, per-agent timers churn far faster than they help. Parked entirely while nobody is here.
+   */
+  const anyAgentPresent = livePresences.length > 0;
+  useEffect(() => {
+    if (!anyAgentPresent) return;
+    const interval = window.setInterval(() => {
+      const cutoff = Date.now() - AGENT_PRESENCE_TTL_MS;
+      setAgentPresences((current) => {
+        const next = Object.fromEntries(Object.entries(current).filter(([, presence]) => presence.at > cutoff));
+        return Object.keys(next).length === Object.keys(current).length ? current : next;
+      });
+    }, AGENT_PRESENCE_SWEEP_MS);
+    return () => window.clearInterval(interval);
+  }, [anyAgentPresent]);
 
   const selectedElementCount = useMemo(
     () => (project ? selectedIds.filter((id) => project.elements.some((element) => element.id === id)).length : 0),
@@ -720,16 +771,15 @@ export function App() {
   );
 
   /**
-   * Extend the "agent is working" window. A tool call with no id-ish input keeps the previous target so
-   * the reticle holds its lock instead of blinking out between calls in a burst.
+   * Extend one agent's "working" window, leaving every other agent's lane untouched. A tool call with
+   * no id-ish input keeps that agent's previous target so its reticle holds the lock instead of
+   * blinking out between calls in a burst.
    */
-  function markAgentPresence(next: AgentPresence) {
-    setAgentPresence((current) => ({ ...next, ids: next.ids.length ? next.ids : current?.ids ?? [] }));
-    if (agentPresenceTimerRef.current !== null) window.clearTimeout(agentPresenceTimerRef.current);
-    agentPresenceTimerRef.current = window.setTimeout(() => {
-      agentPresenceTimerRef.current = null;
-      setAgentPresence(null);
-    }, AGENT_PRESENCE_TTL_MS);
+  function markAgentPresence(next: Omit<AgentPresence, "at">) {
+    setAgentPresences((current) => {
+      const previous = current[next.agentId];
+      return { ...current, [next.agentId]: { ...next, ids: next.ids.length ? next.ids : previous?.ids ?? [], at: Date.now() } };
+    });
   }
 
   function flashAgentActivity(activity: AgentActivity) {
@@ -760,7 +810,9 @@ export function App() {
   }
 
   function recordAgentFeed(activity: AgentActivity, boardAfter: BoardProject) {
-    const actor = readString((boardAfter.metadata as Record<string, unknown>).lastAgentEditedBy, "Agent");
+    // Prefer the identity that came with the event: board metadata only remembers the *last* writer,
+    // which is the wrong name for an entry that landed while another agent was also editing.
+    const actor = activity.agentName ?? readString((boardAfter.metadata as Record<string, unknown>).lastAgentEditedBy, "Agent");
     const namesById = new Map<string, string>([
       ...boardAfter.artboards.map((artboard) => [artboard.id, artboard.name] as const),
       ...boardAfter.elements.map((element) => [element.id, element.name] as const)
@@ -773,6 +825,7 @@ export function App() {
           id: `${activity.at}-${Math.random().toString(36).slice(2, 7)}`,
           at: activity.at,
           actor,
+          agentId: activity.agentId ?? ANONYMOUS_AGENT_ID,
           message: `${agentActivityStatus(activity)}${targetText}`,
           targets: activity.ids
         },
@@ -2573,7 +2626,9 @@ export function App() {
                 />
               ))}
             {inkDraft ? <InkDraftLayer draft={inkDraft} project={project} /> : null}
-            {agentReticle ? <AgentReticle bounds={agentReticle.bounds} phase={agentReticle.phase} tool={agentReticle.tool} zoom={zoom} /> : null}
+            {agentReticles.map((reticle) => (
+              <AgentReticle key={reticle.agentId} presence={reticle} bounds={reticle.bounds} zoom={zoom} named={agentReticles.length > 1} />
+            ))}
             {snapGuides.vertical.map((x) => (
               <div key={`v-${x}`} className="snap-guide vertical" style={{ left: x }} />
             ))}
@@ -2615,7 +2670,7 @@ export function App() {
             ) : null}
           </div>
         </div>
-        <AgentPresenceVeil live={Boolean(agentPresence)} />
+        <AgentPresenceVeil live={anyAgentPresent} />
         {tool !== "select" ? (
           <div className="mode-pill" role="status">
             {tool === "connect" ? <Spline size={15} /> : <PenTool size={15} />}
@@ -2660,7 +2715,7 @@ export function App() {
         </CollapsiblePanel>
 
         <CollapsiblePanel id="agent-activity" icon={<Bot size={16} />} title="Agent activity" collapsed={Boolean(collapsedPanels["agent-activity"])} onToggle={togglePanel}>
-          <AgentFeed entries={agentFeed} phase={agentPresence?.phase} onFocusTargets={focusAgentTargets} onConnect={() => setConnectOpen(true)} />
+          <AgentFeed entries={agentFeed} presences={livePresences} onFocusTargets={focusAgentTargets} onConnect={() => setConnectOpen(true)} />
         </CollapsiblePanel>
 
         <CollapsiblePanel id="flows" icon={<Send size={16} />} title="Flows & connectors" collapsed={Boolean(collapsedPanels.flows)} onToggle={togglePanel}>
@@ -4515,20 +4570,28 @@ const RETICLE_PAD_PX = 11;
  * burst of agent work reads as one attention moving around the board rather than a series of flashes.
  * `reading` breathes wide and slow; `editing` tightens and glows. Motion lives in CSS (reduce-motion safe).
  */
-function AgentReticle({ bounds, phase, tool, zoom }: { bounds: Bounds; phase: AgentPresence["phase"]; tool: string; zoom: number }) {
+function AgentReticle({ presence, bounds, zoom, named }: { presence: AgentPresence; bounds: Bounds; zoom: number; named: boolean }) {
   const pad = RETICLE_PAD_PX / zoom;
   return (
     <div
-      className={classNames("agent-reticle", `is-${phase}`)}
-      style={{ left: bounds.x - pad, top: bounds.y - pad, width: bounds.width + pad * 2, height: bounds.height + pad * 2 }}
+      className={classNames("agent-reticle", `is-${presence.phase}`)}
+      // Each agent carries its own channel triple, so two locks on screen never read as one attention.
+      style={{
+        left: bounds.x - pad,
+        top: bounds.y - pad,
+        width: bounds.width + pad * 2,
+        height: bounds.height + pad * 2,
+        ["--agent-rgb" as string]: agentRgb(presence.agentId)
+      }}
       aria-hidden="true"
     >
       <span className="agent-reticle-corner tl" />
       <span className="agent-reticle-corner tr" />
       <span className="agent-reticle-corner bl" />
       <span className="agent-reticle-corner br" />
+      {/* The name only earns its space once there is someone to be confused with. */}
       <span className="agent-reticle-label" style={{ transform: `scale(${1 / zoom})` }}>
-        {tool}
+        {named ? `${presence.agentName} · ${presence.tool}` : presence.tool}
       </span>
     </div>
   );

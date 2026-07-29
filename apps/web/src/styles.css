@@ -1310,7 +1310,7 @@ button {
   position: absolute;
   z-index: 36;
   pointer-events: none;
-  background: rgba(var(--accent-rgb), 0.045);
+  background: rgba(var(--agent-rgb), 0.045);
   /* The flight between targets is the whole idea: one attention moving, not a series of flashes. */
   transition:
     left 420ms cubic-bezier(0.22, 0.68, 0.24, 1),
@@ -1322,21 +1322,21 @@ button {
 }
 
 .agent-reticle.is-editing {
-  background: rgba(var(--accent-rgb), 0.09);
+  background: rgba(var(--agent-rgb), 0.09);
 }
 
 .agent-reticle-corner {
   position: absolute;
   width: calc(14px / var(--zoom, 1));
   height: calc(14px / var(--zoom, 1));
-  border: 0 solid rgba(var(--accent-rgb), 0.92);
+  border: 0 solid rgba(var(--agent-rgb), 0.92);
   /* One breathe keyframe for all four: --dx/--dy point each bracket outward. */
   animation: agentReticleBreathe 2600ms ease-in-out infinite;
 }
 
 .agent-reticle.is-editing .agent-reticle-corner {
-  border-color: rgba(var(--accent-rgb), 1);
-  filter: drop-shadow(0 0 calc(5px / var(--zoom, 1)) rgba(var(--accent-rgb), 0.55));
+  border-color: rgba(var(--agent-rgb), 1);
+  filter: drop-shadow(0 0 calc(5px / var(--zoom, 1)) rgba(var(--agent-rgb), 0.55));
   animation-duration: 1100ms;
 }
 
@@ -1386,7 +1386,7 @@ button {
   transform-origin: left top;
   margin-top: 5px;
   border-radius: 5px;
-  background: rgba(var(--accent-rgb), 0.92);
+  background: rgba(var(--agent-rgb), 0.92);
   color: var(--accent-fg);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10px;
@@ -2124,6 +2124,20 @@ button {
   --accent-soft: rgba(var(--accent-rgb), 0.12);
   --accent-tint: #ecedfb;      /* faint accent wash (hover fills) */
   --accent-border: #b9bef0;    /* soft accent border */
+
+  /* Agent lanes. Several agents can hold one board at once, and the only way to read two reticles as
+     two collaborators is to give each its own channel. Lane 0 IS the accent, so the ordinary
+     single-agent board looks untouched; the rest are picked to stay in family and hold contrast on
+     both surfaces. Assigned by hash of the agent id in agentColor.ts — stable across reconnects. */
+  --agent-lane-0: var(--accent-rgb);
+  --agent-lane-1: 15, 118, 110;
+  --agent-lane-2: 180, 83, 9;
+  --agent-lane-3: 190, 18, 60;
+  --agent-lane-4: 126, 34, 206;
+  --agent-lane-5: 21, 128, 61;
+  /* Chrome that isn't agent-specific falls back to the accent, so `rgba(var(--agent-rgb), …)`
+     is always valid even outside a lane. */
+  --agent-rgb: var(--accent-rgb);
   --panel-bg: #f9fafc;
   --panel-border: rgba(15, 23, 42, 0.08);
   --surface-1: #ffffff;
@@ -2400,14 +2414,17 @@ button {
 .agent-feed-row:hover {
   background: var(--surface-2);
 }
+/* Carries the author's lane colour. Only the dot and the reticle are tinted per agent — the label text
+   stays on the accent tokens so contrast stays AA in every lane and the panel never turns into a
+   rainbow. */
 .agent-feed-dot {
   flex: 0 0 auto;
   width: 7px;
   height: 7px;
   margin-top: 5px;
   border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.16);
+  background: rgb(var(--agent-rgb));
+  box-shadow: 0 0 0 3px rgba(var(--agent-rgb), 0.16);
 }
 .agent-feed-body {
   display: flex;
@@ -2471,15 +2488,21 @@ button {
   }
 }
 
-/* Live badge — "reading the board…" while an agent inspects, "editing…" while ops land. */
+/* Live badges — "reading the board…" while an agent inspects, "editing…" while ops land. One per
+   agent holding the board; the row wraps because a busy session can have several at once. */
+.agent-live-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
 .agent-live-badge {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
   align-self: flex-start;
-  margin-bottom: var(--space-2);
   border-radius: var(--r-pill);
-  background: var(--accent-soft);
+  background: rgba(var(--agent-rgb), 0.12);
   color: var(--accent-strong);
   font-size: 11px;
   font-weight: 600;
@@ -2489,7 +2512,7 @@ button {
   width: 6px;
   height: 6px;
   border-radius: var(--r-pill);
-  background: var(--accent);
+  background: rgb(var(--agent-rgb));
   animation: agentLivePulse 1100ms var(--ease-in-out) infinite;
 }
 /* Reading is the calmer state: the dot breathes rather than blinks, matching the reticle's slow phase. */
@@ -2838,6 +2861,13 @@ button {
   --accent-soft: rgba(var(--accent-rgb), 0.18);
   --accent-tint: rgba(var(--accent-rgb), 0.14);
   --accent-border: rgba(var(--accent-rgb), 0.42);
+
+  /* Lanes lifted for dark surfaces — same hues, enough luminance to hold a hairline reticle. */
+  --agent-lane-1: 45, 212, 191;
+  --agent-lane-2: 251, 191, 36;
+  --agent-lane-3: 251, 113, 133;
+  --agent-lane-4: 192, 132, 252;
+  --agent-lane-5: 74, 222, 128;
   --panel-bg: #131a26;
   --panel-border: rgba(255, 255, 255, 0.07);
   --surface-1: #1a2230;

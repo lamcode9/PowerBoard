@@ -19,6 +19,7 @@ import {
 import { renderArtboardReactTailwind, renderArtboardSvg, renderMermaid, renderPageSvg, renderReactTailwind, renderSpecMarkdown, type RenderedFile } from "@powerboard/renderers";
 import sharp from "sharp";
 import { jpegToPdf } from "./pdf.js";
+import { AgentIdentity } from "./agentIdentity.js";
 import { CloudFileRecord, CloudStore, createCloudStoreFromEnv } from "./cloudStore.js";
 import { HistoryStore, OpLogEntry } from "./historyStore.js";
 import { boardRoot as defaultBoardRoot, ensureInsideRoot, safeSegment } from "./paths.js";
@@ -60,6 +61,9 @@ export interface AgentBoardActivity {
   ids: string[];
   operationType?: string;
   at: string;
+  /** Which agent did it — several can be editing at once, so the feed has to attribute each entry. */
+  agentId?: string;
+  agentName?: string;
 }
 
 export interface InspectedArtboard {
@@ -136,6 +140,7 @@ export class BoardStore {
   private selections = new Map<string, string[]>();
   private cloudUnavailableStatus: string | undefined;
   private readonly history: HistoryStore;
+  private boardLocks = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly root = defaultBoardRoot,
@@ -228,13 +233,15 @@ export class BoardStore {
     if (!trimmed) {
       throw new Error("name is required.");
     }
-    const project = await this.readBoard(boardId);
-    const next = BoardProjectSchema.parse({
-      ...project,
-      name: trimmed,
-      metadata: { ...project.metadata, updatedAt: new Date().toISOString() }
+    return this.withBoardLock(boardId, async () => {
+      const project = await this.readBoard(boardId);
+      const next = BoardProjectSchema.parse({
+        ...project,
+        name: trimmed,
+        metadata: { ...project.metadata, updatedAt: new Date().toISOString() }
+      });
+      return this.writeBoard(next);
     });
-    return this.writeBoard(next);
   }
 
   async readBoard(boardId: string): Promise<BoardProject> {
@@ -289,23 +296,43 @@ export class BoardStore {
    */
   async deleteBoard(boardId: string): Promise<boolean> {
     await this.ensureReady();
-    if (this.isCloudPrimary()) {
-      const found = await this.requiredCloud().deleteBoard(boardId);
+    // Locked like the mutators: a delete racing another agent's in-flight write would otherwise
+    // let that write recreate board.json a moment after the folder was removed.
+    return this.withBoardLock(boardId, async () => {
+      if (this.isCloudPrimary()) {
+        const found = await this.requiredCloud().deleteBoard(boardId);
+        this.forgetBoardState(boardId);
+        return found;
+      }
+      const existedLocally = await this.exists(boardId);
+      // Mirror mode: remove the cloud copy first so a cloud failure aborts before we touch local files.
+      let existedInCloud = false;
+      if (this.cloud) {
+        existedInCloud = await this.cloud.deleteBoard(boardId);
+      }
+      if (existedLocally) {
+        await fs.rm(this.boardDir(boardId), { recursive: true, force: true });
+      }
       this.forgetBoardState(boardId);
-      return found;
-    }
-    const existedLocally = await this.exists(boardId);
-    // Mirror mode: remove the cloud copy first so a cloud failure aborts before we touch local files.
-    let existedInCloud = false;
-    if (this.cloud) {
-      existedInCloud = await this.cloud.deleteBoard(boardId);
-    }
-    if (existedLocally) {
-      await fs.rm(this.boardDir(boardId), { recursive: true, force: true });
-    }
-    this.forgetBoardState(boardId);
-    await this.history.drop(boardId);
-    return existedLocally || existedInCloud;
+      await this.history.drop(boardId);
+      return existedLocally || existedInCloud;
+    });
+  }
+
+  /**
+   * Serializes read-modify-write per board. More than one agent can hold the board at once (every
+   * MCP client shares this one store), and without this two interleaved `applyOperation` calls both
+   * read the same base state — the second write silently discards the first agent's edit.
+   *
+   * Non-reentrant by design (a promise chain, not a counting lock): no method wrapped in this may
+   * call another wrapped method, or it deadlocks waiting on itself. Keep the wrapped set to the
+   * top-level mutators; they compose out of unwrapped `readBoard`/`writeBoard` primitives.
+   */
+  private async withBoardLock<T>(boardId: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.boardLocks.get(boardId) ?? Promise.resolve();
+    const run = previous.then(task, task);
+    this.boardLocks.set(boardId, run.catch(() => undefined));
+    return run;
   }
 
   private forgetBoardState(boardId: string): void {
@@ -392,22 +419,24 @@ export class BoardStore {
   }
 
   async applyOperation(boardId: string, operation: BoardOperation, options: ApplyOperationOptions = {}): Promise<BoardProject> {
-    const current = await this.readBoard(boardId);
-    let next = applyBoardOperation(current, operation);
-    if (options.source === "agent") {
-      next = markAgentEdited(next, operation, options.actor);
-    }
-    await this.pushUndoState(boardId, current);
-    await this.clearRedoState(boardId);
-    const written = await this.writeBoard(next);
-    await this.logOperation(boardId, {
-      at: written.metadata.updatedAt,
-      source: options.source ?? "user",
-      actor: options.actor,
-      type: operation.type,
-      targetIds: targetIdsForOperation(operation, written)
+    return this.withBoardLock(boardId, async () => {
+      const current = await this.readBoard(boardId);
+      let next = applyBoardOperation(current, operation);
+      if (options.source === "agent") {
+        next = markAgentEdited(next, operation, options.actor);
+      }
+      await this.pushUndoState(boardId, current);
+      await this.clearRedoState(boardId);
+      const written = await this.writeBoard(next);
+      await this.logOperation(boardId, {
+        at: written.metadata.updatedAt,
+        source: options.source ?? "user",
+        actor: options.actor,
+        type: operation.type,
+        targetIds: targetIdsForOperation(operation, written)
+      });
+      return written;
     });
-    return written;
   }
 
   /**
@@ -419,74 +448,82 @@ export class BoardStore {
     operations: BoardOperation[],
     options: ApplyOperationOptions & { expectedUpdatedAt?: string } = {}
   ): Promise<{ project: BoardProject; applied: number }> {
-    const current = await this.readBoard(boardId);
-    if (options.expectedUpdatedAt && options.expectedUpdatedAt !== current.metadata.updatedAt) {
-      throw new Error(
-        `Conflict: board changed since you read it (expected updatedAt ${options.expectedUpdatedAt}, actual ${current.metadata.updatedAt}). Re-read the board and retry.`
-      );
-    }
-    let draft = current;
-    for (let index = 0; index < operations.length; index++) {
-      try {
-        draft = applyBoardOperation(draft, operations[index]!);
-      } catch (error) {
-        throw new Error(`Batch aborted, nothing was written. operations[${index}] (${operations[index]!.type}) failed: ${error instanceof Error ? error.message : String(error)}`);
+    return this.withBoardLock(boardId, async () => {
+      const current = await this.readBoard(boardId);
+      if (options.expectedUpdatedAt && options.expectedUpdatedAt !== current.metadata.updatedAt) {
+        throw new Error(
+          `Conflict: board changed since you read it (expected updatedAt ${options.expectedUpdatedAt}, actual ${current.metadata.updatedAt}). Re-read the board and retry.`
+        );
       }
-    }
-    if (options.source === "agent") {
-      draft = markAgentEdited(draft, operations[operations.length - 1]!, options.actor);
-    }
-    await this.pushUndoState(boardId, current);
-    await this.clearRedoState(boardId);
-    const written = await this.writeBoard(draft);
-    for (const operation of operations) {
-      await this.logOperation(boardId, {
-        at: written.metadata.updatedAt,
-        source: options.source ?? "user",
-        actor: options.actor,
-        type: operation.type,
-        targetIds: targetIdsForOperation(operation, written)
-      });
-    }
-    return { project: written, applied: operations.length };
+      let draft = current;
+      for (let index = 0; index < operations.length; index++) {
+        try {
+          draft = applyBoardOperation(draft, operations[index]!);
+        } catch (error) {
+          throw new Error(`Batch aborted, nothing was written. operations[${index}] (${operations[index]!.type}) failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      if (options.source === "agent") {
+        draft = markAgentEdited(draft, operations[operations.length - 1]!, options.actor);
+      }
+      await this.pushUndoState(boardId, current);
+      await this.clearRedoState(boardId);
+      const written = await this.writeBoard(draft);
+      for (const operation of operations) {
+        await this.logOperation(boardId, {
+          at: written.metadata.updatedAt,
+          source: options.source ?? "user",
+          actor: options.actor,
+          type: operation.type,
+          targetIds: targetIdsForOperation(operation, written)
+        });
+      }
+      return { project: written, applied: operations.length };
+    });
   }
 
   async replaceBoard(boardId: string, project: BoardProject, options: ApplyOperationOptions = {}): Promise<BoardProject> {
     if (boardId !== project.id) {
       throw new Error("Board id in URL and body must match.");
     }
-    const current = await this.readBoard(boardId).catch(() => undefined);
-    if (current) await this.pushUndoState(boardId, current);
-    await this.clearRedoState(boardId);
-    const written = await this.writeBoard(project);
-    await this.logOperation(boardId, {
-      at: written.metadata.updatedAt,
-      source: options.source ?? "user",
-      actor: options.actor,
-      type: "replace_board",
-      targetIds: [boardId]
+    return this.withBoardLock(boardId, async () => {
+      const current = await this.readBoard(boardId).catch(() => undefined);
+      if (current) await this.pushUndoState(boardId, current);
+      await this.clearRedoState(boardId);
+      const written = await this.writeBoard(project);
+      await this.logOperation(boardId, {
+        at: written.metadata.updatedAt,
+        source: options.source ?? "user",
+        actor: options.actor,
+        type: "replace_board",
+        targetIds: [boardId]
+      });
+      return written;
     });
-    return written;
   }
 
   async undo(boardId: string): Promise<BoardProject> {
-    const previous = await this.popUndoState(boardId);
-    if (!previous) {
-      return this.readBoard(boardId);
-    }
-    const current = await this.readBoard(boardId);
-    await this.pushRedoState(boardId, current);
-    return this.writeBoard(previous);
+    return this.withBoardLock(boardId, async () => {
+      const previous = await this.popUndoState(boardId);
+      if (!previous) {
+        return this.readBoard(boardId);
+      }
+      const current = await this.readBoard(boardId);
+      await this.pushRedoState(boardId, current);
+      return this.writeBoard(previous);
+    });
   }
 
   async redo(boardId: string): Promise<BoardProject> {
-    const next = await this.popRedoState(boardId);
-    if (!next) {
-      return this.readBoard(boardId);
-    }
-    const current = await this.readBoard(boardId);
-    await this.pushUndoState(boardId, current);
-    return this.writeBoard(next);
+    return this.withBoardLock(boardId, async () => {
+      const next = await this.popRedoState(boardId);
+      if (!next) {
+        return this.readBoard(boardId);
+      }
+      const current = await this.readBoard(boardId);
+      await this.pushUndoState(boardId, current);
+      return this.writeBoard(next);
+    });
   }
 
   async historyDepths(boardId: string): Promise<{ undo: number; redo: number }> {
@@ -506,13 +543,19 @@ export class BoardStore {
   }
 
   async setSelection(boardId: string, selection: string[]): Promise<BoardProject> {
-    const project = await this.readBoard(boardId);
-    const next = BoardProjectSchema.parse({ ...project, selection: filterValidSelection(project, selection), metadata: { ...project.metadata, updatedAt: new Date().toISOString() } });
-    await this.writeBoard(next);
-    return next;
+    return this.withBoardLock(boardId, async () => {
+      const project = await this.readBoard(boardId);
+      const next = BoardProjectSchema.parse({ ...project, selection: filterValidSelection(project, selection), metadata: { ...project.metadata, updatedAt: new Date().toISOString() } });
+      await this.writeBoard(next);
+      return next;
+    });
   }
 
   async saveAsset(boardId: string, input: AssetInput): Promise<{ project: BoardProject; assetId: string }> {
+    return this.withBoardLock(boardId, () => this.saveAssetLocked(boardId, input));
+  }
+
+  private async saveAssetLocked(boardId: string, input: AssetInput): Promise<{ project: BoardProject; assetId: string }> {
     const project = await this.readBoard(boardId);
     const match = input.dataUrl.match(/^data:([^;,]+);base64,(.+)$/);
     if (!match) {
@@ -1030,23 +1073,27 @@ function cssJustify(value: string | undefined): string | undefined {
   return ({ start: "flex-start", center: "center", end: "flex-end", between: "space-between" } as Record<string, string>)[value] ?? undefined;
 }
 
-export function agentActivityForOperation(project: BoardProject, operation: BoardOperation): AgentBoardActivity {
+export function agentActivityForOperation(project: BoardProject, operation: BoardOperation, agent?: AgentIdentity): AgentBoardActivity {
   const metadata = project.metadata as Record<string, unknown>;
   return {
     source: "agent",
     kind: "operation",
     ids: readStringArrayMetadata(metadata.lastAgentEditedIds) ?? targetIdsForOperation(operation, project),
     operationType: operation.type,
-    at: readStringMetadata(metadata.lastAgentEditedAt) ?? project.metadata.updatedAt
+    at: readStringMetadata(metadata.lastAgentEditedAt) ?? project.metadata.updatedAt,
+    agentId: agent?.id,
+    agentName: agent?.name
   };
 }
 
-export function agentActivityForSelection(project: BoardProject): AgentBoardActivity {
+export function agentActivityForSelection(project: BoardProject, agent?: AgentIdentity): AgentBoardActivity {
   return {
     source: "agent",
     kind: "selection",
     ids: project.selection,
-    at: new Date().toISOString()
+    at: new Date().toISOString(),
+    agentId: agent?.id,
+    agentName: agent?.name
   };
 }
 

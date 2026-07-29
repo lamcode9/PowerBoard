@@ -52,6 +52,9 @@ async function main(): Promise<void> {
   const serverRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const tempRoot = requireCloud ? undefined : await fs.mkdtemp(path.join(os.tmpdir(), "powerboard-mcp-check-"));
   const env = childEnv();
+  // Exposure check must exercise *this* build's tool surface. Left to itself the stdio entrypoint
+  // attaches to a running PowerBoard when one is listening, which would check the installed app instead.
+  env.POWERBOARD_MCP_EMBEDDED = "1";
 
   if (requireCloud) {
     env.POWERBOARD_STORAGE_MODE = "cloud";

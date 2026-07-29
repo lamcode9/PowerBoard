@@ -16,6 +16,7 @@ import {
   POLISH_TOLERANCE,
   validateBoardStructure
 } from "@powerboard/schema";
+import { agentIdentity, AgentIdentity, ANONYMOUS_AGENT, currentAgent, runAsAgent } from "./agentIdentity.js";
 import { agentActivityForOperation, agentActivityForSelection, AgentBoardActivity, BoardStore } from "./boardService.js";
 
 /**
@@ -60,6 +61,11 @@ function layoutDiagnosticsFor(project: BoardProject): { clean: boolean; issues: 
 }
 
 interface BoardMcpOptions {
+  /**
+   * Identity of the client on the other end of this connection — resolved once by the transport
+   * (URL/header for HTTP, env for stdio) and used for every call that doesn't name an agent itself.
+   */
+  agent?: AgentIdentity;
   onBoardChanged?: (boardId: string, activity?: AgentBoardActivity) => Promise<void> | void;
   /** Fired after an application-level board deletion so live clients can drop it from the board list. */
   onBoardRemoved?: (boardId: string) => Promise<void> | void;
@@ -76,6 +82,9 @@ interface BoardMcpOptions {
 /** A single "an agent is touching this board" heartbeat. `ids` is a best-effort focus hint, not a guarantee. */
 export interface AgentPresence {
   boardId: string;
+  /** Which agent — one presence lane (and one colour) per id, so simultaneous agents don't overwrite each other. */
+  agentId: string;
+  agentName: string;
   tool: string;
   ids: string[];
   at: string;
@@ -176,32 +185,53 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
       config = { ...config, inputSchema: { ...config.inputSchema, ...idempotencyInput } };
     }
     server.registerTool(name, config as never, (async (input: Record<string, unknown> = {}) => {
-      const key = typeof input?.idempotencyKey === "string" ? input.idempotencyKey : undefined;
-      const presenceBoardId = typeof input?.boardId === "string" ? input.boardId : undefined;
-      if (presenceBoardId) {
-        options.onAgentPresence?.({ boardId: presenceBoardId, tool: name, ids: presenceTargetIds(input), at: new Date().toISOString() });
-      }
-      const cached = idempotencyGet(key, name);
-      if (cached) return cached;
-      try {
-        const result = await handler(input);
-        idempotencySet(key, name, result);
-        return result;
-      } catch (error) {
-        return toolError(name, error);
-      }
+      // Identity is per call so one connection can act for several agents, falling back to the
+      // connection's own identity. Everything downstream reads it from the async context.
+      const identity = typeof input?.agentName === "string" && input.agentName.trim() ? agentIdentity(input.agentName) : options.agent ?? ANONYMOUS_AGENT;
+      return runAsAgent(identity, async () => {
+        const key = typeof input?.idempotencyKey === "string" ? input.idempotencyKey : undefined;
+        const presenceBoardId = typeof input?.boardId === "string" ? input.boardId : undefined;
+        if (presenceBoardId) {
+          options.onAgentPresence?.({
+            boardId: presenceBoardId,
+            agentId: identity.id,
+            agentName: identity.name,
+            tool: name,
+            ids: presenceTargetIds(input),
+            at: new Date().toISOString()
+          });
+        }
+        const cached = idempotencyGet(key, name);
+        if (cached) return cached;
+        try {
+          const result = await handler(input);
+          idempotencySet(key, name, result);
+          return result;
+        } catch (error) {
+          return toolError(name, error);
+        }
+      });
     }) as never);
   };
 
-  const idempotencyInput = { idempotencyKey: z.string().optional().describe("Optional replay-protection key: same key returns the first call's result for 10 minutes instead of re-applying.") };
+  const idempotencyInput = {
+    idempotencyKey: z.string().optional().describe("Optional replay-protection key: same key returns the first call's result for 10 minutes instead of re-applying."),
+    agentName: z
+      .string()
+      .optional()
+      .describe(
+        "Optional display name for the agent making this call — shown in the activity feed and on the canvas, and recorded in the op-log. Boards accept several agents at once; a distinct name gives you your own presence lane. Defaults to the name configured on the connection."
+      )
+  };
 
   const changed = async (boardId: string, activity?: AgentBoardActivity) => {
     await options.onBoardChanged?.(boardId, activity);
   };
 
   const applyAgentOperation = async (boardId: string, operation: BoardOperation) => {
-    const project = await store.applyOperation(boardId, operation, { source: "agent" });
-    await changed(boardId, agentActivityForOperation(project, operation));
+    const identity = currentAgent();
+    const project = await store.applyOperation(boardId, operation, { source: "agent", actor: identity.name });
+    await changed(boardId, agentActivityForOperation(project, operation, identity));
     return project;
   };
 
@@ -455,7 +485,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
     },
     async ({ boardId, selection }) => {
       const project = await store.setSelection(boardId, selection);
-      await changed(boardId, agentActivityForSelection(project));
+      await changed(boardId, agentActivityForSelection(project, currentAgent()));
       return text(project.selection);
     }
   );
@@ -658,8 +688,9 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
           throw new Error(`operations[${index}] is invalid: ${error instanceof Error ? error.message : String(error)}`);
         }
       });
-      const result = await store.applyOperations(boardId, parsed, { source: "agent", expectedUpdatedAt });
-      await changed(boardId, agentActivityForOperation(result.project, parsed[parsed.length - 1]!));
+      const identity = currentAgent();
+      const result = await store.applyOperations(boardId, parsed, { source: "agent", actor: identity.name, expectedUpdatedAt });
+      await changed(boardId, agentActivityForOperation(result.project, parsed[parsed.length - 1]!, identity));
       return text({ applied: result.applied, board: result.project });
     }
   );

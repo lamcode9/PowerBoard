@@ -5,6 +5,7 @@ import path from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { BoardOperation, boardTemplates, BoardProjectSchema, OperationSchema } from "@powerboard/schema";
+import { agentIdentity, AgentIdentity, agentIdentityFromRequest } from "./agentIdentity.js";
 import { agentActivityForOperation, BoardStore } from "./boardService.js";
 import { BackupService } from "./backupService.js";
 import { boardRoot } from "./paths.js";
@@ -135,8 +136,8 @@ app.delete("/api/boards/:boardId", asyncHandler(async (req, res) => {
 app.post("/api/boards/:boardId/operations", asyncHandler(async (req, res) => {
   const operation = OperationSchema.parse(req.body.operation) as BoardOperation;
   const agentEdit = readAgentEdit(req.body);
-  const next = await store.applyOperation(param(req, "boardId"), operation, agentEdit ? { source: "agent", actor: agentEdit.actor } : {});
-  const agentActivity = agentEdit ? agentActivityForOperation(next, operation) : undefined;
+  const next = await store.applyOperation(param(req, "boardId"), operation, agentEdit ? { source: "agent", actor: agentEdit.name } : {});
+  const agentActivity = agentEdit ? agentActivityForOperation(next, operation, agentEdit) : undefined;
   broadcast(next.id, { type: "board.changed", boardId: next.id, project: next, operation, agentActivity });
   res.json(next);
 }));
@@ -151,10 +152,10 @@ app.post("/api/boards/:boardId/operations/batch", asyncHandler(async (req, res) 
   const agentEdit = readAgentEdit(req.body);
   const expectedUpdatedAt = typeof req.body?.expectedUpdatedAt === "string" ? req.body.expectedUpdatedAt : undefined;
   const result = await store.applyOperations(param(req, "boardId"), operations, {
-    ...(agentEdit ? { source: "agent" as const, actor: agentEdit.actor } : {}),
+    ...(agentEdit ? { source: "agent" as const, actor: agentEdit.name } : {}),
     expectedUpdatedAt
   });
-  const agentActivity = agentEdit ? agentActivityForOperation(result.project, operations[operations.length - 1]!) : undefined;
+  const agentActivity = agentEdit ? agentActivityForOperation(result.project, operations[operations.length - 1]!, agentEdit) : undefined;
   broadcast(result.project.id, { type: "board.changed", boardId: result.project.id, project: result.project, agentActivity });
   res.json(result);
 }));
@@ -238,6 +239,10 @@ app.post("/api/boards/:boardId/export/mermaid", asyncHandler(async (req, res) =>
 
 app.post("/mcp", async (req, res) => {
   const server = createBoardMcpServer(store, {
+    // Stateless streamable HTTP: a fresh server per POST over one shared store, so several agents
+    // can hold the same board at once. Identity comes off the request (?agent= or x-powerboard-agent)
+    // and gives each of them its own presence lane in the UI.
+    agent: agentIdentityFromRequest(req.query.agent, req.headers as Record<string, unknown>),
     onBoardChanged: async (boardId, agentActivity) => {
       const project = await store.readBoard(boardId);
       broadcast(boardId, { type: "board.changed", boardId, project, agentActivity });
@@ -371,11 +376,11 @@ function param(req: Request, name: string): string {
   return value;
 }
 
-function readAgentEdit(body: unknown): { actor?: string } | undefined {
+function readAgentEdit(body: unknown): AgentIdentity | undefined {
   if (!body || typeof body !== "object") return undefined;
   const record = body as Record<string, unknown>;
   if (record.source !== "agent") return undefined;
-  return { actor: typeof record.actor === "string" && record.actor.trim() ? record.actor : undefined };
+  return agentIdentity(typeof record.actor === "string" ? record.actor : undefined);
 }
 
 function readSelection(body: unknown): string[] | undefined {

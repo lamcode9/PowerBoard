@@ -10,10 +10,29 @@ Use PowerBoard as the shared visual workspace for high-fidelity app mockups, scr
 
 PowerBoard is **desktop-first and offline-first**: the installed macOS app embeds the server and serves MCP itself, so the endpoint below reaches the exact board the human is looking at, live. There is no cloud dependency for editing.
 
-- Local MCP transport (live agent editing): `http://127.0.0.1:4318/mcp` — served by the installed PowerBoard app (or `npm run dev`).
+- Local MCP transport (live agent editing): `http://127.0.0.1:4318/mcp` — served by the installed PowerBoard app (or `npm run dev`). Append `?agent=YourName` so your work is attributable (see below).
 - Health/heartbeat: `http://127.0.0.1:4318/api/health` (also the `get_board_status` MCP tool).
 - Local checkout: `/Users/km/Developer/PowerBoard`.
 - Storage is local JSON files (source of truth) with versioned backup snapshots. Do **not** edit `boards/*/board.json`, history, or backups directly — every change goes through an operation.
+
+### Several agents on one board
+
+A board takes as many agents as you point at it, at the same time as the human editing it. Writes are
+serialized per board, so concurrent edits can't silently overwrite each other — but two agents
+restructuring the same artboard still produce a mess, so split the work by artboard or by page.
+
+**Say who you are.** Identity drives the op-log, the activity feed, and your own coloured presence
+lane on the canvas; unnamed clients all collapse into one lane called "Agent".
+
+- HTTP: `http://127.0.0.1:4318/mcp?agent=Codex`, or send an `x-powerboard-agent: Codex` header.
+- stdio: set `POWERBOARD_AGENT_NAME` in the server config's `env`.
+- Per call: pass `agentName` on any tool, which overrides the connection's name.
+
+Two connections that give the same name share one lane — use distinct names for distinct lanes.
+This is a display label, not authentication; the local endpoint is unauthenticated by design.
+
+Use `batch_operations` with `expectedUpdatedAt` when a multi-step edit assumes the board hasn't
+moved under you — serialization stops lost writes, but it doesn't make your read stay true.
 
 ### Etiquette (do this in order)
 
@@ -45,7 +64,13 @@ One model, two palettes (decision D5). A diagram shape is an element type; a con
 [mcp_servers.powerboard]
 command = "npm"
 args = ["run", "mcp", "--prefix", "/Users/km/Developer/PowerBoard"]
+env = { POWERBOARD_AGENT_NAME = "Codex" }
 # Defaults to local-file storage (offline-first). Omit env for the desktop/local world.
 ```
+
+When PowerBoard (or `npm run dev`) is already running, the stdio entrypoint attaches to it and
+proxies through — one store, so your edits appear on the human's canvas as they land. With nothing
+listening it falls back to an embedded store, which still works offline but is invisible to any open
+window. `POWERBOARD_MCP_EMBEDDED=1` forces the embedded path.
 
 > Legacy cloud sync (Supabase at `https://lamper-server.vercel.app`) still exists as an optional target but is demoted — the desktop app is local-first. Only set `POWERBOARD_STORAGE_MODE=cloud` + `POWERBOARD_CLOUD_DRIVER=supabase` for explicit cloud-direct work.

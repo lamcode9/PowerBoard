@@ -1,39 +1,59 @@
 import { Bot } from "lucide-react";
+import { agentRgb } from "../agentColor";
 
 export interface AgentFeedEntry {
   id: string;
   at: string;
   actor: string;
+  /** Which agent wrote it — colour-codes the row so a two-agent session stays readable. */
+  agentId: string;
   message: string;
   targets: string[];
 }
 
+export interface AgentFeedPresence {
+  agentId: string;
+  agentName: string;
+  phase: "reading" | "editing";
+}
+
 /**
- * Agent presence is a designed surface (Phase 4): a readable feed of what agents did, a live
- * "editing…" badge while a burst of ops is in flight, and click-to-focus (which re-pulses the
- * touched elements on the canvas) — not a log dump.
+ * Agent presence is a designed surface (Phase 4): a readable feed of what agents did, a live badge per
+ * agent while their ops are in flight, and click-to-focus (which re-pulses the touched elements on the
+ * canvas) — not a log dump. Boards accept several agents at once, so the panel has to answer "who is
+ * here right now" as well as "what happened".
  */
 export function AgentFeed({
   entries,
-  phase,
+  presences,
   onFocusTargets,
   onConnect
 }: {
   entries: AgentFeedEntry[];
-  /** Live agent presence — absent means no agent currently has the board. */
-  phase?: "reading" | "editing";
+  /** Agents currently holding the board — empty means nobody is working right now. */
+  presences: AgentFeedPresence[];
   onFocusTargets: (ids: string[]) => void;
   onConnect?: () => void;
 }) {
+  // Names only earn their space once there is someone to be confused with; solo stays as it was.
+  const named = presences.length > 1;
+  const badges = presences.length ? (
+    <div className="agent-live-row">
+      {presences.map((presence) => (
+        <AgentLiveBadge key={presence.agentId} presence={presence} named={named} />
+      ))}
+    </div>
+  ) : null;
+
   if (!entries.length) {
     // A presence ping can arrive before any edit lands (the agent is still inspecting) — the badge has to
     // survive the empty state, or the very moment an agent picks up the board would show nothing.
     return (
       <div className="agent-feed-empty">
-        {phase ? <AgentLiveBadge phase={phase} /> : null}
+        {badges}
         <AgentEmptyMotif />
         <p>No agent activity yet.</p>
-        <small>Point an agent at the MCP endpoint — its edits stream in here and each touched element pulses on the canvas.</small>
+        <small>Point an agent at the MCP endpoint — its edits stream in here and each touched element pulses on the canvas. Several agents can work the same board at once.</small>
         {onConnect ? (
           <button type="button" className="agent-empty-connect" onClick={onConnect}>
             <Bot size={14} /> Connect an agent
@@ -44,9 +64,15 @@ export function AgentFeed({
   }
   return (
     <div className="agent-feed">
-      {phase ? <AgentLiveBadge phase={phase} /> : null}
+      {badges}
       {entries.map((entry) => (
-        <button key={entry.id} className="agent-feed-row" onClick={() => onFocusTargets(entry.targets)} title="Click to focus the edited items">
+        <button
+          key={entry.id}
+          className="agent-feed-row"
+          style={{ ["--agent-rgb" as string]: agentRgb(entry.agentId) }}
+          onClick={() => onFocusTargets(entry.targets)}
+          title="Click to focus the edited items"
+        >
           <span className="agent-feed-dot" aria-hidden="true" />
           <span className="agent-feed-body">
             <span className="agent-feed-message">{entry.message}</span>
@@ -62,13 +88,20 @@ export function AgentFeed({
 
 /**
  * Distinguishes "an agent is looking at the board" from "an agent is changing it" — the two phases the
- * canvas reticle also animates, so the panel and the canvas never disagree about what's happening.
+ * canvas reticle also animates, so the panel and the canvas never disagree about what's happening. One
+ * badge per agent, in that agent's colour, matching its reticle on the canvas.
  */
-function AgentLiveBadge({ phase }: { phase: "reading" | "editing" }) {
+function AgentLiveBadge({ presence, named }: { presence: AgentFeedPresence; named: boolean }) {
+  const state = presence.phase === "editing" ? "editing…" : "reading the board…";
   return (
-    <div className={`agent-live-badge is-${phase}`} role="status" aria-live="polite">
+    <div
+      className={`agent-live-badge is-${presence.phase}`}
+      style={{ ["--agent-rgb" as string]: agentRgb(presence.agentId) }}
+      role="status"
+      aria-live="polite"
+    >
       <span className="agent-live-dot" aria-hidden="true" />
-      {phase === "editing" ? "editing…" : "reading the board…"}
+      {named ? `${presence.agentName} · ${state}` : state}
     </div>
   );
 }

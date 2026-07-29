@@ -366,6 +366,56 @@ Goal: from "clean web app" to best-in-class canvas tool (Linear/Figma/Excalidraw
 - [ ] **P7 — A11y floor + taste pass:** focus rings everywhere, icon-button labels, AA both modes, large-text survival; §10 squint / remove-until-breaks / cheap-tell hunt / best-in-class compare.
 - Open decisions (see plan doc): board-content palette (a/b/c); bundle Inter (~110KB, rec yes); sequence P1→P3 before P4 (or P4 in parallel after P1).
 
+## Phase 10 · Multi-agent boards (2026-07-29)
+
+Question that started it: *can more than one agent be connected to a board at once?* Audit answer:
+structurally yes over HTTP `/mcp` (stateless streamable transport, fresh `McpServer` per POST, one
+shared process-wide `BoardStore`, no cap, no session gate) — but concurrent editing is **unsafe and
+unattributed**, and stdio is worse:
+
+1. **Lost updates.** `applyOperation` is read → apply → pushUndo → write with awaits throughout and
+   **no per-board lock** in `BoardStore` (`HistoryStore` has one; the board store does not). Two agents
+   interleave and the second silently discards the first's edit. `expectedUpdatedAt` conflict detection
+   exists only on the batch path and is opt-in.
+2. **Agents are anonymous.** `applyAgentOperation` passes `{ source: "agent" }` with no `actor`, so every
+   agent lands in the op-log as `undefined` and renders as "PowerBoard MCP". `AgentPresence` carries no
+   identity, and the web app holds exactly one `agentPresence` — the second agent overwrites the first.
+3. **stdio forks the store.** `mcp.ts` builds its own `BoardStore` per spawned process with no
+   `onBoardChanged`/`onAgentPresence`, so stdio edits never reach the canvas over WS, and two processes
+   race the same `board.json` + `history/index.json` with independent in-memory caches.
+
+- [x] **P1 — Serialize writes.** Per-board promise-chain mutex in `BoardStore` (same shape as
+      `HistoryStore.withLock`), wrapping every read-modify-write mutator: `applyOperation`,
+      `applyOperations`, `replaceBoard`, `renameBoard`, `undo`, `redo`, `setSelection`, `saveAsset`,
+      `deleteBoard`. Non-reentrant by design — no locked method may call another. Test: N concurrent
+      `add_element` calls all survive.
+- [x] **P2 — Agent identity end-to-end.** `AgentIdentity { id, name }` resolved per MCP connection:
+      `?agent=` query param or `x-powerboard-agent` header (HTTP), `POWERBOARD_AGENT_NAME` (stdio),
+      per-call `agentName` override registered centrally in `registerTool` (same trick as
+      `idempotencyKey`). Threads into `actor` → op-log + `lastAgentEditedBy`, and into `AgentPresence` +
+      `AgentBoardActivity` so the UI can attribute every ping and every edit.
+- [x] **P3 — stdio parity.** `npm run mcp` probes `/api/health`; if the app/dev server is live it becomes
+      a transport-level JSON-RPC proxy (stdio ⇄ streamable-HTTP) into that one process — one store, WS
+      broadcasts, presence. No server running → embedded store as today (offline-first preserved).
+      `POWERBOARD_MCP_EMBEDDED=1` forces embedded (used by `mcp:check` for determinism).
+- [x] **P4 — Multi-agent presence lanes (canvas).** `agentPresence` → keyed map with per-agent TTL; one
+      reticle per agent, each carrying its own hue + name·tool label; `AgentFeed` shows a live badge per
+      agent and colour-codes rows by author. Deterministic hue from `agentId` over a 6-hue harmonious
+      set; veil stays single (board-level signal).
+- [x] **P5 — Verify + document.** Concurrency test in `boardService.test.ts`; two real agents editing one
+      board simultaneously in the running app; typecheck/build/test/`mcp:check`; connector doc gains the
+      identity + multi-agent section.
+- [x] **Verified live** (2026-07-29, dev stack on :4319 — :4318 held by the installed app): 16
+      concurrent `add_element` calls from two named agents all landed (26 elements, 16 undo entries,
+      op-log split 8 Scout / 8 Mason); the concurrency test fails without the mutex and passes with it.
+      Canvas showed two simultaneous reticles — "Scout · inspect_selection" indigo/reading and
+      "Mason · move_resize_element" amber/editing — plus two live badges and per-author feed dots.
+      stdio proxy attached (`attached to the running server … as "Relay"`) and its edit reached the
+      live feed; embedded fallback still starts with nothing listening. 73/73 tests, typecheck, build,
+      `mcp:check` (39/39 exposed) clean, console clean, light + dark.
+- [ ] Follow-up worth considering: `get_board_status` could list the agents currently holding the
+      board, so an arriving agent can see it is not alone before it starts restructuring.
+
 ## Phase 9 · P4a — Agent presence field (2026-07-28)
 
 Goal: an "an agent is working right now" signal, not just an after-the-fact echo. Root cause found: the

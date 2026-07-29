@@ -30,6 +30,30 @@ describe("BoardStore", () => {
     expect(redone.elements.some((candidate) => candidate.id === element.id)).toBe(true);
   });
 
+  it("keeps every edit when several agents write the same board at once", async () => {
+    const { store } = await tempStore();
+    const board = await store.createBoard("Contended Board");
+    const artboardId = board.artboards[0]!.id;
+    const elements = Array.from({ length: 12 }, (_, index) => createElementFromPreset("button", artboardId, 24, 24 + index * 40));
+
+    // Fired together, not awaited in turn: unserialized, these all read the same base state and the
+    // last write wins, silently discarding eleven agents' work.
+    await Promise.all(
+      elements.map((element, index) => store.applyOperation(board.id, { type: "add_element", element }, { source: "agent", actor: `Agent ${index}` }))
+    );
+
+    const final = await store.readBoard(board.id);
+    for (const element of elements) {
+      expect(final.elements.some((candidate) => candidate.id === element.id)).toBe(true);
+    }
+
+    // Each concurrent write also has to leave its own undo entry and its own attributed op-log line.
+    expect(await store.historyDepths(board.id)).toMatchObject({ undo: elements.length });
+    const log = await store.readOpLog(board.id, 100);
+    const actors = new Set(log.filter((entry) => entry.type === "add_element").map((entry) => entry.actor));
+    expect(actors.size).toBe(elements.length);
+  });
+
   it("deletes a board and its files, and reports missing boards as not found", async () => {
     const { dir, store } = await tempStore();
     const board = await store.createBoard("Deletable Board");
