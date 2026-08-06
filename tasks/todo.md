@@ -614,13 +614,42 @@ Decisions taken with the user this session:
 
 ### Build
 
-- [ ] `powerboard_website/`: `index.html`, `site.css`, `assets/`, `vercel.json`, `robots.txt`.
-- [ ] Real product screenshots — captured from the running app against a copy of the real boards
-      (`AI Embedded Organization`, 506 elements / 25 connectors; `Vellum AI Connect`), never mocked art.
-- [ ] `/contribute` as a Vercel redirect, so the Stripe URL is a one-line swap and every surface
+- [x] `powerboard_website/`: `index.html`, `site.css`, `assets/`, `vercel.json`, `robots.txt`, `sitemap.xml`.
+- [x] Real product screenshots — captured from the running app against a copy of the real boards
+      (`AI Embedded Organization`, 506 elements / 25 connectors), never mocked art. The agent-activity
+      shot shows genuine events: four `move_resize_element` ops posted with `source:"agent"` under two
+      actor names, so the feed reads as real named lanes rather than a staged empty state.
+- [x] `/contribute` as a Vercel redirect, so the Stripe URL is a one-line swap and every surface
       (site, future app, future App Store listing) points at a URL we own.
-- [ ] `/privacy`, `/terms`, `/support` — the Mac App Store submission needs them and the footer must
+- [x] `/privacy`, `/terms`, `/support` — the Mac App Store submission needs them and the footer must
       not 404.
-- [ ] Register PowerBoard in `workProjects` in the Lamonade portfolio, iframe preview like Vellum's.
-- [ ] Deploy to Vercel, attach `powerboard.lamonade.xyz`.
-- [ ] Verify: every internal + external link resolves, both themes, mobile/tablet/desktop, console clean.
+- [x] Register PowerBoard in `workProjects` in the Lamonade portfolio, iframe preview like Vellum's.
+- [x] Deploy to Vercel, attach `powerboard.lamonade.xyz`.
+- [x] Verify: every internal + external link resolves, mobile/tablet/desktop, console clean.
+
+**Shipped:** commit `ad7df2a` here, `f893b99` in Lamonade. Live at
+<https://powerboard.lamonade.xyz>, card live on <https://www.lamonade.xyz/#work>.
+
+### Three things worth keeping
+
+- **A full-app screenshot at 636px is illegible**, and on a page whose only job is showing the product
+  that is a design failure, not a stylistic choice. Every feature-row shot is cropped to the one region
+  that carries its point (the diagram palette, the activity feed, the export dialog); only the hero and
+  the board list stay full-app. Crops are `sips --cropOffset Y X -c H W` — the offset flag must come
+  *before* `-c` or sips silently ignores it and returns the original.
+- **Flipped feature rows were handing the screenshot the narrow grid track.** `order: 2` on the copy
+  moves it to column two but does not move the track sizes with it, so every other row squeezed the app
+  UI. `.feature.flip` now swaps `grid-template-columns` too.
+- **`padding: X 0` on a section that is also `.wrap` zeroes the wrap's `padding-inline`**, so on mobile
+  every standalone section (`.hero`, `.band`, `.output`, `.foot`, `#files`) ran edge to edge. Invisible
+  at desktop width because the max-width was doing the work. All five now use `padding-block`.
+
+### Open
+
+- **`AGENTS.md` says "24 MCP tools"; `npm run mcp:check` reports 41 exposed / 40 checked.** Stale, not
+  wrong-by-design — the website says 41 because that is what the server actually answers with.
+- **Deployment protection bit us and will again.** New Vercel projects inherit `ssoProtection:
+  all_except_custom_domains`, and `vercel alias set` assigns a domain to a *deployment* without adding
+  it to the *project* — so the custom-domain exemption never applies and the whole site sits behind a
+  Vercel login while every URL still returns 200 to a `curl -L`. `vercel domains add <domain>` against
+  the linked project is the step that actually makes it public. Check without `-L` next time.
