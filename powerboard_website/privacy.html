@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Privacy Policy — PowerBoard</title>
+<meta name="description" content="What PowerBoard stores and what can leave your Mac. There are no accounts, no ads, and no third-party trackers." />
+<meta name="theme-color" content="#0B0B10" />
+<link rel="icon" type="image/png" href="assets/mark.png" />
+<link rel="apple-touch-icon" href="assets/mark.png" />
+<link rel="canonical" href="https://powerboard.lamonade.xyz/privacy" />
+<link rel="stylesheet" href="site.css" />
+</head>
+<body>
+
+<nav class="nav" data-nav>
+  <div class="nav-inner">
+    <a class="wordmark" href="/"><img src="assets/mark.png" alt="" width="28" height="28" />PowerBoard</a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a class="nav-contribute" href="/contribute"><span aria-hidden="true">&hearts;</span> Contribute</a>
+    </div>
+  </div>
+</nav>
+
+<main class="doc">
+  <h1>Privacy Policy</h1>
+  <hr class="rule" />
+  <p class="meta">PowerBoard for macOS &middot; Last updated 6 August 2026</p>
+
+  <p>PowerBoard is built so your work stays yours. There are no accounts, no ads, and no third-party trackers. This page describes everything the app stores and everything that can leave your Mac.</p>
+
+  <h2>Your boards stay with you</h2>
+  <p>Boards, the images you place on them, and the files you export are stored on your Mac in PowerBoard's own application-support folder. If snapshot backups are on, compressed copies are written to <strong>your own iCloud Drive</strong> — which is your Apple account, not ours. We operate no server that holds your boards, and we cannot read them.</p>
+
+  <h2>Agent connections are local, and you start them</h2>
+  <p>PowerBoard can serve an MCP endpoint on your own machine (<span class="mono">127.0.0.1</span>) so an AI client you already run — Claude Desktop, Claude Code, Cursor, or another — can read and edit the board you are looking at. That endpoint is <strong>local to your Mac</strong>; PowerBoard does not send your boards anywhere on its own.</p>
+  <p>What the AI client you connect then does with the content it reads is governed by <strong>that client and its provider</strong>, under their own privacy terms. Connecting an agent is an explicit action you take, and you can stop serving MCP by quitting the app.</p>
+
+  <h2>No analytics</h2>
+  <p>The app collects no usage analytics, no telemetry, and no crash reports of its own, and it contains no advertising identifiers and no cross-app tracking of any kind.</p>
+
+  <h2>Feedback</h2>
+  <p>If you email us, we receive the message you send and the address you sent it from, and use them only to reply to you.</p>
+
+  <h2>Supporting PowerBoard</h2>
+  <p>Every feature is free. If you choose to contribute, the payment is processed by <strong>Stripe on Stripe's own site</strong> — we never see your card details, and no purchase is required for anything in the app.</p>
+
+  <h2>What we never collect</h2>
+  <p>No location, no contacts, no photos beyond the images you place on a board yourself, no microphone, no advertising identifiers.</p>
+
+  <h2>Data retention and deletion</h2>
+  <p>Boards live on your Mac and in your iCloud; deleting them there deletes them everywhere we know of. To have email correspondence deleted, write to the address below.</p>
+
+  <h2>Changes</h2>
+  <p>If this policy changes in a way that matters, the updated page will appear here with a new date before the change takes effect.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about this policy: <a href="mailto:danny@lamonade.xyz">danny@lamonade.xyz</a>.</p>
+</main>
+
+<footer class="foot wrap">
+  <div class="foot-inner">
+    <small>&copy; 2026 KM &middot; Built in the open</small>
+    <div class="foot-links">
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+      <a href="/support">Support</a>
+      <a href="/contribute">Contribute</a>
+      <a href="https://www.lamonade.xyz/#work">More work</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var nav = document.querySelector('[data-nav]');
+    var onScroll = function () { nav.classList.toggle('stuck', window.scrollY > 8); };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+  })();
+</script>
+
+</body>
+</html>

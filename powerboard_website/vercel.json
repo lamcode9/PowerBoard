@@ -1,0 +1,18 @@
+{
+  "cleanUrls": true,
+  "redirects": [
+    {
+      "source": "/contribute",
+      "destination": "https://donate.stripe.com/8x28wI3oh5Le0aIaI6dUY01",
+      "permanent": false
+    }
+  ],
+  "headers": [
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Terms of Use — PowerBoard</title>
+<meta name="description" content="Short terms for PowerBoard: your boards are yours, the app is free, and contributions unlock nothing." />
+<meta name="theme-color" content="#0B0B10" />
+<link rel="icon" type="image/png" href="assets/mark.png" />
+<link rel="apple-touch-icon" href="assets/mark.png" />
+<link rel="canonical" href="https://powerboard.lamonade.xyz/terms" />
+<link rel="stylesheet" href="site.css" />
+</head>
+<body>
+
+<nav class="nav" data-nav>
+  <div class="nav-inner">
+    <a class="wordmark" href="/"><img src="assets/mark.png" alt="" width="28" height="28" />PowerBoard</a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a class="nav-contribute" href="/contribute"><span aria-hidden="true">&hearts;</span> Contribute</a>
+    </div>
+  </div>
+</nav>
+
+<main class="doc">
+  <h1>Terms of Use</h1>
+  <hr class="rule" />
+  <p class="meta">PowerBoard for macOS &middot; Last updated 6 August 2026</p>
+
+  <p>Thanks for using PowerBoard. These terms are short because the app is simple: you design, and what you design is yours.</p>
+
+  <h2>The agreement</h2>
+  <p>PowerBoard is licensed to you under Apple's standard <a href="https://www.apple.com/legal/internet-services/itunes/dev/stdeula/">Licensed Application End User License Agreement</a>. These terms add the specifics below.</p>
+
+  <h2>Your content</h2>
+  <p>Everything you create in PowerBoard belongs to you. We claim no rights over your boards, the artwork on them, or anything you export from them — including code and specs generated from your designs.</p>
+
+  <h2>Beta software</h2>
+  <p>PowerBoard is in beta. Features may change or be removed between builds, and while board files carry a schema version and are migrated forward, you should keep your own copies of work you cannot afford to lose.</p>
+
+  <h2>Connecting AI agents</h2>
+  <p>PowerBoard can expose a local MCP endpoint so AI clients you run can read and edit your boards. <strong>You choose which clients to connect</strong>, and your use of them is governed by their own terms and privacy policies. We are not responsible for what a connected agent writes to your board — that is what undo and backups are for.</p>
+
+  <h2>Supporting PowerBoard</h2>
+  <p>Every feature is free. An optional one-time contribution — processed by Stripe on Stripe's own site — supports continued development and unlocks nothing, so there is nothing to lose access to. If you contributed by mistake, email us and we'll refund it.</p>
+
+  <h2>No warranty</h2>
+  <p>The app is provided as-is. We work hard to make it reliable — including loud, visible warnings when a save fails — but we cannot guarantee it is free of defects, and we are not liable for lost data or indirect damages to the extent the law allows.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about these terms: <a href="mailto:danny@lamonade.xyz">danny@lamonade.xyz</a>.</p>
+</main>
+
+<footer class="foot wrap">
+  <div class="foot-inner">
+    <small>&copy; 2026 KM &middot; Built in the open</small>
+    <div class="foot-links">
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+      <a href="/support">Support</a>
+      <a href="/contribute">Contribute</a>
+      <a href="https://www.lamonade.xyz/#work">More work</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var nav = document.querySelector('[data-nav]');
+    var onScroll = function () { nav.classList.toggle('stuck', window.scrollY > 8); };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+  })();
+</script>
+
+</body>
+</html>

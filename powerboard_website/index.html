@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PowerBoard — one canvas, you and your agents</title>
+<meta name="description" content="A desktop design board for hi-fi app mockups and diagrams, where agents are co-editors. Every edit — yours or an agent's — goes through the same validated operation model. Offline-first, on your Mac, in your files." />
+<meta name="theme-color" content="#0B0B10" />
+<link rel="icon" type="image/png" href="assets/mark.png" />
+<link rel="apple-touch-icon" href="assets/mark.png" />
+<meta property="og:title" content="PowerBoard — one canvas, you and your agents" />
+<meta property="og:description" content="Mockups and diagrams on one canvas, with agents editing beside you through the same operation model. Offline-first, on your Mac." />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://powerboard.lamonade.xyz" />
+<meta property="og:image" content="https://powerboard.lamonade.xyz/assets/shots/1-hero.jpg" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="canonical" href="https://powerboard.lamonade.xyz/" />
+<link rel="stylesheet" href="site.css" />
+<script>document.documentElement.classList.add('js');</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "PowerBoard",
+  "operatingSystem": "macOS",
+  "applicationCategory": "DesignApplication",
+  "description": "A desktop-first, offline-first visual workspace for hi-fi app mockups and diagrams, with AI agents as first-class co-editors over MCP.",
+  "url": "https://powerboard.lamonade.xyz/",
+  "image": "https://powerboard.lamonade.xyz/assets/shots/1-hero.jpg",
+  "author": { "@type": "Person", "name": "KM Lam" }
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main">Skip to content</a>
+
+<nav class="nav" data-nav>
+  <div class="nav-inner">
+    <a class="wordmark" href="/"><img src="assets/mark.png" alt="" width="28" height="28" />PowerBoard</a>
+    <div class="nav-links">
+      <a class="hide-sm" href="#canvas">Canvas</a>
+      <a class="hide-sm" href="#agents">Agents</a>
+      <a class="hide-sm" href="#export">Export</a>
+      <a href="/support">Support</a>
+      <a class="nav-contribute" href="/contribute"><span aria-hidden="true">&hearts;</span> Contribute</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero wrap">
+  <p class="eyebrow">For macOS &middot; In private beta</p>
+  <h1>One canvas. You and your agents, on it together.</h1>
+  <p class="lede">PowerBoard is a design board for hi-fi app mockups and diagrams where agents are co-editors, not a plugin. Every change — yours, or one an agent makes while you watch — goes through the same validated operation model.</p>
+  <div class="cta-row">
+    <span class="status-chip">
+      <span class="dot" aria-hidden="true"></span>
+      <svg viewBox="0 0 384 512" fill="currentColor" aria-hidden="true"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
+      Coming to the Mac App Store
+    </span>
+    <a class="btn" href="#canvas">See how it works</a>
+  </div>
+  <p class="cta-note">In private TestFlight beta. No public download yet — this page is the honest version of where it is.</p>
+
+  <div class="hero-shot rise">
+    <div class="shot">
+      <img src="assets/shots/1-hero.jpg" width="1728" height="993" fetchpriority="high" alt="PowerBoard on macOS: a 3,330 × 3,080 org-structure diagram on the canvas, the layer tree on the left, and the inspector showing the frame's layout and appearance on the right." />
+    </div>
+  </div>
+</header>
+
+<main id="main" class="wrap">
+
+  <section class="feature rise" id="canvas">
+    <div class="feature-copy">
+      <h2>Two jobs, one object model.</h2>
+      <p>Hi-fi app mockups and diagrams live on the same canvas, in the same file, under the same schema. A diagram shape is an element type; a connector is one connector system with anchoring and routing.</p>
+      <p>The palettes differ — device artboards and an app kit for mockups, shapes and flow tools for diagrams — but nothing is <strong>duplicated between two half-products</strong>. Switch the palette; the board doesn't change underneath you.</p>
+      <ul class="tags">
+        <li>Device artboards</li>
+        <li>Shapes &amp; connectors</li>
+        <li>Freehand ink</li>
+        <li>Stickies</li>
+        <li>Tree &amp; flow layouts</li>
+      </ul>
+    </div>
+    <div class="feature-shot"><div class="shot"><img src="assets/shots/2-diagram.jpg" width="1500" height="1281" alt="The diagram palette open in PowerBoard: twelve shape primitives above a diagram-tools list — new diagram canvas, connector tool, freehand ink, sticky note, tree and flow — beside the same board." loading="lazy" /></div></div>
+  </section>
+
+  <section class="feature flip rise" id="agents">
+    <div class="feature-copy">
+      <h2>Agents edit beside you, and you can watch.</h2>
+      <p>An agent's edit isn't a file it hands back. It's an operation applied to the live board — validated, undoable, broadcast to your canvas the moment it lands, and attributed to the agent that made it.</p>
+      <p>The activity feed reads in plain language, not as a log dump, and the element it touched <strong>pulses on the canvas</strong> so you can see the work happen instead of diffing for it afterwards.</p>
+      <ul class="tags">
+        <li>Named lanes per agent</li>
+        <li>Serialized writes</li>
+        <li>Live element highlights</li>
+        <li>Shared undo history</li>
+      </ul>
+    </div>
+    <div class="feature-shot"><div class="shot"><img src="assets/shots/3-agents.jpg" width="1400" height="1124" alt="PowerBoard's agent activity panel listing four recent edits in plain language, each attributed to Claude or Codex with a relative timestamp." loading="lazy" /></div></div>
+  </section>
+
+  <section class="feature rise">
+    <div class="feature-copy">
+      <h2>Any MCP client, one URL.</h2>
+      <p>PowerBoard serves its own MCP endpoint while the app is open. Paste one URL into Claude Desktop, Claude Code, Cursor, or anything else that speaks MCP, and ask it to list your boards.</p>
+      <p><strong>41 tools</strong> are exposed — inspect the hierarchy, create frames, add elements and connectors, apply layouts, preview an operation before it's applied, validate the board, undo, and export.</p>
+      <ul class="tags">
+        <li>Streamable HTTP &amp; stdio</li>
+        <li>Hierarchy inspection</li>
+        <li>Operation preview</li>
+        <li>Board validation</li>
+      </ul>
+    </div>
+    <div class="feature-shot"><div class="shot"><img src="assets/shots/6-connect.jpg" width="1450" height="1050" alt="PowerBoard's Connect an agent dialog: a live server badge, tabs for Claude Desktop, Claude Code, Cursor and any other client, and the MCP endpoint URL ready to copy." loading="lazy" /></div></div>
+  </section>
+
+  <section class="feature flip rise">
+    <div class="feature-copy">
+      <h2>An inspector that leads with structure.</h2>
+      <p>Position, size and appearance in compact rows you can drag to scrub or type into — no sliders, because you can never hit an exact value with one and they cost four times the height.</p>
+      <p>Machine metadata is collapsed out of the way, so the fields you actually reach for are the ones at the top, and the layer tree stays <strong>above the fold</strong> where a structure tree belongs.</p>
+      <ul class="tags">
+        <li>Drag-to-scrub fields</li>
+        <li>Layout · Text · Appearance · Arrange</li>
+        <li>Semantic roles</li>
+        <li>Keyboard-first</li>
+      </ul>
+    </div>
+    <div class="feature-shot"><div class="shot"><img src="assets/shots/4-inspector.jpg" width="1500" height="1233" alt="A text element selected on the PowerBoard canvas with its inspector open, showing name, role, layout, content and appearance fields as compact single rows." loading="lazy" /></div></div>
+  </section>
+
+  <section class="feature rise" id="export">
+    <div class="feature-copy">
+      <h2>Export that actually hands you the file.</h2>
+      <p>Pick what to export, the format, the size and the backdrop, and see the exact output dimensions before you commit. Then copy it straight to the clipboard, or download it.</p>
+      <p>For handoff rather than pixels, the same board leaves as an <strong>implementation spec</strong>, <strong>React&nbsp;+&nbsp;Tailwind</strong>, or a <strong>Mermaid diagram</strong>.</p>
+      <ul class="tags">
+        <li>PNG · JPG · SVG · PDF</li>
+        <li>Up to 4&times;</li>
+        <li>Board, white or transparent</li>
+        <li>Copy to clipboard</li>
+      </ul>
+    </div>
+    <div class="feature-shot"><div class="shot"><img src="assets/shots/5-export.jpg" width="1350" height="890" alt="PowerBoard's export dialog: what, format, size and backdrop controls, with a live readout showing the frame will render at 6,660 × 6,160 pixels, plus copy-image and download actions." loading="lazy" /></div></div>
+  </section>
+
+</main>
+
+<section class="output wrap rise">
+  <h2>What comes out the other end.</h2>
+  <p>A frame from the board above, rendered at 2&times;. Connectors routed and labelled, dashes and arrowheads intact, text crisp — the same renderer the app, the agents and the exports all share.</p>
+  <div class="shot">
+    <img src="assets/shots/8-export-output.jpg" width="2400" height="1443" alt="A rendered PowerBoard export: a month-end close workflow across three labelled bands — agents execute, human judgment gates, and the escalation path — with routed connectors carrying labels between the steps." loading="lazy" />
+  </div>
+</section>
+
+<section class="feature wrap flip rise" id="files">
+  <div class="feature-copy">
+    <h2>Your boards are files on your Mac.</h2>
+    <p>PowerBoard runs offline, start to finish. Boards are JSON in your own application-support folder, with snapshot backups into your iCloud Drive — no account, no sign-in, nothing to lose access to.</p>
+    <p>Saving is never best-effort and quiet: if a write fails, the app <strong>says so, visibly</strong>, rather than looking like it saved.</p>
+    <ul class="tags">
+      <li>Offline-first</li>
+      <li>Local JSON</li>
+      <li>iCloud snapshot backups</li>
+      <li>No account</li>
+    </ul>
+  </div>
+  <div class="feature-shot"><div class="shot"><img src="assets/shots/7-boards.jpg" width="1728" height="941" alt="PowerBoard's board list: seven boards with frame and element counts, a local-files badge, and a banner showing the MCP endpoint agents can connect to." loading="lazy" /></div></div>
+</section>
+
+<section class="band wrap rise">
+  <h2>Free, and honest about it.</h2>
+  <p>Everything on this page is in the app. There is no trial, no subscription, and nothing held back behind a purchase — the beta is just a beta, not a paywall in waiting.</p>
+  <p>If you want to support the work, you can <a class="contrib-link" href="/contribute">contribute here</a>. It unlocks nothing — that's the point.</p>
+  <ul class="reqs">
+    <li>macOS</li>
+    <li>Works fully offline</li>
+    <li>Boards stay in your files</li>
+    <li>No account</li>
+  </ul>
+  <div class="cta-row band-cta">
+    <a class="btn" href="/contribute"><span class="heart" aria-hidden="true">&hearts;</span>Contribute</a>
+    <a class="btn btn-ghost" href="/support">Get in touch</a>
+  </div>
+</section>
+
+<footer class="foot wrap">
+  <div class="foot-inner">
+    <small>&copy; 2026 KM &middot; Built in the open</small>
+    <div class="foot-links">
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+      <a href="/support">Support</a>
+      <a href="/contribute">Contribute</a>
+      <a href="https://www.lamonade.xyz/#work">More work</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var nav = document.querySelector('[data-nav]');
+    var onScroll = function () { nav.classList.toggle('stuck', window.scrollY > 8); };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+
+    var rises = document.querySelectorAll('.rise');
+    if (!('IntersectionObserver' in window) ||
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      rises.forEach(function (el) { el.classList.add('in'); });
+      return;
+    }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+      });
+    }, { rootMargin: '0px 0px -12% 0px' });
+    rises.forEach(function (el) { io.observe(el); });
+  })();
+</script>
+
+</body>
+</html>
