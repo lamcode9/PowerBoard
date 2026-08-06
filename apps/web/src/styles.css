@@ -4641,3 +4641,128 @@ button {
   right: calc(100% + 6px);
   transform: translateY(-50%);
 }
+
+/* ============================================================
+   Export dialog (2026-08-06): what / format / size / backdrop,
+   four compact segmented rows over one live size readout. The
+   whole decision fits on one screen — no tabs, no scrolling.
+   ============================================================ */
+.export-dialog {
+  display: grid;
+  gap: var(--space-3);
+  width: min(520px, 94vw);
+  padding: 20px;
+  border-radius: var(--r-xl);
+  background: var(--surface-1);
+  color: var(--text-1);
+  box-shadow: var(--shadow-pop);
+}
+.export-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.export-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+.export-row {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+}
+.export-row-label {
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+}
+.export-choices {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: var(--r-md);
+  background: var(--control-bg);
+}
+.export-choice {
+  flex: 1 1 0;
+  height: 28px;
+  min-width: 0;
+  border: 0;
+  border-radius: calc(var(--r-md) - 3px);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.export-choice:hover:not(:disabled):not(.is-active) {
+  color: var(--text-1);
+}
+.export-choice.is-active {
+  background: var(--surface-1);
+  color: var(--text-1);
+  box-shadow: var(--shadow-1);
+}
+.export-choice:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+.export-note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 11px;
+}
+.export-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  background: rgba(220, 38, 38, 0.1);
+  color: #dc2626;
+  font-size: 11px;
+  font-weight: 600;
+}
+.export-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--hairline);
+}
+.export-size {
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.export-size small {
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 500;
+}
+.export-foot .dialog-actions {
+  flex: 0 0 auto;
+}
+.menu-hint {
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.menu-note {
+  margin: 0 10px 4px;
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.4;
+}

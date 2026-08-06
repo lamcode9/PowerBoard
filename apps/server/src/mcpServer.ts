@@ -855,10 +855,35 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
       title: "Export artboard PNG",
       description:
         "Export an artboard to a PNG under the board exports folder, including the connectors inside that artboard. Rasterizes at 2x by default for print/deck use — pass scale 1 for a screen-size image, up to 4 for large-format print. " +
+        "Pass background 'transparent' for slides that sit on a dark theme, or 'white' for documents; the default keeps the artboard's own colour. Very large boards are clamped to an 80-megapixel budget and the returned `scale` tells you what was actually used. " +
         "The result carries the board's layout diagnostics: if `layout.clean` is false, the image has visible problems (lines through nodes, overlaps, clipped elements) — run polish_layout and export again.",
-      inputSchema: { boardId: z.string(), artboardId: z.string(), scale: z.number().min(1).max(4).optional() }
+      inputSchema: {
+        boardId: z.string(),
+        artboardId: z.string(),
+        scale: z.number().min(1).max(4).optional(),
+        background: z.enum(["board", "white", "transparent"]).optional()
+      }
     },
-    async ({ boardId, artboardId, scale }) => text({ ...(await store.exportArtboardPng(boardId, artboardId, { scale })), layout: layoutDiagnosticsFor(await store.readBoard(boardId)) })
+    async ({ boardId, artboardId, scale, background }) =>
+      text({ ...(await store.exportArtboardPng(boardId, artboardId, { scale, background })), layout: layoutDiagnosticsFor(await store.readBoard(boardId)) })
+  );
+
+  registerTool(
+    "export_page_png",
+    {
+      title: "Export page PNG",
+      description:
+        "Export a whole page — every frame on it plus the connectors between them — to one PNG under the board exports folder. This is the poster export: use it for a diagram that spans several frames, where export_artboard_png would only capture one of them. " +
+        "Same 2x default, 1-4 scale range, background options and 80-megapixel budget as export_artboard_png.",
+      inputSchema: {
+        boardId: z.string(),
+        pageId: z.string().optional(),
+        scale: z.number().min(1).max(4).optional(),
+        background: z.enum(["board", "white", "transparent"]).optional()
+      }
+    },
+    async ({ boardId, pageId, scale, background }) =>
+      text({ ...(await store.exportPagePng(boardId, { pageId, scale, background })), layout: layoutDiagnosticsFor(await store.readBoard(boardId)) })
   );
 
   registerTool(

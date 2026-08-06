@@ -104,9 +104,6 @@ import {
   createBoard,
   deleteBoard,
   exportMermaid,
-  exportPagePdf,
-  exportPageSvg,
-  exportPng,
   exportReactTailwind,
   exportSpec,
   getHealth,
@@ -124,6 +121,7 @@ import { cameraTransform, panCamera, zoomCameraAroundPoint, type Camera, type Vi
 import { CommandPalette, type PaletteCommand } from "./components/CommandPalette";
 import { AgentFeed, type AgentFeedEntry } from "./components/AgentFeed";
 import { RestoreDialog } from "./components/RestoreDialog";
+import { ExportDialog, type ExportTarget } from "./components/ExportDialog";
 import { ShortcutOverlay } from "./components/ShortcutOverlay";
 
 const componentTypes: BoardElement["type"][] = [
@@ -245,6 +243,10 @@ const CANVAS_WIDTH = 80000;
 const CANVAS_HEIGHT = 56000;
 const CANVAS_ORIGIN_X = 24000;
 const CANVAS_ORIGIN_Y = 16000;
+// Mirrors the export renderer's scene padding (packages/renderers renderPageSvg / renderSelectionSvg)
+// so the dialog's size readout matches the file. The server still reports the authoritative numbers.
+const EXPORT_PAGE_PAD = 60;
+const EXPORT_SELECTION_PAD = 32;
 
 type RouteState = { view: "home" } | { view: "board"; boardId: string };
 type RouteMode = "push" | "replace" | "none";
@@ -363,6 +365,7 @@ export function App() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [agentFeed, setAgentFeed] = useState<AgentFeedEntry[]>([]);
@@ -552,6 +555,10 @@ export function App() {
         event.preventDefault();
         actions.commandPalette?.();
       }
+      if (event.key.toLowerCase() === "e" && event.shiftKey) {
+        event.preventDefault();
+        actions.exportImage?.();
+      }
       if (event.key.toLowerCase() === "z") {
         event.preventDefault();
         if (event.shiftKey) actions.redo?.();
@@ -734,6 +741,48 @@ export function App() {
     if (!project || !selectedIds.length) return null;
     return boundsForSelection(project, selectedIds);
   }, [project, selectedIds]);
+
+  /**
+   * What the Export dialog can render, most specific first. Sizes here are the 1x estimate for the
+   * live readout — the server is the authority and its real numbers replace these after a render.
+   */
+  const exportTargets = useMemo<ExportTarget[]>(() => {
+    if (!project) return [];
+    const page = project.pages[0];
+    const selectionSize = boundsForSelection(project, selectedIds);
+    const projectSize = boundsForProject(project);
+    const frame = selectedArtboard ?? activeArtboard;
+    const selectionCount = selectedIds.length;
+    return [
+      {
+        scope: "selection",
+        label: selectionCount > 1 ? `Selection (${selectionCount})` : "Selection",
+        detail: selectionCount ? "Cropped to what you have selected" : "Nothing selected",
+        ids: selectedIds,
+        width: selectionSize ? selectionSize.width + EXPORT_SELECTION_PAD * 2 : 0,
+        height: selectionSize ? selectionSize.height + EXPORT_SELECTION_PAD * 2 : 0,
+        disabledReason: selectionCount ? undefined : "Select a frame or element on the canvas first."
+      },
+      {
+        scope: "artboard",
+        label: "Frame",
+        detail: frame ? frame.name : "No frame on this board",
+        artboardId: frame?.id,
+        width: frame?.width ?? 0,
+        height: frame?.height ?? 0,
+        disabledReason: frame ? undefined : "This board has no frames yet."
+      },
+      {
+        scope: "page",
+        label: "Page",
+        detail: projectSize ? `Every frame and connector${page ? ` on ${page.name}` : ""}` : "No visible frames",
+        pageId: page?.id,
+        width: projectSize ? projectSize.width + EXPORT_PAGE_PAD * 2 : 0,
+        height: projectSize ? projectSize.height + EXPORT_PAGE_PAD * 2 : 0,
+        disabledReason: projectSize ? undefined : "Nothing visible to export."
+      }
+    ];
+  }, [project, selectedIds, selectedArtboard, activeArtboard]);
 
   /** Presence lanes, oldest arrival first so the badge row doesn't reshuffle on every ping. */
   const livePresences = useMemo(() => Object.values(agentPresences).sort((a, b) => a.agentId.localeCompare(b.agentId)), [agentPresences]);
@@ -1894,22 +1943,26 @@ export function App() {
     setStatus("Ink stroke added — keep drawing or press Esc for select");
   }
 
-  async function exportDiagram(kind: "svg" | "pdf" | "mermaid") {
+  /**
+   * Mermaid is a hand-off artefact, not a picture: it goes to the clipboard, because its destination
+   * is a README or a doc, and it is written to the board's exports folder for agents at the same time.
+   */
+  async function exportMermaidDiagram() {
     if (!project) return;
+    let mermaid: string;
     try {
       await operationQueueRef.current.catch(() => null);
-      if (kind === "svg") {
-        const result = await exportPageSvg(project.id);
-        setStatus(`SVG exported: ${result.filePath}`);
-      } else if (kind === "pdf") {
-        const result = await exportPagePdf(project.id);
-        setStatus(`PDF exported: ${result.filePath}`);
-      } else {
-        const result = await exportMermaid(project.id);
-        setStatus(`Mermaid exported: ${result.filePath}`);
-      }
+      mermaid = (await exportMermaid(project.id)).mermaid;
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : `${kind.toUpperCase()} export failed`);
+      setStatus(error instanceof Error ? error.message : "Mermaid export failed");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(mermaid);
+      setStatus("Mermaid copied to the clipboard — paste it into any Markdown doc");
+    } catch (error) {
+      console.error("Mermaid clipboard write failed", error);
+      setStatus("Mermaid generated, but the clipboard was blocked — saved to the board's exports folder");
     }
   }
 
@@ -1969,6 +2022,7 @@ export function App() {
     if (commandOpen) return setCommandOpen(false);
     if (shortcutsOpen) return setShortcutsOpen(false);
     if (restoreOpen) return setRestoreOpen(false);
+    if (exportOpen) return setExportOpen(false);
     if (connectOpen) return setConnectOpen(false);
     if (editingTextId) return setEditingTextId(null);
     if (focusMode) {
@@ -2003,7 +2057,8 @@ export function App() {
     commandPalette: () => setCommandOpen((current) => !current),
     shortcuts: () => setShortcutsOpen((current) => !current),
     focusMode: () => setFocusMode((current) => !current),
-    connectAgent: () => setConnectOpen(true)
+    connectAgent: () => setConnectOpen(true),
+    exportImage: () => void openExportDialog()
   };
   nudgeRef.current = (dx, dy) => void nudgeSelection(dx, dy);
 
@@ -2029,20 +2084,11 @@ export function App() {
     });
   }
 
-  async function exportSelectedPng() {
+  /** Opens the Export dialog with pending edits flushed, so the image can never be a frame behind. */
+  async function openExportDialog() {
     if (!project) return;
-    const artboardId = selectedArtboard?.id ?? activeArtboard?.id;
-    if (!artboardId) {
-      setStatus("Select a frame or element before exporting PNG");
-      return;
-    }
-    try {
-      await operationQueueRef.current.catch(() => null);
-      const result = await exportPng(project.id, artboardId);
-      setStatus(`PNG exported: ${result.filePath}`);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "PNG export failed");
-    }
+    await operationQueueRef.current.catch(() => null);
+    setExportOpen(true);
   }
 
   async function exportCode() {
@@ -2050,7 +2096,7 @@ export function App() {
     try {
       await operationQueueRef.current.catch(() => null);
       const result = await exportReactTailwind(project.id);
-      setStatus(`React + Tailwind exported: ${result.dir}`);
+      setStatus(`React + Tailwind exported — ${result.files.length} files in the board's exports folder (File ▸ Reveal Boards Folder)`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "React export failed");
     }
@@ -2060,8 +2106,8 @@ export function App() {
     if (!project) return;
     try {
       await operationQueueRef.current.catch(() => null);
-      const result = await exportSpec(project.id);
-      setStatus(`Spec exported: ${result.markdownPath}`);
+      await exportSpec(project.id);
+      setStatus("Implementation spec exported to the board's exports folder (File ▸ Reveal Boards Folder)");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Spec export failed");
     }
@@ -2305,12 +2351,10 @@ export function App() {
         { id: "align-top", section: "Layout", title: "Align top", run: () => void runLayout("align-top") },
         { id: "distribute-h", section: "Layout", title: "Distribute horizontally", run: () => void runLayout("distribute-horizontal") },
         { id: "distribute-v", section: "Layout", title: "Distribute vertically", run: () => void runLayout("distribute-vertical") },
-        { id: "export-png", section: "Export", title: "Export PNG", run: () => void exportSelectedPng() },
+        { id: "export-image", section: "Export", title: "Export image…", hint: "⌘⇧E", keywords: "png jpg svg pdf download save picture screenshot slide deck", run: () => void openExportDialog() },
         { id: "export-spec", section: "Export", title: "Export implementation spec", run: () => void exportImplementationSpec() },
         { id: "export-react", section: "Export", title: "Export React + Tailwind", run: () => void exportCode() },
-        { id: "export-svg", section: "Export", title: "Export page SVG", run: () => void exportDiagram("svg") },
-        { id: "export-pdf", section: "Export", title: "Export page PDF", run: () => void exportDiagram("pdf") },
-        { id: "export-mermaid", section: "Export", title: "Export Mermaid diagram", run: () => void exportDiagram("mermaid") },
+        { id: "export-mermaid", section: "Export", title: "Export Mermaid diagram", run: () => void exportMermaidDiagram() },
         { id: "fit-all", section: "View", title: "Fit all frames", hint: "⌘1", run: fitAll },
         { id: "focus-selection", section: "View", title: "Focus selection", run: focusSelection },
         { id: "zoom-100", section: "View", title: "Zoom to 100%", hint: "⌘0", run: () => { zoomAtViewportCenter(1); setStatus("Zoom 100%"); } },
@@ -2431,15 +2475,16 @@ export function App() {
               <ToolbarMenu id="export" label="Export" icon={<Download size={16} />}>
                 {(close) => (
                   <>
-                    <div className="menu-heading">Mockup</div>
-                    <button className="menu-item" onClick={() => { void exportSelectedPng(); close(); }}><Download size={15} /> PNG image</button>
+                    <div className="menu-heading">Image</div>
+                    <button className="menu-item" onClick={() => { void openExportDialog(); close(); }}>
+                      <Download size={15} /> Export image… <span className="menu-hint">⌘⇧E</span>
+                    </button>
+                    <p className="menu-note">PNG, JPG, SVG or PDF — up to 4×, transparent or solid, straight to your Downloads or clipboard.</p>
+                    <div className="menu-divider" />
+                    <div className="menu-heading">Hand-off</div>
                     <button className="menu-item" onClick={() => { void exportImplementationSpec(); close(); }}><FileText size={15} /> Implementation spec</button>
                     <button className="menu-item" onClick={() => { void exportCode(); close(); }}><FileCode2 size={15} /> React + Tailwind</button>
-                    <div className="menu-divider" />
-                    <div className="menu-heading">Diagram</div>
-                    <button className="menu-item" onClick={() => { void exportDiagram("svg"); close(); }}><Shapes size={15} /> Page SVG</button>
-                    <button className="menu-item" onClick={() => { void exportDiagram("pdf"); close(); }}><FileText size={15} /> Page PDF</button>
-                    <button className="menu-item" onClick={() => { void exportDiagram("mermaid"); close(); }}><Workflow size={15} /> Mermaid</button>
+                    <button className="menu-item" onClick={() => { void exportMermaidDiagram(); close(); }}><Workflow size={15} /> Mermaid diagram</button>
                   </>
                 )}
               </ToolbarMenu>
@@ -2808,6 +2853,16 @@ export function App() {
       <CommandPalette open={commandOpen} commands={paletteCommands} onClose={() => setCommandOpen(false)} />
       <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       {project ? <RestoreDialog boardId={project.id} open={restoreOpen} onClose={() => setRestoreOpen(false)} onRestored={setStatus} /> : null}
+      {project ? (
+        <ExportDialog
+          boardId={project.id}
+          open={exportOpen}
+          targets={exportTargets}
+          desktop={storageStatus?.shell === "desktop"}
+          onClose={() => setExportOpen(false)}
+          onStatus={setStatus}
+        />
+      ) : null}
 
       <footer className={classNames("statusbar", statusTone === "error" && "has-error")}>
         <span className={classNames("status-message", statusTone === "error" && "is-error")}>

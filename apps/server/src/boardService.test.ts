@@ -4,7 +4,7 @@ import path from "node:path";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { BoardElement, BoardProject, BoardProjectSchema, createElementFromPreset } from "@powerboard/schema";
-import { BoardStore, type StorageMode } from "./boardService";
+import { BoardStore, MAX_EXPORT_PIXELS, type StorageMode } from "./boardService";
 import { CloudBoardSummary, CloudFileRecord, CloudStore } from "./cloudStore";
 
 async function tempStore(cloud?: CloudStore, storageMode: StorageMode = "mirror") {
@@ -258,6 +258,77 @@ describe("BoardStore", () => {
 
     const png = await store.exportArtboardPng(board.id, board.artboards[0]!.id);
     const stat = await fs.stat(png.filePath);
+    expect(stat.size).toBeGreaterThan(100);
+  });
+
+  it("renders downloadable bytes for every format and scope without writing a file", async () => {
+    const { dir, store } = await tempStore();
+    const board = await store.createBoard("Download Board");
+    const artboard = board.artboards[0]!;
+
+    const png = await store.renderExport(board.id, { scope: "artboard", artboardId: artboard.id, format: "png", scale: 3 });
+    expect(png.contentType).toBe("image/png");
+    expect(png.fileName.endsWith(".png")).toBe(true);
+    expect(png.scale).toBe(3);
+    const pngMeta = await sharp(png.data).metadata();
+    expect(pngMeta.width).toBe(Math.round(artboard.width * 3));
+    expect(pngMeta.height).toBe(Math.round(artboard.height * 3));
+
+    const jpg = await store.renderExport(board.id, { scope: "page", format: "jpg", scale: 1 });
+    expect(jpg.contentType).toBe("image/jpeg");
+    expect((await sharp(jpg.data).metadata()).format).toBe("jpeg");
+
+    const svg = await store.renderExport(board.id, { scope: "artboard", artboardId: artboard.id, format: "svg" });
+    expect(svg.contentType).toBe("image/svg+xml");
+    expect(svg.data.toString("utf8")).toContain("<svg");
+
+    const pdf = await store.renderExport(board.id, { scope: "page", format: "pdf", scale: 1 });
+    expect(pdf.data.subarray(0, 5).toString("latin1")).toBe("%PDF-");
+
+    // Nothing above touched the exports folder — renderExport is the download path, not a file writer.
+    const exportsDir = await fs.readdir(path.join(dir, board.id, "exports")).catch(() => []);
+    expect(exportsDir).toEqual([]);
+  });
+
+  it("keeps alpha for a transparent PNG and flattens formats that have no alpha", async () => {
+    const { store } = await tempStore();
+    const board = await store.createBoard("Transparent Board");
+    const artboardId = board.artboards[0]!.id;
+
+    const transparent = await store.renderExport(board.id, { scope: "artboard", artboardId, format: "png", scale: 1, background: "transparent" });
+    const corner = await sharp(transparent.data).ensureAlpha().extract({ left: 0, top: 0, width: 1, height: 1 }).raw().toBuffer();
+    expect(corner[3]).toBe(0);
+
+    const opaque = await store.renderExport(board.id, { scope: "artboard", artboardId, format: "png", scale: 1, background: "white" });
+    const opaqueCorner = await sharp(opaque.data).ensureAlpha().extract({ left: 0, top: 0, width: 1, height: 1 }).raw().toBuffer();
+    expect(opaqueCorner[3]).toBe(255);
+
+    // JPEG cannot carry alpha, so a transparent request must come back white rather than black.
+    const jpg = await store.renderExport(board.id, { scope: "artboard", artboardId, format: "jpg", scale: 1, background: "transparent" });
+    const jpgCorner = await sharp(jpg.data).extract({ left: 0, top: 0, width: 1, height: 1 }).raw().toBuffer();
+    expect([jpgCorner[0], jpgCorner[1], jpgCorner[2]]).toEqual([255, 255, 255]);
+  });
+
+  it("clamps an oversized export to the pixel budget and reports the scale it used", async () => {
+    const { store } = await tempStore();
+    const board = await store.createBoard("Poster Board");
+    const huge = { ...board.artboards[0]!, width: 6000, height: 6000 };
+    await store.replaceBoard(board.id, { ...board, artboards: [huge, ...board.artboards.slice(1)] });
+
+    const rendered = await store.renderExport(board.id, { scope: "artboard", artboardId: huge.id, format: "png", scale: 4 });
+    expect(rendered.requestedScale).toBe(4);
+    expect(rendered.scale).toBeLessThan(4);
+    expect(rendered.width * rendered.height).toBeLessThanOrEqual(MAX_EXPORT_PIXELS);
+  });
+
+  it("exports a whole page as one PNG including every frame", async () => {
+    const { store } = await tempStore();
+    const board = await store.createBoard("Page PNG Board");
+    const page = await store.exportPagePng(board.id, { scale: 1 });
+
+    const widest = Math.max(...board.artboards.map((artboard) => artboard.x + artboard.width));
+    expect(page.width).toBeGreaterThan(widest - Math.min(...board.artboards.map((artboard) => artboard.x)));
+    const stat = await fs.stat(page.filePath);
     expect(stat.size).toBeGreaterThan(100);
   });
 

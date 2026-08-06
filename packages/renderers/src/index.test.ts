@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BoardProjectSchema, createDefaultProject, createElementFromPreset } from "@powerboard/schema";
-import { renderArtboardReactTailwind, renderArtboardSvg, renderReactTailwind, renderSpecMarkdown } from "./index";
+import { renderArtboardReactTailwind, renderArtboardSvg, renderReactTailwind, renderScene, renderSelectionSvg, renderSpecMarkdown } from "./index";
 
 describe("renderers", () => {
   it("exports readable React/Tailwind files", () => {
@@ -32,6 +32,48 @@ describe("renderers", () => {
     const svg = renderArtboardSvg(project, project.artboards[0]!.id);
     expect(svg).toContain("<svg");
     expect(svg).toContain("Add transaction");
+  });
+
+  it("drops the backdrop rect when the scene is exported transparent", () => {
+    const project = createDefaultProject();
+    const opaque = renderArtboardSvg(project, project.artboards[0]!.id);
+    const transparent = renderArtboardSvg(project, project.artboards[0]!.id, { background: "transparent" });
+
+    expect(opaque).toContain('width="100%"');
+    expect(transparent).not.toContain('width="100%"');
+    expect(transparent).toContain("Add transaction");
+  });
+
+  it("crops a selection to its own bounds and keeps the element's own artwork", () => {
+    const project = createDefaultProject();
+    const element = project.elements.find((candidate) => candidate.parentId === undefined || candidate.parentId === null)!;
+    const svg = renderSelectionSvg(project, [element.id]);
+    const width = Number(svg.match(/\swidth="([\d.]+)"/)![1]);
+    const height = Number(svg.match(/\sheight="([\d.]+)"/)![1]);
+
+    // 32px of padding on each side of the element, and nothing like the full artboard.
+    expect(width).toBe(Math.round(element.width) + 64);
+    expect(height).toBe(Math.round(element.height) + 64);
+    // Cropped, not a full artboard: the frame is many times taller than one element plus padding.
+    expect(height).toBeLessThan(project.artboards[0]!.height / 2);
+  });
+
+  it("renders a selected frame whole and reports its true size through renderScene", () => {
+    const project = createDefaultProject();
+    const artboard = project.artboards[0]!;
+    const scene = renderScene(project, { scope: "artboard", artboardId: artboard.id });
+
+    expect(scene.width).toBe(Math.round(artboard.width));
+    expect(scene.height).toBe(Math.round(artboard.height));
+    expect(scene.name).toBe(artboard.name);
+
+    const page = renderScene(project, { scope: "page" });
+    expect(page.width).toBeGreaterThan(scene.width);
+    expect(page.svg).toContain("<svg");
+  });
+
+  it("refuses an empty selection instead of producing a blank image", () => {
+    expect(() => renderSelectionSvg(createDefaultProject(), [])).toThrow(/Select a frame or element/);
   });
 
   it("exports icon, line, and sparkline primitives across SVG, spec, and React", () => {

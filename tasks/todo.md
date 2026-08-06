@@ -3,6 +3,56 @@
 Source of truth for the v2 pivot. Full rationale + feature matrix: `docs/powerboard-desktop-roadmap.html`.
 Written 2026-07-04. Status legend: [ ] todo · [~] in progress · [x] done.
 
+## Active — Export: the file never reaches the user (2026-08-06)
+
+**Verified against the running TestFlight build**, not from source. `POST /export/png` on the live board
+`board_hf75v_veggid` returned
+`/Users/km/Library/Containers/com.lamonade.powerboard/Data/Library/Application Support/PowerBoard/boards/…/exports/Org-Structure-Matrix-v3-detailed.png`
+— 6660×6160, 2.4 MB, and the raster itself is **excellent** (connectors, dashes, labels, crisp text at 144 dpi).
+The image is not the problem. **Delivery is.** Every export path in the app writes a file server-side and
+returns a *path string* that the UI prints into the status bar. Under App Sandbox that path is inside
+`~/Library/Containers/…`, which a normal user cannot navigate to. So today: **you cannot download anything.**
+
+Gaps, in the order they hurt:
+1. **No download.** No `Content-Disposition`, no anchor, no save panel. Six export actions, zero files delivered.
+2. **No page or selection raster.** PNG is artboard-only; a diagram that spans frames can only leave as SVG/PDF —
+   which also just write paths.
+3. **Resolution is hardcoded 2×** in the web client (the service accepts 1–4, the UI never passes it) and the user
+   is never told the output pixel size. "Is this big enough for a slide?" is unanswerable.
+4. **No background control.** Slides on dark backgrounds need transparency; docs need white. Neither exists.
+5. **No copy-to-clipboard** — the <5s path from canvas to Keynote/Slides/Notion.
+
+### Build
+
+- [x] `packages/renderers`: `renderScene()` dispatcher + `renderSelectionSvg()`; `background`/`padding` options on
+      artboard and page renderers; scene returns real width/height so the caller never re-parses the SVG.
+- [x] `boardService.renderExport()` — pure (no disk write): scope × format × scale × background → bytes.
+      `exportArtboardPng` delegates to it, so there is one rasterizer, not two. Pixel cap so a 4× poster can't
+      exhaust memory, and the **clamped scale is reported back** rather than silently applied.
+- [x] `POST /api/boards/:id/render` streams the bytes with `Content-Disposition` + size headers. The existing
+      `/export/*` routes keep writing files — that is the right shape for agents, wrong for humans.
+- [x] Web: real Export dialog (what / format / size / background), live pixel readout, **Copy image** and
+      **Download**. ⌘⇧E. Errors surface in the dialog; nothing fails silently.
+- [x] Electron: `will-download` → native save panel defaulted to Downloads. Required under sandbox —
+      `files.user-selected.read-write` only grants access to a powerbox-chosen path, so no new entitlement.
+- [x] MCP: `scale`/`background` on `export_artboard_png`, new `export_page_png`. Same rasterizer.
+- [x] Tests + verify in the running app, then TestFlight.
+
+**Verified, not assumed.** In a browser against a real 506-element board: dialog defaults to Selection when
+something is selected (readout `1,008 × 480 px`, matching the element's 440×176 at 2× plus 32px padding each
+side), Frame otherwise; SVG swaps the size row for "Vector — stays sharp at any size"; JPG disables Transparent
+with a reason; **Copy image put a real PNG on the macOS clipboard** — `osascript clipboard info` reported
+`«class PNGf»` and the IHDR bytes decode to 1008 × 480, the exact size promised. Page export of the same board
+returned 14,880 × 5,344 with all three frames and their connectors, and the 2× request was **clamped to 1.67×
+and said so** in the header and the status line. In the sandboxed Electron shell: Export → Download →
+**native save panel defaulted to Downloads** → `AI-Embedded-Organization-m_rail_cto.png` (1008 × 480) written
+and revealed in Finder. Both themes, console clean, 81 tests, typecheck, build, `mcp:check` 41 tools.
+
+**One real bug found and fixed mid-verification:** the status line said "choose where to save" in a plain
+browser. It was sniffing `navigator.userAgent` for "Electron" — which is true inside any Electron-hosted
+browser view. Replaced with a fact the server actually knows: the desktop shell sets `POWERBOARD_SHELL` and
+`/api/health` reports `shell: "desktop" | "browser"`.
+
 ## Active — Paper.design UI parity: the inspector is the gap (2026-07-29)
 
 Benchmarked against paper.design's editor (hero capture on paper.design + `Documents/paper-design-gap-plan-2026-05-07.md`;
@@ -545,3 +595,32 @@ presence when a tool *starts* (reads included).
 ## Review notes
 
 - (fill as phases complete)
+
+## Active — Public website + Lamonade showcase (2026-08-06)
+
+Modelled on the Vellum website (`Notes/vellum_website/`), which is the house pattern: a hand-written
+static `index.html` + `site.css` + `assets/`, no build step, deployed to Vercel on a
+`<product>.lamonade.xyz` subdomain, palette lifted from the product's own surfaces, and registered as a
+card in the Lamonade portfolio's `workProjects` array (`Lamonade/Lamonade/src/App.tsx`).
+
+Decisions taken with the user this session:
+- **Primary CTA = "Coming to the Mac App Store."** PowerBoard is TestFlight-only (build 202607291510,
+  v0.1.0). No download link exists, so the site is a showcase with an honest status line — inventing a
+  download button would be the one unforgivable broken link.
+- **Contribute = real Stripe Payment Link**, created this session in the Lamonade Stripe account and
+  configured to mirror Vellum's exactly (product "Support PowerBoard", $4.99 USD one-off, no tax, no
+  address/phone/name collection, CTA button "Donate", custom confirmation message):
+  `plink_1U1LcA2QFURwSkSZvk6SxhfA` → `https://donate.stripe.com/8x28wI3oh5Le0aIaI6dUY01`.
+
+### Build
+
+- [ ] `powerboard_website/`: `index.html`, `site.css`, `assets/`, `vercel.json`, `robots.txt`.
+- [ ] Real product screenshots — captured from the running app against a copy of the real boards
+      (`AI Embedded Organization`, 506 elements / 25 connectors; `Vellum AI Connect`), never mocked art.
+- [ ] `/contribute` as a Vercel redirect, so the Stripe URL is a one-line swap and every surface
+      (site, future app, future App Store listing) points at a URL we own.
+- [ ] `/privacy`, `/terms`, `/support` — the Mac App Store submission needs them and the footer must
+      not 404.
+- [ ] Register PowerBoard in `workProjects` in the Lamonade portfolio, iframe preview like Vellum's.
+- [ ] Deploy to Vercel, attach `powerboard.lamonade.xyz`.
+- [ ] Verify: every internal + external link resolves, both themes, mobile/tablet/desktop, console clean.

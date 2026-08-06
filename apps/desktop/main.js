@@ -1,7 +1,7 @@
 // PowerBoard desktop shell. Runs the PowerBoard server (Express + WS + MCP) inside the
 // Electron main process, then opens a window on it. One process owns UI, storage, and MCP,
 // so agents connecting to http://127.0.0.1:4318/mcp always see the board the user sees.
-import { app, BrowserWindow, Menu, dialog, shell, clipboard } from "electron";
+import { app, BrowserWindow, Menu, dialog, session, shell, clipboard } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -35,6 +35,7 @@ async function main() {
     return;
   }
   Menu.setApplicationMenu(buildMenu());
+  installDownloadHandler();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -45,6 +46,8 @@ async function startServer() {
   // Boards live in the app container (offline-first). POWERBOARD_ROOT/STORAGE_MODE can be
   // overridden from the environment for migration/debugging sessions.
   process.env.PORT = String(port);
+  // Lets the web UI say "choose where to save" instead of "downloaded" — see /api/health.
+  process.env.POWERBOARD_SHELL = "desktop";
   process.env.POWERBOARD_STORAGE_MODE = process.env.POWERBOARD_STORAGE_MODE ?? "local";
   process.env.POWERBOARD_ROOT = process.env.POWERBOARD_ROOT ?? path.join(app.getPath("userData"), "boards");
   process.env.POWERBOARD_BACKUP_DIR = process.env.POWERBOARD_BACKUP_DIR ?? defaultBackupDir();
@@ -97,6 +100,30 @@ async function waitForHealth() {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(lastError || "Health check timed out.");
+}
+
+/**
+ * Exported images are downloads, and under App Sandbox a download must go through a save panel:
+ * `files.user-selected.read-write` grants access to the path the user picks and nothing else, so
+ * writing straight to ~/Downloads would fail. Defaulting the panel to Downloads keeps it one Return
+ * press. A failure is reported — an image that silently never lands is the bug this whole feature fixes.
+ */
+function installDownloadHandler() {
+  session.defaultSession.on("will-download", (_event, item) => {
+    const fileName = item.getFilename();
+    item.setSaveDialogOptions({
+      title: "Export image",
+      defaultPath: path.join(app.getPath("downloads"), fileName),
+      buttonLabel: "Export"
+    });
+    item.once("done", (_doneEvent, state) => {
+      if (state === "completed") {
+        shell.showItemInFolder(item.getSavePath());
+      } else if (state !== "cancelled") {
+        dialog.showErrorBox("Export failed", `PowerBoard could not save ${fileName}. The download ${state}.`);
+      }
+    });
+  });
 }
 
 function createWindow() {

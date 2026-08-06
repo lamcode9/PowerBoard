@@ -140,7 +140,13 @@ ${artboards}
 `;
 }
 
-export function renderArtboardSvg(project: BoardProject, artboardId: string): string {
+/** Background override for any scene render. `"transparent"` omits the backdrop rect entirely. */
+export interface SceneOptions {
+  background?: string;
+  padding?: number;
+}
+
+export function renderArtboardSvg(project: BoardProject, artboardId: string, options: SceneOptions = {}): string {
   const artboard = project.artboards.find((candidate) => candidate.id === artboardId);
   if (!artboard) {
     throw new Error(`Artboard not found: ${artboardId}`);
@@ -160,7 +166,7 @@ export function renderArtboardSvg(project: BoardProject, artboardId: string): st
     .join("\n  ");
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${artboard.width}" height="${artboard.height}" viewBox="0 0 ${artboard.width} ${artboard.height}">
-  <rect width="100%" height="100%" fill="${escapeAttr(artboard.background)}"/>
+  ${backdropRect(0, 0, options.background ?? artboard.background)}
   ${elements}
   ${connectors}
 </svg>`;
@@ -702,36 +708,19 @@ function wrapSvgText(text: string, maxChars: number): string[] {
 }
 
 /** Render a full page (all artboards + connectors) to one SVG — diagrams export whole. */
-export function renderPageSvg(project: BoardProject, pageId?: string): string {
+export function renderPageSvg(project: BoardProject, pageId?: string, options: SceneOptions = {}): string {
   const page = pageId ? project.pages.find((candidate) => candidate.id === pageId) : project.pages[0];
   const artboards = project.artboards.filter((artboard) => artboard.visible && (!page || page.artboardIds.includes(artboard.id)));
   if (!artboards.length) {
     throw new Error("Page has no visible artboards to export.");
   }
-  const pad = 60;
+  const pad = options.padding ?? 60;
   const minX = Math.min(...artboards.map((a) => a.x)) - pad;
   const minY = Math.min(...artboards.map((a) => a.y)) - pad;
   const maxX = Math.max(...artboards.map((a) => a.x + a.width)) + pad;
   const maxY = Math.max(...artboards.map((a) => a.y + a.height)) + pad;
 
-  const artboardMarkup = artboards
-    .map((artboard) => {
-      const chrome = artboard.frameless
-        ? artboard.background && artboard.background !== "transparent"
-          ? `<rect x="${artboard.x}" y="${artboard.y}" width="${artboard.width}" height="${artboard.height}" fill="${escapeAttr(artboard.background)}"/>`
-          : ""
-        : `<rect x="${artboard.x}" y="${artboard.y}" width="${artboard.width}" height="${artboard.height}" rx="18" fill="${escapeAttr(artboard.background)}" stroke="#CBD5E1" stroke-width="1"/>`;
-      const elements = project.elements
-        .filter((element) => element.artboardId === artboard.id && element.visible && !element.parentId)
-        .sort((a, b) => a.zIndex - b.zIndex)
-        .map((element) => renderElementSvg(project, element, artboard.x, artboard.y))
-        .join("");
-      const label = artboard.frameless
-        ? ""
-        : `<text x="${artboard.x}" y="${artboard.y - 12}" fill="#64748B" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600">${escapeXml(artboard.name)}</text>`;
-      return `${label}${chrome}${elements}`;
-    })
-    .join("\n  ");
+  const artboardMarkup = artboards.map((artboard) => renderArtboardBlockSvg(project, artboard)).join("\n  ");
 
   const artboardIds = new Set(artboards.map((artboard) => artboard.id));
   const slots = connectorAnchorSlots(project);
@@ -741,10 +730,185 @@ export function renderPageSvg(project: BoardProject, pageId?: string): string {
     .join("\n  ");
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(maxX - minX)}" height="${Math.round(maxY - minY)}" viewBox="${Math.round(minX)} ${Math.round(minY)} ${Math.round(maxX - minX)} ${Math.round(maxY - minY)}">
-  <rect x="${Math.round(minX)}" y="${Math.round(minY)}" width="100%" height="100%" fill="#F1F5F9"/>
+  ${backdropRect(Math.round(minX), Math.round(minY), options.background ?? PAGE_BACKGROUND)}
   ${artboardMarkup}
   ${connectors}
 </svg>`;
+}
+
+/** One artboard drawn in page space: name label, frame chrome, then its element tree. */
+function renderArtboardBlockSvg(project: BoardProject, artboard: Artboard): string {
+  const chrome = artboard.frameless
+    ? artboard.background && artboard.background !== "transparent"
+      ? `<rect x="${artboard.x}" y="${artboard.y}" width="${artboard.width}" height="${artboard.height}" fill="${escapeAttr(artboard.background)}"/>`
+      : ""
+    : `<rect x="${artboard.x}" y="${artboard.y}" width="${artboard.width}" height="${artboard.height}" rx="18" fill="${escapeAttr(artboard.background)}" stroke="#CBD5E1" stroke-width="1"/>`;
+  const elements = project.elements
+    .filter((element) => element.artboardId === artboard.id && element.visible && !element.parentId)
+    .sort((a, b) => a.zIndex - b.zIndex)
+    .map((element) => renderElementSvg(project, element, artboard.x, artboard.y))
+    .join("");
+  const label = artboard.frameless
+    ? ""
+    : `<text x="${artboard.x}" y="${artboard.y - 12}" fill="#64748B" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="600">${escapeXml(artboard.name)}</text>`;
+  return `${label}${chrome}${elements}`;
+}
+
+/**
+ * Whatever the user has selected, cropped to its own bounds — the "put *this* in my slide" export.
+ * Selected frames render whole (chrome + children); selected elements render in page space at their
+ * absolute position; a connector is drawn only when both of its endpoints are inside the render set,
+ * so a cropped image never shows an arrow pointing at nothing.
+ */
+export function renderSelectionSvg(project: BoardProject, ids: string[], options: SceneOptions = {}): string {
+  const { artboards, elements } = resolveSceneSelection(project, ids);
+  if (!artboards.length && !elements.length) {
+    throw new Error("Select a frame or element before exporting an image.");
+  }
+  const pad = options.padding ?? 32;
+  const rects: Rect[] = [
+    ...artboards.map((artboard) => ({ x: artboard.x, y: artboard.y - (artboard.frameless ? 0 : 26), width: artboard.width, height: artboard.height + (artboard.frameless ? 0 : 26) })),
+    ...elements.map((element) => absoluteElementRect(project, element))
+  ];
+  const minX = Math.min(...rects.map((rect) => rect.x)) - pad;
+  const minY = Math.min(...rects.map((rect) => rect.y)) - pad;
+  const maxX = Math.max(...rects.map((rect) => rect.x + rect.width)) + pad;
+  const maxY = Math.max(...rects.map((rect) => rect.y + rect.height)) + pad;
+
+  const artboardMarkup = artboards.map((artboard) => renderArtboardBlockSvg(project, artboard)).join("\n  ");
+  const elementMarkup = elements
+    .map((element) => {
+      const origin = absoluteElementRect(project, element);
+      return renderElementSvg(project, element, origin.x - element.x, origin.y - element.y);
+    })
+    .join("\n  ");
+
+  const rendered = renderedIdSet(project, artboards, elements);
+  const slots = connectorAnchorSlots(project);
+  const connectors = project.connectors
+    .filter((connector) => connectorEndpointRendered(connector.fromArtboardId, connector.fromElementId, rendered) && connectorEndpointRendered(connector.toArtboardId, connector.toElementId, rendered))
+    .map((connector) => renderConnectorSvg(project, connector, slots.get(connector.id)))
+    .join("\n  ");
+
+  // A lone frame keeps its own background; a mixed or multi-object selection sits on the page colour.
+  const naturalBackground = artboards.length === 1 && !elements.length ? artboards[0]!.background : PAGE_BACKGROUND;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(maxX - minX)}" height="${Math.round(maxY - minY)}" viewBox="${Math.round(minX)} ${Math.round(minY)} ${Math.round(maxX - minX)} ${Math.round(maxY - minY)}">
+  ${backdropRect(Math.round(minX), Math.round(minY), options.background ?? naturalBackground)}
+  ${artboardMarkup}
+  ${elementMarkup}
+  ${connectors}
+</svg>`;
+}
+
+export type SceneScope = "page" | "artboard" | "selection";
+
+export interface SceneRequest extends SceneOptions {
+  scope: SceneScope;
+  pageId?: string;
+  artboardId?: string;
+  ids?: string[];
+}
+
+export interface RenderedScene {
+  svg: string;
+  width: number;
+  height: number;
+  /** Human-readable name of what was rendered — becomes the download filename. */
+  name: string;
+}
+
+/**
+ * Single entry point for every image export: scope in, SVG + its true pixel size out.
+ * Callers rasterize from this and never re-parse the SVG to find its dimensions.
+ */
+export function renderScene(project: BoardProject, request: SceneRequest): RenderedScene {
+  const { scope, pageId, artboardId, ids, ...options } = request;
+  if (scope === "artboard") {
+    const artboard = project.artboards.find((candidate) => candidate.id === artboardId);
+    if (!artboard) throw new Error(`Artboard not found: ${artboardId ?? "(none given)"}`);
+    return { svg: renderArtboardSvg(project, artboard.id, options), width: Math.round(artboard.width), height: Math.round(artboard.height), name: artboard.name };
+  }
+  if (scope === "selection") {
+    const svg = renderSelectionSvg(project, ids ?? [], options);
+    const { artboards, elements } = resolveSceneSelection(project, ids ?? []);
+    // Board-qualified: a cropped element is often called something like "e_right", which is
+    // meaningless once it is sitting in a Downloads folder next to everything else.
+    const only = artboards.length + elements.length === 1 ? (artboards[0]?.name ?? elements[0]?.name) : undefined;
+    return { svg, ...svgViewportSize(svg), name: `${project.name} ${only ?? "selection"}` };
+  }
+  const page = pageId ? project.pages.find((candidate) => candidate.id === pageId) : project.pages[0];
+  const svg = renderPageSvg(project, page?.id, options);
+  return { svg, ...svgViewportSize(svg), name: page && project.pages.length > 1 ? `${project.name} — ${page.name}` : project.name };
+}
+
+const PAGE_BACKGROUND = "#F1F5F9";
+
+/** `transparent` (or an empty colour) means: draw no backdrop at all, so the PNG keeps its alpha. */
+function backdropRect(x: number, y: number, background: string): string {
+  if (!background || background === "transparent" || background === "none") return "";
+  return `<rect x="${x}" y="${y}" width="100%" height="100%" fill="${escapeAttr(background)}"/>`;
+}
+
+function svgViewportSize(svg: string): { width: number; height: number } {
+  const width = Number(svg.match(/\swidth="([\d.]+)"/)?.[1] ?? 0);
+  const height = Number(svg.match(/\sheight="([\d.]+)"/)?.[1] ?? 0);
+  return { width: Math.round(width), height: Math.round(height) };
+}
+
+/**
+ * Selected ids → the roots actually worth drawing. An element whose frame is also selected, or whose
+ * ancestor is selected, is dropped: it is already painted by that ancestor and drawing it twice would
+ * put it above its own siblings.
+ */
+function resolveSceneSelection(project: BoardProject, ids: string[]): { artboards: Artboard[]; elements: BoardElement[] } {
+  const selected = new Set(ids);
+  const artboards = project.artboards.filter((artboard) => selected.has(artboard.id) && artboard.visible);
+  const artboardIds = new Set(artboards.map((artboard) => artboard.id));
+  const elements = project.elements.filter((element) => {
+    if (!selected.has(element.id) || !element.visible) return false;
+    if (artboardIds.has(element.artboardId)) return false;
+    for (let parent: string | null | undefined = element.parentId; parent; ) {
+      if (selected.has(parent)) return false;
+      parent = project.elements.find((candidate) => candidate.id === parent)?.parentId ?? null;
+    }
+    return true;
+  });
+  return { artboards, elements };
+}
+
+/** Element coordinates are parent-relative; walk up to the artboard to get page space. */
+function absoluteElementRect(project: BoardProject, element: BoardElement): Rect {
+  let x = element.x;
+  let y = element.y;
+  for (let parentId = element.parentId; parentId; ) {
+    const parent = project.elements.find((candidate) => candidate.id === parentId);
+    if (!parent) break;
+    x += parent.x;
+    y += parent.y;
+    parentId = parent.parentId;
+  }
+  const artboard = project.artboards.find((candidate) => candidate.id === element.artboardId);
+  return { x: x + (artboard?.x ?? 0), y: y + (artboard?.y ?? 0), width: element.width, height: element.height };
+}
+
+function renderedIdSet(project: BoardProject, artboards: Artboard[], elements: BoardElement[]): Set<string> {
+  const rendered = new Set<string>(artboards.map((artboard) => artboard.id));
+  for (const artboard of artboards) {
+    for (const element of project.elements) {
+      if (element.artboardId === artboard.id) rendered.add(element.id);
+    }
+  }
+  const queue = [...elements];
+  while (queue.length) {
+    const element = queue.pop()!;
+    rendered.add(element.id);
+    queue.push(...project.elements.filter((child) => child.parentId === element.id));
+  }
+  return rendered;
+}
+
+function connectorEndpointRendered(artboardId: string, elementId: string | undefined, rendered: Set<string>): boolean {
+  return elementId ? rendered.has(elementId) : rendered.has(artboardId);
 }
 
 function renderConnectorSvg(project: BoardProject, connector: BoardConnector, toSlot?: AnchorSlot, origin?: { x: number; y: number }): string {

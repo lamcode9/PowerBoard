@@ -35,6 +35,8 @@ export interface ApiHealth {
   boardRoot?: string;
   cloudStore: string;
   storageMode?: string;
+  /** "desktop" when the app is served by the Electron shell, where saving goes through a save panel. */
+  shell?: "desktop" | "browser";
   backup?: BackupStatus;
 }
 
@@ -115,6 +117,60 @@ export async function uploadAsset(boardId: string, file: File): Promise<{ projec
       }),
     () => localUploadAsset(boardId, file, dataUrl)
   );
+}
+
+export type ExportFormat = "png" | "jpg" | "svg" | "pdf";
+export type ExportScope = "page" | "artboard" | "selection";
+export type ExportBackground = "board" | "white" | "transparent";
+
+export interface RenderExportRequest {
+  scope: ExportScope;
+  format: ExportFormat;
+  pageId?: string;
+  artboardId?: string;
+  ids?: string[];
+  scale?: number;
+  background?: ExportBackground;
+}
+
+export interface RenderedExport {
+  blob: Blob;
+  fileName: string;
+  width: number;
+  height: number;
+  /** What the server actually rendered at — below the request when the pixel budget clamped it. */
+  scale: number;
+}
+
+/**
+ * Renders a scope of the board to bytes the browser can save or put on the clipboard.
+ * Needs the server: rasterizing is a sharp/librsvg job, so there is no browser-local fallback —
+ * it throws with a readable reason instead of pretending to have produced a file.
+ */
+export async function renderExport(boardId: string, request: RenderExportRequest): Promise<RenderedExport> {
+  const response = await fetch(`${API_BASE}/api/boards/${boardId}/render`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request)
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    let message = detail;
+    try {
+      message = JSON.parse(detail).error ?? detail;
+    } catch {
+      // Non-JSON error body — use it as-is.
+    }
+    throw new Error(message || `Export failed (${response.status})`);
+  }
+  const blob = await response.blob();
+  return {
+    blob,
+    fileName: response.headers.get("X-Powerboard-Filename") ?? `${boardId}.${request.format}`,
+    width: Number(response.headers.get("X-Powerboard-Width") ?? 0),
+    height: Number(response.headers.get("X-Powerboard-Height") ?? 0),
+    scale: Number(response.headers.get("X-Powerboard-Scale") ?? request.scale ?? 1)
+  };
 }
 
 export async function exportPng(boardId: string, artboardId: string): Promise<{ filePath: string }> {

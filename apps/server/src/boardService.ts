@@ -16,7 +16,17 @@ import {
   validateBoardProject,
   validateBoardStructure
 } from "@powerboard/schema";
-import { renderArtboardReactTailwind, renderArtboardSvg, renderMermaid, renderPageSvg, renderReactTailwind, renderSpecMarkdown, type RenderedFile } from "@powerboard/renderers";
+import {
+  renderArtboardReactTailwind,
+  renderArtboardSvg,
+  renderMermaid,
+  renderPageSvg,
+  renderReactTailwind,
+  renderScene,
+  renderSpecMarkdown,
+  type RenderedFile,
+  type SceneScope
+} from "@powerboard/renderers";
 import sharp from "sharp";
 import { jpegToPdf } from "./pdf.js";
 import { AgentIdentity } from "./agentIdentity.js";
@@ -130,6 +140,59 @@ export interface SelectionHandoff {
   }[];
   inspection: SelectionInspection;
   validation: BoardValidationReport["summary"];
+}
+
+export const exportFormats = ["png", "jpg", "svg", "pdf"] as const;
+export type ExportFormat = (typeof exportFormats)[number];
+
+/** What the user picked in the Export dialog, or what an agent asked for over MCP. */
+export interface RenderExportRequest {
+  scope: SceneScope;
+  format?: ExportFormat;
+  pageId?: string;
+  artboardId?: string;
+  ids?: string[];
+  scale?: number;
+  /** `board` keeps the artwork's own colour, `white` flattens for docs, `transparent` keeps alpha. */
+  background?: string;
+}
+
+export interface RenderedExport {
+  data: Buffer;
+  contentType: string;
+  fileName: string;
+  width: number;
+  height: number;
+  /** Scale actually used — may be below `requestedScale` when the pixel budget clamped it. */
+  scale: number;
+  requestedScale: number;
+}
+
+/**
+ * ~80 megapixels. Above this a single export costs >300 MB of RGBA and produces a file most decks and
+ * browsers choke on. Clamping is reported back to the caller, never applied silently.
+ */
+export const MAX_EXPORT_PIXELS = 80_000_000;
+
+function clampScale(scale: number): number {
+  if (!Number.isFinite(scale)) return 2;
+  return Math.min(Math.max(scale, 1), 4);
+}
+
+/** 1x always renders, whatever its size — the artwork's own resolution is never refused. */
+function fitScaleToPixelBudget(width: number, height: number, scale: number): number {
+  const area = Math.max(1, width * height);
+  if (area * scale * scale <= MAX_EXPORT_PIXELS) return scale;
+  const fitted = Math.floor((Math.sqrt(MAX_EXPORT_PIXELS / area) + Number.EPSILON) * 100) / 100;
+  return Math.max(1, Math.min(scale, fitted));
+}
+
+/** JPEG and this PDF writer have no alpha channel, so a transparent request would render black. */
+function backgroundFor(background: string | undefined, format: ExportFormat): string | undefined {
+  if (!background || background === "board") return undefined;
+  if (background === "transparent") return format === "jpg" || format === "pdf" ? "#FFFFFF" : "transparent";
+  if (background === "white") return "#FFFFFF";
+  return background;
 }
 
 export class BoardStore {
@@ -655,36 +718,93 @@ export class BoardStore {
     return { dir, files: exportResult.files, summary: exportResult.summary };
   }
 
-  async exportArtboardPng(boardId: string, artboardId: string, options: { scale?: number } = {}): Promise<{ filePath: string; width: number; height: number; scale: number }> {
+  /**
+   * Render any scope of a board to downloadable bytes. Pure — nothing is written to disk, because the
+   * caller is a human clicking Download or Copy, not an agent that wants a path. `exportArtboardPng`
+   * is this plus a file write, so there is exactly one rasterizer in the app.
+   */
+  async renderExport(boardId: string, request: RenderExportRequest): Promise<RenderedExport> {
+    const project = await this.readBoard(boardId);
+    const format = request.format ?? "png";
+    const scene = renderScene(project, {
+      scope: request.scope,
+      pageId: request.pageId,
+      artboardId: request.artboardId,
+      ids: request.ids,
+      background: backgroundFor(request.background, format)
+    });
+    if (!scene.width || !scene.height) {
+      throw new Error("Nothing to export — the selection has no visible area.");
+    }
+    const baseName = safeSegment(scene.name || project.name || "board");
+
+    if (format === "svg") {
+      return {
+        data: Buffer.from(scene.svg, "utf8"),
+        contentType: "image/svg+xml",
+        fileName: `${baseName}.svg`,
+        width: scene.width,
+        height: scene.height,
+        scale: 1,
+        requestedScale: request.scale ?? 1
+      };
+    }
+
+    const requestedScale = clampScale(request.scale ?? 2);
+    const scale = fitScaleToPixelBudget(scene.width, scene.height, requestedScale);
+    const width = Math.round(scene.width * scale);
+    const height = Math.round(scene.height * scale);
+    // Rasterize by raising the SVG's render density rather than upscaling pixels, so text and
+    // vector strokes stay sharp at 4x instead of turning into a blurred 1x image.
+    const raster = sharp(Buffer.from(scene.svg), { density: Math.round(72 * scale) }).resize(width, height);
+
+    if (format === "jpg") {
+      const jpeg = await raster.flatten({ background: "#FFFFFF" }).jpeg({ quality: 92 }).toBuffer();
+      return { data: jpeg, contentType: "image/jpeg", fileName: `${baseName}.jpg`, width, height, scale, requestedScale };
+    }
+    if (format === "pdf") {
+      const jpeg = await raster.flatten({ background: "#FFFFFF" }).jpeg({ quality: 94 }).toBuffer();
+      return { data: jpegToPdf(jpeg, width, height), contentType: "application/pdf", fileName: `${baseName}.pdf`, width, height, scale, requestedScale };
+    }
+    const png = await raster.png().toBuffer();
+    return { data: png, contentType: "image/png", fileName: `${baseName}.png`, width, height, scale, requestedScale };
+  }
+
+  async exportArtboardPng(boardId: string, artboardId: string, options: { scale?: number; background?: string } = {}): Promise<{ filePath: string; width: number; height: number; scale: number }> {
     const project = await this.readBoard(boardId);
     const cloud = this.isCloudPrimary() ? this.requiredCloud() : this.cloud;
     await cloud?.writeBoard(project);
-    const artboard = project.artboards.find((candidate) => candidate.id === artboardId);
-    if (!artboard) {
-      throw new Error(`Artboard not found: ${artboardId}`);
-    }
     // 2x by default: an artboard rasterized 1:1 is screen-resolution, and the usual reason to ask
-    // for a PNG is to print or paste it into a deck. Capped so a big poster can't exhaust memory.
-    const scale = Math.min(Math.max(options.scale ?? 2, 1), 4);
-    const width = Math.round(artboard.width * scale);
-    const height = Math.round(artboard.height * scale);
-    const svg = renderArtboardSvg(project, artboardId);
-    const fileName = `${safeSegment(artboard.name)}.png`;
+    // for a PNG is to print or paste it into a deck.
+    const rendered = await this.renderExport(boardId, { scope: "artboard", artboardId, format: "png", scale: options.scale ?? 2, background: options.background });
     const dir = this.isCloudPrimary() ? `cloud://${boardId}/exports` : await this.ensureExportDir(boardId);
-    const filePath = this.isCloudPrimary() ? `${dir}/${fileName}` : path.join(dir, fileName);
-    const png = await sharp(Buffer.from(svg), { density: Math.round(72 * scale) }).resize(width, height).png().toBuffer();
+    const filePath = this.isCloudPrimary() ? `${dir}/${rendered.fileName}` : path.join(dir, rendered.fileName);
     if (!this.isCloudPrimary()) {
-      await fs.writeFile(filePath, png);
+      await fs.writeFile(filePath, rendered.data);
     }
     await cloud?.writeFile({
       boardId,
-      path: `exports/${fileName}`,
+      path: `exports/${rendered.fileName}`,
       kind: "export",
       contentType: "image/png",
-      data: png,
+      data: rendered.data,
       metadata: { artboardId }
     });
-    return { filePath, width, height, scale };
+    return { filePath, width: rendered.width, height: rendered.height, scale: rendered.scale };
+  }
+
+  async exportPagePng(boardId: string, options: { pageId?: string; scale?: number; background?: string } = {}): Promise<{ filePath: string; width: number; height: number; scale: number }> {
+    const project = await this.readBoard(boardId);
+    const cloud = this.isCloudPrimary() ? this.requiredCloud() : this.cloud;
+    await cloud?.writeBoard(project);
+    const rendered = await this.renderExport(boardId, { scope: "page", pageId: options.pageId, format: "png", scale: options.scale ?? 2, background: options.background });
+    const dir = this.isCloudPrimary() ? `cloud://${boardId}/exports` : await this.ensureExportDir(boardId);
+    const filePath = this.isCloudPrimary() ? `${dir}/${rendered.fileName}` : path.join(dir, rendered.fileName);
+    if (!this.isCloudPrimary()) {
+      await fs.writeFile(filePath, rendered.data);
+    }
+    await cloud?.writeFile({ boardId, path: `exports/${rendered.fileName}`, kind: "export", contentType: "image/png", data: rendered.data });
+    return { filePath, width: rendered.width, height: rendered.height, scale: rendered.scale };
   }
 
   async exportPageSvg(boardId: string, pageId?: string): Promise<{ filePath: string; svg: string }> {

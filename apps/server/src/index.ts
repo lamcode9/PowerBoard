@@ -6,7 +6,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { BoardOperation, boardTemplates, BoardProjectSchema, OperationSchema } from "@powerboard/schema";
 import { agentIdentity, AgentIdentity, agentIdentityFromRequest } from "./agentIdentity.js";
-import { agentActivityForOperation, BoardStore } from "./boardService.js";
+import { agentActivityForOperation, BoardStore, exportFormats, type ExportFormat } from "./boardService.js";
 import { BackupService } from "./backupService.js";
 import { boardRoot } from "./paths.js";
 import { createBoardMcpServer } from "./mcpServer.js";
@@ -42,7 +42,17 @@ app.get(/^\/boards\/([^/]+)\/(assets|exports)\/(.+)$/, asyncHandler(async (req, 
 
 app.get("/api/health", asyncHandler(async (_req, res) => {
   await store.ensureReady();
-  res.json({ ok: true, name: "PowerBoard", boardRoot, cloudStore: store.cloudStatus(), storageMode: store.storageModeStatus(), backup: backup.status() });
+  // `shell` tells the UI whether downloads go through a native save panel (desktop) or straight to
+  // the browser's download folder — the two need different wording, and a user-agent sniff gets it wrong.
+  res.json({
+    ok: true,
+    name: "PowerBoard",
+    boardRoot,
+    cloudStore: store.cloudStatus(),
+    storageMode: store.storageModeStatus(),
+    shell: process.env.POWERBOARD_SHELL === "desktop" ? "desktop" : "browser",
+    backup: backup.status()
+  });
 }));
 
 app.get("/api/backups/status", (_req, res) => {
@@ -204,6 +214,36 @@ app.post("/api/boards/:boardId/assets", asyncHandler(async (req, res) => {
   const result = await store.saveAsset(param(req, "boardId"), { fileName, dataUrl });
   broadcast(result.project.id, { type: "board.changed", boardId: result.project.id, project: result.project });
   res.status(201).json(result);
+}));
+
+/**
+ * The human download path: renders a scope of the board and streams the bytes back as an attachment.
+ * Deliberately separate from `/export/*` — those write a file into the board folder and hand an agent a
+ * path, which is exactly the wrong answer for someone who wants the image in their deck.
+ */
+app.post("/api/boards/:boardId/render", asyncHandler(async (req, res) => {
+  const body = req.body ?? {};
+  const scope = body.scope === "artboard" || body.scope === "selection" ? body.scope : "page";
+  const format = exportFormats.includes(body.format) ? (body.format as ExportFormat) : "png";
+  const rendered = await store.renderExport(param(req, "boardId"), {
+    scope,
+    format,
+    pageId: typeof body.pageId === "string" ? body.pageId : undefined,
+    artboardId: typeof body.artboardId === "string" ? body.artboardId : undefined,
+    ids: Array.isArray(body.ids) ? body.ids.filter((id: unknown): id is string => typeof id === "string") : undefined,
+    scale: typeof body.scale === "number" ? body.scale : undefined,
+    background: typeof body.background === "string" ? body.background : undefined
+  });
+  res.setHeader("Content-Type", rendered.contentType);
+  res.setHeader("Content-Length", String(rendered.data.length));
+  res.setHeader("Content-Disposition", `attachment; filename="${rendered.fileName.replace(/"/g, "")}"`);
+  // The web client reads these to show the true output size — including a scale the pixel budget clamped.
+  res.setHeader("X-Powerboard-Filename", rendered.fileName);
+  res.setHeader("X-Powerboard-Width", String(rendered.width));
+  res.setHeader("X-Powerboard-Height", String(rendered.height));
+  res.setHeader("X-Powerboard-Scale", String(rendered.scale));
+  res.setHeader("Access-Control-Expose-Headers", "X-Powerboard-Filename, X-Powerboard-Width, X-Powerboard-Height, X-Powerboard-Scale, Content-Disposition");
+  res.send(rendered.data);
 }));
 
 app.post("/api/boards/:boardId/export/png", asyncHandler(async (req, res) => {

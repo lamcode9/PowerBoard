@@ -1,6 +1,6 @@
 import type { BoardOperation, BoardProject } from "@powerboard/schema";
 import { BoardProjectSchema, OperationSchema } from "@powerboard/schema";
-import { BoardStore } from "./boardService.js";
+import { BoardStore, exportFormats, type ExportFormat } from "./boardService.js";
 import { createCloudStoreFromEnv } from "./cloudStore.js";
 
 type RequestLike = {
@@ -110,6 +110,28 @@ export async function handlePowerBoardApi(req: RequestLike, res: JsonResponseLik
         return;
       }
       res.status(201).json(await store.saveAsset(boardId, { fileName: body.fileName, dataUrl: body.dataUrl }));
+      return;
+    }
+
+    if (method === "POST" && action === "render") {
+      const body = readObjectBody(req);
+      const rendered = await store.renderExport(boardId, {
+        scope: body.scope === "artboard" || body.scope === "selection" ? body.scope : "page",
+        format: exportFormats.includes(body.format as ExportFormat) ? (body.format as ExportFormat) : "png",
+        pageId: typeof body.pageId === "string" ? body.pageId : undefined,
+        artboardId: typeof body.artboardId === "string" ? body.artboardId : undefined,
+        ids: Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === "string") : undefined,
+        scale: typeof body.scale === "number" ? body.scale : undefined,
+        background: typeof body.background === "string" ? body.background : undefined
+      });
+      res.setHeader("Content-Type", rendered.contentType);
+      res.setHeader("Content-Disposition", `attachment; filename="${rendered.fileName.replace(/"/g, "")}"`);
+      res.setHeader("X-Powerboard-Filename", rendered.fileName);
+      res.setHeader("X-Powerboard-Width", String(rendered.width));
+      res.setHeader("X-Powerboard-Height", String(rendered.height));
+      res.setHeader("X-Powerboard-Scale", String(rendered.scale));
+      res.setHeader("Access-Control-Expose-Headers", "X-Powerboard-Filename, X-Powerboard-Width, X-Powerboard-Height, X-Powerboard-Scale, Content-Disposition");
+      (res as FileResponseLike).send(rendered.data);
       return;
     }
 

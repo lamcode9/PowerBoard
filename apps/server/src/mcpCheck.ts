@@ -30,6 +30,7 @@ const REQUIRED_TOOLS = [
   "add_connector",
   "import_screenshot_overlay",
   "export_artboard_png",
+  "export_page_png",
   "export_react_tailwind",
   "export_board_spec",
   "validate_board",
