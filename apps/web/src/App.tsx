@@ -1348,6 +1348,15 @@ export function App() {
     setGuidesIfChanged(NO_GUIDES);
     if (boundsEqual(activeDrag.original, activeDrag.latest)) return;
     if (activeDrag.target === "element") {
+      // Inside an auto-layout frame the parent owns x/y, so a free move would snap straight back and
+      // read as a broken canvas. The drag means "put it here in the order" instead.
+      const reorder = stackReorderTarget(projectRef.current, activeDrag.id, activeDrag.latest);
+      // `!== undefined`, not truthiness: index 0 is dragging to the top of the stack — the single most
+      // likely reorder there is — and `if (reorder)` silently fell through to a plain move for it.
+      if (reorder !== undefined) {
+        await runOperation({ type: "reorder_child", elementId: activeDrag.id, toIndex: reorder });
+        return;
+      }
       await runOperation({
         type: "move_resize_element",
         elementId: activeDrag.id,
@@ -4199,6 +4208,12 @@ function ElementInspector({
   onChange: (patch: Record<string, unknown>) => void;
   onReorder: (delta: number) => void;
 }) {
+  // X/Y are derived, not authored, once a parent stacks its children — the fields stay visible so the
+  // number is still readable, but editing them would be a lie the next reflow immediately undoes.
+  const parentElement = element.parentId ? project.elements.find((candidate) => candidate.id === element.parentId) : undefined;
+  const laidOutByParent = parentElement?.layout.mode === "stack";
+  const childCount = project.elements.filter((candidate) => candidate.parentId === element.id).length;
+
   // A Content band with nothing in it is worse than no band — only render it when this element type
   // actually carries editable copy or a kind selector.
   const hasContentFields =
@@ -4216,11 +4231,44 @@ function ElementInspector({
 
       <InspectorGroup title="Layout">
         <div className="field-grid two-col">
-          <NumberField label="X" glyph="X" value={element.x} min={-5000} max={5000} onChange={(x) => onChange({ x: Math.round(x) })} />
-          <NumberField label="Y" glyph="Y" value={element.y} min={-5000} max={5000} onChange={(y) => onChange({ y: Math.round(y) })} />
+          <NumberField label="X" glyph="X" value={element.x} min={-5000} max={5000} disabled={laidOutByParent} disabledReason={POSITION_OWNED_BY_STACK} onChange={(x) => onChange({ x: Math.round(x) })} />
+          <NumberField label="Y" glyph="Y" value={element.y} min={-5000} max={5000} disabled={laidOutByParent} disabledReason={POSITION_OWNED_BY_STACK} onChange={(y) => onChange({ y: Math.round(y) })} />
           <NumberField label="Width" glyph="W" value={element.width} min={12} max={3000} onChange={(width) => onChange({ width: Math.round(width) })} />
           <NumberField label="Height" glyph="H" value={element.height} min={12} max={3000} onChange={(height) => onChange({ height: Math.round(height) })} />
         </div>
+        {laidOutByParent ? <p className="field-hint">{POSITION_OWNED_BY_STACK}</p> : null}
+      </InspectorGroup>
+
+      <InspectorGroup title="Auto-layout">
+        <SegmentedControl
+          label="Mode"
+          value={element.layout.mode === "stack" ? "stack" : "absolute"}
+          options={LAYOUT_MODE_OPTIONS}
+          onChange={(mode) =>
+            onChange({
+              layout:
+                mode === "stack"
+                  ? { ...element.layout, mode, direction: element.layout.direction ?? "column", gap: element.layout.gap ?? 12, padding: element.layout.padding ?? 16 }
+                  : { ...element.layout, mode: "absolute" }
+            })
+          }
+        />
+        {element.layout.mode === "stack" ? (
+          <>
+            <SegmentedControl label="Direction" value={element.layout.direction ?? "column"} options={LAYOUT_DIRECTION_OPTIONS} onChange={(direction) => onChange({ layout: { ...element.layout, direction } })} />
+            <div className="field-grid two-col">
+              <NumberField label="Gap" glyph="⇔" value={element.layout.gap ?? 0} min={0} max={200} onChange={(gap) => onChange({ layout: { ...element.layout, gap: Math.round(gap) } })} />
+              <NumberField label="Padding" glyph="⬚" value={element.layout.padding ?? 0} min={0} max={200} onChange={(padding) => onChange({ layout: { ...element.layout, padding: Math.round(padding) } })} />
+            </div>
+            <SegmentedControl label="Align" value={element.layout.align ?? "start"} options={LAYOUT_ALIGN_OPTIONS} onChange={(align) => onChange({ layout: { ...element.layout, align } })} />
+            <SegmentedControl label="Distribute" value={element.layout.justify ?? "start"} options={LAYOUT_JUSTIFY_OPTIONS} onChange={(justify) => onChange({ layout: { ...element.layout, justify } })} />
+            <p className="field-hint">
+              {childCount === 0
+                ? "No children yet — nest elements inside this frame and they will flow automatically."
+                : `${childCount} ${childCount === 1 ? "child flows" : "children flow"} in layer order. Drag one on the canvas to reorder.`}
+            </p>
+          </>
+        ) : null}
       </InspectorGroup>
 
       {hasContentFields ? (
@@ -4332,6 +4380,30 @@ const CONNECTOR_PORT_OPTIONS: Array<{ value: BoardConnector["fromPort"]; label: 
 ];
 
 const STROKE_STYLE_OPTIONS = strokeStyles.map((value) => ({ value, label: value[0]!.toUpperCase() + value.slice(1) }));
+
+const POSITION_OWNED_BY_STACK = "Position is set by the parent's auto-layout.";
+// `grid` and `constraints` exist in the schema but are not implemented — offering them here would put
+// back exactly the "declared but inert" problem this feature was built to remove.
+const LAYOUT_MODE_OPTIONS = [
+  { value: "absolute", label: "Absolute" },
+  { value: "stack", label: "Stack" }
+];
+const LAYOUT_DIRECTION_OPTIONS = [
+  { value: "column", label: "Column" },
+  { value: "row", label: "Row" }
+];
+const LAYOUT_ALIGN_OPTIONS = [
+  { value: "start", label: "Start" },
+  { value: "center", label: "Center" },
+  { value: "end", label: "End" },
+  { value: "stretch", label: "Stretch" }
+];
+const LAYOUT_JUSTIFY_OPTIONS = [
+  { value: "start", label: "Start" },
+  { value: "center", label: "Center" },
+  { value: "end", label: "End" },
+  { value: "between", label: "Space" }
+];
 
 /** Tiny arrowhead preview glyph for the segmented pickers. */
 function ArrowGlyph({ kind }: { kind: BoardConnector["arrowEnd"] }) {
@@ -4520,6 +4592,8 @@ function NumberField({
   min,
   max,
   step = 1,
+  disabled = false,
+  disabledReason,
   onChange
 }: {
   label: string;
@@ -4528,6 +4602,9 @@ function NumberField({
   min: number;
   max: number;
   step?: number;
+  /** Reads as a value, not a control — used when the number is derived (auto-layout owns x/y). */
+  disabled?: boolean;
+  disabledReason?: string;
   onChange: (value: number) => void;
 }) {
   const origin = useRef<{ x: number; value: number } | null>(null);
@@ -4540,7 +4617,7 @@ function NumberField({
   const quantize = (next: number) => Number(Math.min(max, Math.max(min, next)).toFixed(decimals));
 
   function beginScrub(event: React.PointerEvent<HTMLSpanElement>) {
-    if (event.button !== 0) return;
+    if (disabled || event.button !== 0) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     origin.current = { x: event.clientX, value };
@@ -4570,14 +4647,14 @@ function NumberField({
     onPointerUp: endScrub,
     onPointerCancel: endScrub
   };
-  const scrubTitle = `${label} — drag to adjust, shift for ×10`;
+  const scrubTitle = disabled ? (disabledReason ?? `${label} is read-only`) : `${label} — drag to adjust, shift for ×10`;
 
   if (!glyph) {
     return (
       // A <div>, not a <label>: a label hands focus to its control on any click inside it, so ending a
       // scrub left the number input focused and the next ⌘Z / Delete / arrow-nudge went to the field
       // instead of the board. The input carries its own aria-label.
-      <div className={classNames("field row", scrubbing && "scrubbing")}>
+      <div className={classNames("field row", scrubbing && "scrubbing", disabled && "is-derived")}>
         <span className="field-row-label" title={scrubTitle} {...scrubHandlers}>
           {label}
         </span>
@@ -4589,6 +4666,8 @@ function NumberField({
             min={min}
             max={max}
             step={step}
+            disabled={disabled}
+            title={disabled ? scrubTitle : undefined}
             onChange={(event) => {
               const raw = Number(event.target.value);
               if (Number.isFinite(raw)) onChange(quantize(raw));
@@ -4600,7 +4679,7 @@ function NumberField({
   }
 
   return (
-    <div className={classNames("field compact", scrubbing && "scrubbing")}>
+    <div className={classNames("field compact", scrubbing && "scrubbing", disabled && "is-derived")}>
       <span className="field-glyph" role="presentation" title={scrubTitle} {...scrubHandlers}>
         {glyph}
       </span>
@@ -4611,6 +4690,8 @@ function NumberField({
         min={min}
         max={max}
         step={step}
+        disabled={disabled}
+        title={disabled ? scrubTitle : undefined}
         onChange={(event) => {
           const raw = Number(event.target.value);
           if (Number.isFinite(raw)) onChange(quantize(raw));
@@ -5121,6 +5202,33 @@ function elementPositionInArtboard(element: BoardElement, project: BoardProject)
   return { x, y };
 }
 
+/**
+ * Where a dragged child lands in its parent's auto-layout order, or undefined if this element is not
+ * in a stack (in which case the drag is an ordinary move). Counts how many siblings sit before the
+ * drop point along the parent's main axis — sibling positions are the reflowed ones, since only the
+ * dragged element has moved and its move is still uncommitted.
+ */
+function stackReorderTarget(
+  project: BoardProject | null,
+  elementId: string,
+  dropped: { x: number; y: number; width: number; height: number }
+): number | undefined {
+  if (!project) return undefined;
+  const element = project.elements.find((candidate) => candidate.id === elementId);
+  const parent = element?.parentId ? project.elements.find((candidate) => candidate.id === element.parentId) : undefined;
+  if (!element || parent?.layout.mode !== "stack") return undefined;
+
+  const row = parent.layout.direction === "row";
+  const dropCenter = row ? dropped.x + dropped.width / 2 : dropped.y + dropped.height / 2;
+  let index = 0;
+  for (const sibling of project.elements) {
+    if (sibling.parentId !== parent.id || sibling.id === element.id || !sibling.visible) continue;
+    const center = row ? sibling.x + sibling.width / 2 : sibling.y + sibling.height / 2;
+    if (center < dropCenter) index++;
+  }
+  return index;
+}
+
 function elementToStyle(element: BoardElement): React.CSSProperties {
   // Shape and ink render their own vector fill/stroke inside an SVG, so the wrapper stays clear.
   const vectorPrimitive = element.type === "shape" || element.type === "ink";
@@ -5304,6 +5412,10 @@ function agentOperationVerb(operationType?: string): string {
       return "deleted a frame";
     case "apply_layout":
       return "arranged the layout";
+    case "set_layout":
+      return "changed a frame's auto-layout";
+    case "reorder_child":
+      return "reordered an item";
     default:
       return "edited the board";
   }

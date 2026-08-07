@@ -372,3 +372,131 @@ describe("text-overflows-box", () => {
     expect(issue?.severity).toBe("warning");
   });
 });
+
+describe("auto-layout (stack)", () => {
+  const stackBoard = (
+    layout: Record<string, unknown>,
+    sizes: Array<{ id: string; width: number; height: number; zIndex: number; visible?: boolean }>
+  ): BoardProject =>
+    BoardProjectSchema.parse({
+      ...createDefaultProject(),
+      artboards: [{ id: "art", name: "Sheet", type: "custom", x: 0, y: 0, width: 900, height: 600,
+        background: "#FFFFFF", frameless: true, locked: false, visible: true }],
+      pages: [{ id: "page", name: "Page 1", artboardIds: ["art"] }],
+      connectors: [],
+      elements: [
+        { id: "frame", type: "frame", name: "Frame", artboardId: "art", parentId: null,
+          x: 0, y: 0, width: 300, height: 400, zIndex: 0, locked: false, visible: true,
+          style: {}, layout, props: {} },
+        ...sizes.map((size) => ({
+          id: size.id, type: "shape", name: size.id, artboardId: "art", parentId: "frame",
+          x: 999, y: 999, width: size.width, height: size.height, zIndex: size.zIndex,
+          locked: false, visible: size.visible ?? true, style: {}, layout: { mode: "absolute" }, props: {}
+        }))
+      ]
+    });
+
+  const frames = (project: BoardProject) =>
+    Object.fromEntries(project.elements.filter((e) => e.parentId === "frame").map((e) => [e.id, { x: e.x, y: e.y, w: e.width, h: e.height }]));
+
+  // Every assertion goes through applyBoardOperation, because reflow-on-write at that one chokepoint
+  // is the whole design (D-a) — testing the resolver alone would not prove writers get it.
+  const settle = (project: BoardProject) => applyBoardOperation(project, { type: "set_selection", selection: [] });
+
+  it("stacks children in a column, ignoring their authored x/y", () => {
+    const out = settle(stackBoard({ mode: "stack", direction: "column", gap: 10, padding: 20 }, [
+      { id: "a", width: 100, height: 40, zIndex: 0 },
+      { id: "b", width: 100, height: 60, zIndex: 1 }
+    ]));
+    expect(frames(out)).toEqual({
+      a: { x: 20, y: 20, w: 100, h: 40 },
+      b: { x: 20, y: 70, w: 100, h: 60 }
+    });
+  });
+
+  it("orders by zIndex, not array order", () => {
+    const out = settle(stackBoard({ mode: "stack", direction: "column", gap: 0, padding: 0 }, [
+      { id: "a", width: 100, height: 40, zIndex: 5 },
+      { id: "b", width: 100, height: 40, zIndex: 1 }
+    ]));
+    expect(frames(out).b!.y).toBe(0);
+    expect(frames(out).a!.y).toBe(40);
+  });
+
+  it("gives hidden children no space", () => {
+    const out = settle(stackBoard({ mode: "stack", direction: "column", gap: 10, padding: 0 }, [
+      { id: "a", width: 100, height: 40, zIndex: 0 },
+      { id: "ghost", width: 100, height: 999, zIndex: 1, visible: false },
+      { id: "b", width: 100, height: 40, zIndex: 2 }
+    ]));
+    expect(frames(out).b!.y).toBe(50);
+  });
+
+  it("stretches children across the cross axis when asked", () => {
+    const out = settle(stackBoard({ mode: "stack", direction: "column", padding: 20, align: "stretch" }, [
+      { id: "a", width: 10, height: 40, zIndex: 0 }
+    ]));
+    expect(frames(out).a).toMatchObject({ x: 20, w: 260 });
+  });
+
+  it("spreads the slack across gaps for 'between'", () => {
+    // 400 tall, no padding, two 40px rows => 320 of slack lands in the single gap.
+    const out = settle(stackBoard({ mode: "stack", direction: "column", padding: 0, justify: "between" }, [
+      { id: "a", width: 100, height: 40, zIndex: 0 },
+      { id: "b", width: 100, height: 40, zIndex: 1 }
+    ]));
+    expect(frames(out).a!.y).toBe(0);
+    expect(frames(out).b!.y).toBe(360);
+  });
+
+  it("lays a row along x instead of y", () => {
+    const out = settle(stackBoard({ mode: "stack", direction: "row", gap: 8, padding: 0 }, [
+      { id: "a", width: 50, height: 40, zIndex: 0 },
+      { id: "b", width: 50, height: 40, zIndex: 1 }
+    ]));
+    expect(frames(out).b).toMatchObject({ x: 58, y: 0 });
+  });
+
+  it("leaves absolute frames completely alone", () => {
+    const out = settle(stackBoard({ mode: "absolute" }, [{ id: "a", width: 100, height: 40, zIndex: 0 }]));
+    expect(frames(out).a).toMatchObject({ x: 999, y: 999 });
+  });
+
+  it("reflows after set_layout, so switching a frame to stack fixes its children immediately", () => {
+    const board = stackBoard({ mode: "absolute" }, [
+      { id: "a", width: 100, height: 40, zIndex: 0 },
+      { id: "b", width: 100, height: 40, zIndex: 1 }
+    ]);
+    const out = applyBoardOperation(board, { type: "set_layout", elementId: "frame", layout: { mode: "stack", gap: 4, padding: 0 } });
+    expect(frames(out).a!.y).toBe(0);
+    expect(frames(out).b!.y).toBe(44);
+  });
+
+  it("merges a set_layout patch instead of clearing the rest", () => {
+    const board = stackBoard({ mode: "stack", direction: "row", gap: 10, padding: 5 }, [{ id: "a", width: 50, height: 40, zIndex: 0 }]);
+    const out = applyBoardOperation(board, { type: "set_layout", elementId: "frame", layout: { gap: 20 } });
+    const frame = out.elements.find((e) => e.id === "frame")!;
+    expect(frame.layout).toMatchObject({ mode: "stack", direction: "row", gap: 20, padding: 5 });
+  });
+
+  it("reorders a child in one operation and reflows it into place", () => {
+    const board = stackBoard({ mode: "stack", direction: "column", gap: 0, padding: 0 }, [
+      { id: "a", width: 100, height: 40, zIndex: 0 },
+      { id: "b", width: 100, height: 40, zIndex: 1 },
+      { id: "c", width: 100, height: 40, zIndex: 2 }
+    ]);
+    const out = applyBoardOperation(board, { type: "reorder_child", elementId: "c", toIndex: 0 });
+    expect(frames(out).c!.y).toBe(0);
+    expect(frames(out).a!.y).toBe(40);
+    expect(frames(out).b!.y).toBe(80);
+  });
+
+  it("clamps an out-of-range reorder rather than throwing", () => {
+    const board = stackBoard({ mode: "stack", direction: "column", gap: 0, padding: 0 }, [
+      { id: "a", width: 100, height: 40, zIndex: 0 },
+      { id: "b", width: 100, height: 40, zIndex: 1 }
+    ]);
+    const out = applyBoardOperation(board, { type: "reorder_child", elementId: "a", toIndex: 99 });
+    expect(frames(out).a!.y).toBe(40);
+  });
+});

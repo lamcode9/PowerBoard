@@ -206,16 +206,23 @@ function renderElementJsx(project: BoardProject, element: BoardElement, depth: n
     .join("\n");
   const style = element.style;
   const hierarchyOnly = isHierarchyOnly(element);
+  // A child of a `stack` parent is laid out by flow, so it must NOT be absolutely positioned — an
+  // absolute child is removed from flex layout, which is precisely why the gap/align/justify classes
+  // this renderer already emitted did nothing at all.
+  const parent = element.parentId ? project.elements.find((candidate) => candidate.id === element.parentId) : undefined;
+  const inFlow = parent?.layout.mode === "stack";
+  const stack = element.layout.mode === "stack";
   const wrapperClass = joinClasses([
-    "absolute",
-    element.layout.mode === "stack" ? "flex" : "",
-    element.layout.mode === "stack" && element.layout.direction === "row" ? "flex-row" : "",
-    element.layout.mode === "stack" && element.layout.direction !== "row" ? "flex-col" : "",
+    inFlow ? "" : "absolute",
+    stack ? "flex" : "",
+    stack && element.layout.direction === "row" ? "flex-row" : "",
+    stack && element.layout.direction !== "row" ? "flex-col" : "",
     element.layout.mode === "grid" ? "grid" : "",
-    `left-[${px(element.x)}]`,
-    `top-[${px(element.y)}]`,
+    inFlow ? "" : `left-[${px(element.x)}]`,
+    inFlow ? "" : `top-[${px(element.y)}]`,
     `w-[${px(element.width)}]`,
     `h-[${px(element.height)}]`,
+    stack && element.layout.padding !== undefined ? `p-[${px(element.layout.padding)}]` : "",
     !hierarchyOnly && style.radius !== undefined ? `rounded-[${px(style.radius)}]` : "",
     !hierarchyOnly && style.fill && style.fill !== "transparent" ? `bg-[${style.fill}]` : "",
     !hierarchyOnly && style.color ? `text-[${style.color}]` : "",
@@ -627,7 +634,16 @@ function px(value: number): string {
 }
 
 function joinClasses(classes: (string | false | undefined)[]): string {
-  return classes.filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  // De-duplicated: several branches contribute layout classes independently and card elements used to
+  // emit `flex flex-col` twice. Order-preserving so the output still reads top-down.
+  const seen = new Set<string>();
+  for (const chunk of classes) {
+    if (!chunk) continue;
+    for (const token of chunk.split(/\s+/)) {
+      if (token) seen.add(token);
+    }
+  }
+  return [...seen].join(" ");
 }
 
 function readString(value: unknown, fallback: string): string {

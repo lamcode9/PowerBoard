@@ -1230,6 +1230,8 @@ export function targetIdsForOperation(operation: BoardOperation, projectAfter?: 
     case "update_element":
     case "delete_element":
     case "move_resize_element":
+    case "set_layout":
+    case "reorder_child":
       return [operation.elementId];
     case "group_elements":
       return [operation.group.id, ...operation.elementIds];

@@ -618,6 +618,35 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
   );
 
   registerTool(
+    "set_layout",
+    {
+      title: "Set auto-layout on a frame",
+      description:
+        "Turn an element into an auto-layout (stack) frame, or back to absolute. A stack owns its children's positions: they flow in zIndex order along `direction`, separated by `gap`, inset by `padding`, and you never set their x/y again — insert or reorder a child and the rest move themselves. " +
+        "Use this for lists, toolbars, cards and any column of rows, so that adding an item does not mean recomputing every sibling below it. Keep `absolute` for diagram nodes, which are placed rather than flowed. " +
+        "The patch merges, so setting `gap` alone leaves `direction` intact. Note `grid` and `constraints` are accepted by the schema but NOT implemented — use `stack` or `absolute`.",
+      inputSchema: {
+        boardId: z.string(),
+        elementId: z.string(),
+        mode: z.enum(["absolute", "stack"]).optional(),
+        direction: z.enum(["row", "column"]).optional(),
+        gap: z.number().nonnegative().optional(),
+        padding: z.number().nonnegative().optional(),
+        align: z.enum(["start", "center", "end", "stretch"]).optional(),
+        justify: z.enum(["start", "center", "end", "between"]).optional()
+      }
+    },
+    async ({ boardId, elementId, mode, direction, gap, padding, align, justify }) => {
+      const project = await applyAgentOperation(boardId, {
+        type: "set_layout",
+        elementId,
+        layout: { mode, direction, gap, padding, align, justify }
+      });
+      return text(project);
+    }
+  );
+
+  registerTool(
     "apply_layout",
     {
       title: "Apply auto-layout",

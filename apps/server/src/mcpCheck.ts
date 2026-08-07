@@ -38,6 +38,7 @@ const REQUIRED_TOOLS = [
   "delete_connector",
   "delete_artboard",
   "apply_layout",
+  "set_layout",
   "batch_operations",
   "get_board_status",
   "board_undo",

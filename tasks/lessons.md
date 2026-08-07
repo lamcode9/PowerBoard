@@ -96,3 +96,30 @@ findings, the raster reports ink — and none of it is measuring what you think.
 **How to apply:** For any measurement-based assertion, first make it fail on purpose. If you cannot state what
 the number would be if the fix were absent, the assertion is decorative. (Here the raster test *did* fail
 against the stale unwrapped renderer, which is the only reason it can be trusted.)
+
+## 2026-08-07 — Index 0 is falsy, and the model tests will never tell you
+
+**Correction:** Auto-layout drag-to-reorder did nothing on the canvas. The schema was right, the
+operation was right, 110 tests passed. The canvas called `stackReorderTarget(...)` and then wrote
+`if (reorder) { … }` — so an index of **0**, which is "drop it at the top of the stack" and the single
+most likely reorder a user performs, was treated as "no reorder" and fell through to an ordinary move
+that the reflow immediately undid.
+
+**Rule:**
+- **Any function returning `number | undefined` must be tested with `!== undefined`, never truthiness.**
+  The bug is invisible in review because `if (reorder)` reads correctly in English. Zero, empty string
+  and `false` are the three values that make "did I get an answer?" and "is the answer truthy?" differ.
+- **A derived-state feature needs an integration test at the boundary, not just model tests.** Every
+  assertion about the resolver passed while the UI that calls it was broken. When the model is
+  materialised (reflow-on-write) the UI failure mode is *silent*: the wrong write is immediately
+  overwritten by a correct reflow, so the screen just looks frozen rather than wrong.
+- **Prove the harness before trusting a negative.** Two synthetic drags did nothing, and the natural
+  conclusion was "the automation cannot drag." Running the same synthetic drag against an ordinary
+  absolute element moved it — which converted "the tool is broken" into "my code is broken" in one step.
+
+**Why:** Reflow-on-write is a good design (one resolver, every consumer reads plain x/y) but it hides UI
+bugs: any incorrect write is quietly corrected, so a broken interaction produces no visible error.
+
+**How to apply:** When a feature makes state derived, list the interactions that write to it and drive
+each one for real. And when an interaction "does nothing," first drive a known-good interaction the same
+way — a control case turns an ambiguous silence into a located fault.

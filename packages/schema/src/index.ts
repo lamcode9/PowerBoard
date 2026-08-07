@@ -173,6 +173,127 @@ export const ElementLayoutSchema = z.object({
 
 export type ElementLayout = z.infer<typeof ElementLayoutSchema>;
 
+/**
+ * Patch shape for `set_layout`. Spelled out rather than `ElementLayoutSchema.partial()` because
+ * `.partial()` leaves the inner `.default("absolute")` on `mode` in place, so a patch of `{gap: 20}`
+ * parsed into `{mode: "absolute", gap: 20}` and silently un-stacked the frame it was tuning.
+ */
+export const ElementLayoutPatchSchema = z.object({
+  mode: z.enum(layoutModes).optional(),
+  direction: z.enum(["row", "column"]).optional(),
+  columns: z.number().int().positive().optional(),
+  gap: Numberish.nonnegative().optional(),
+  padding: Numberish.nonnegative().optional(),
+  align: z.enum(["start", "center", "end", "stretch"]).optional(),
+  justify: z.enum(["start", "center", "end", "between"]).optional()
+});
+
+/**
+ * Auto-layout, one implementation (D-a). A `stack` parent owns its children's x/y — they become derived
+ * state, recomputed at the single write chokepoint in `applyBoardOperation` rather than resolved lazily by
+ * each consumer. Canvas, SVG, React, connector geometry and layout diagnostics all keep reading plain x/y
+ * and therefore cannot disagree with each other; the alternative (every consumer learns about layout) is
+ * exactly how the canvas and the SVG exporter came to disagree about text wrapping.
+ *
+ * Order is `zIndex` ascending (D-b) — what the renderers already sort by, so canvas, export and layer tree
+ * agree for free. Hidden children take no space (D-c), matching Figma and CSS `display:none`. `grid` and
+ * `constraints` remain inert schema slots: they are not built, and pretending otherwise is what made
+ * `stack` a lie for so long.
+ */
+export function resolveStackChildren(
+  parent: Pick<BoardElement, "width" | "height" | "layout">,
+  children: BoardElement[]
+): Map<string, { x: number; y: number; width: number; height: number }> {
+  const placed = new Map<string, { x: number; y: number; width: number; height: number }>();
+  const laid = children.filter((child) => child.visible).sort((a, b) => a.zIndex - b.zIndex);
+  if (!laid.length) return placed;
+
+  const layout = parent.layout;
+  const row = layout.direction === "row";
+  const padding = layout.padding ?? 0;
+  const gap = layout.gap ?? 0;
+  const align = layout.align ?? "start";
+  const justify = layout.justify ?? "start";
+
+  const mainAvailable = (row ? parent.width : parent.height) - padding * 2;
+  const crossAvailable = (row ? parent.height : parent.width) - padding * 2;
+  const mainSizes = laid.map((child) => (row ? child.width : child.height));
+  const totalMain = mainSizes.reduce((sum, size) => sum + size, 0);
+
+  // `between` spends the slack on the gaps; every other mode keeps the gap and moves the block.
+  const spreadGap =
+    justify === "between" && laid.length > 1 ? Math.max(gap, (mainAvailable - totalMain) / (laid.length - 1)) : gap;
+  const contentMain = totalMain + spreadGap * (laid.length - 1);
+  let cursor = padding;
+  if (justify === "center") cursor = padding + (mainAvailable - contentMain) / 2;
+  else if (justify === "end") cursor = padding + (mainAvailable - contentMain);
+
+  for (const child of laid) {
+    const mainSize = row ? child.width : child.height;
+    let crossSize = row ? child.height : child.width;
+    let crossOffset = padding;
+    if (align === "stretch") crossSize = Math.max(1, crossAvailable);
+    else if (align === "center") crossOffset = padding + (crossAvailable - crossSize) / 2;
+    else if (align === "end") crossOffset = padding + (crossAvailable - crossSize);
+
+    placed.set(child.id, {
+      x: round2(row ? cursor : crossOffset),
+      y: round2(row ? crossOffset : cursor),
+      width: round2(row ? child.width : crossSize),
+      height: round2(row ? crossSize : child.height)
+    });
+    cursor += mainSize + spreadGap;
+  }
+  return placed;
+}
+
+/**
+ * Apply every `stack` parent's layout to its children, outermost first so a nested stack is positioned
+ * inside an already-placed parent. Called once at the end of `applyBoardOperation`; safe to call on any
+ * project (a board with no stacks is untouched).
+ */
+export function reflowStackLayouts(project: BoardProject): void {
+  const childrenByParent = new Map<string, BoardElement[]>();
+  for (const element of project.elements) {
+    if (!element.parentId) continue;
+    const siblings = childrenByParent.get(element.parentId) ?? [];
+    siblings.push(element);
+    childrenByParent.set(element.parentId, siblings);
+  }
+
+  const depth = (element: BoardElement): number => {
+    let steps = 0;
+    let parentId = element.parentId;
+    const seen = new Set<string>([element.id]);
+    while (parentId && !seen.has(parentId)) {
+      seen.add(parentId);
+      steps++;
+      parentId = project.elements.find((candidate) => candidate.id === parentId)?.parentId ?? null;
+    }
+    return steps;
+  };
+
+  const stacks = project.elements
+    .filter((element) => element.layout.mode === "stack" && childrenByParent.has(element.id))
+    .sort((a, b) => depth(a) - depth(b));
+
+  for (const parent of stacks) {
+    const placed = resolveStackChildren(parent, childrenByParent.get(parent.id) ?? []);
+    for (const child of childrenByParent.get(parent.id) ?? []) {
+      const frame = placed.get(child.id);
+      if (!frame) continue;
+      child.x = frame.x;
+      child.y = frame.y;
+      child.width = frame.width;
+      child.height = frame.height;
+    }
+  }
+}
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
 export const AssetSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -437,6 +558,12 @@ export const OperationSchema = z.discriminatedUnion("type", [
     /** How far apart two nodes may sit and still be treated as "meant to line up". */
     tolerance: Numberish.positive().default(POLISH_TOLERANCE)
   }),
+  // Merging patch on purpose: setting `gap` must not silently clear `direction`, which a wholesale
+  // `update_element` layout patch would do.
+  z.object({ type: z.literal("set_layout"), elementId: z.string(), layout: ElementLayoutPatchSchema }),
+  // Reordering renumbers a whole sibling run, which has to be ONE operation: N `update_element`s would
+  // be N undo entries, so a single drag would take N presses of ⌘Z to put back.
+  z.object({ type: z.literal("reorder_child"), elementId: z.string(), toIndex: z.number().int().nonnegative() }),
   z.object({ type: z.literal("set_selection"), selection: z.array(z.string()) })
 ]);
 
@@ -1237,6 +1364,43 @@ export function applyBoardOperation(project: BoardProject, rawOperation: BoardOp
       applyPolishLayout(next, operation);
       break;
     }
+    case "set_layout": {
+      const index = next.elements.findIndex((element) => element.id === operation.elementId);
+      if (index === -1) {
+        throw new Error(`Element not found: ${operation.elementId}`);
+      }
+      const existing = next.elements[index]!;
+      // Drop undefined keys before merging: JSON and the MCP handler both send absent fields as
+      // explicit `undefined`, which would overwrite a real value and then fall back to the schema
+      // default — patching `gap` alone silently reset `mode` to "absolute".
+      const patch = Object.fromEntries(Object.entries(operation.layout).filter(([, value]) => value !== undefined));
+      next.elements[index] = BoardElementSchema.parse({
+        ...existing,
+        layout: ElementLayoutSchema.parse({ ...existing.layout, ...patch })
+      });
+      next.selection = [operation.elementId];
+      break;
+    }
+    case "reorder_child": {
+      const element = next.elements.find((candidate) => candidate.id === operation.elementId);
+      if (!element) {
+        throw new Error(`Element not found: ${operation.elementId}`);
+      }
+      // Filtered from `next`, so these are live references — renumbering them renumbers the project.
+      const siblings = next.elements
+        .filter((candidate) => candidate.parentId === element.parentId && candidate.artboardId === element.artboardId)
+        .sort((a, b) => a.zIndex - b.zIndex);
+      const from = siblings.findIndex((candidate) => candidate.id === element.id);
+      const to = Math.max(0, Math.min(siblings.length - 1, operation.toIndex));
+      if (from !== -1 && from !== to) {
+        siblings.splice(to, 0, siblings.splice(from, 1)[0]!);
+        siblings.forEach((sibling, index) => {
+          sibling.zIndex = index;
+        });
+      }
+      next.selection = [operation.elementId];
+      break;
+    }
     case "set_selection":
       next.selection = filterValidSelection(next, operation.selection);
       break;
@@ -1244,6 +1408,8 @@ export function applyBoardOperation(project: BoardProject, rawOperation: BoardOp
       assertNever(operation);
   }
 
+  // D-a: the one place auto-layout is resolved. Every writer — browser, MCP, migration — passes here.
+  reflowStackLayouts(next);
   next.metadata.updatedAt = nowIso();
   return sanitizeProjectSelection(BoardProjectSchema.parse(next));
 }

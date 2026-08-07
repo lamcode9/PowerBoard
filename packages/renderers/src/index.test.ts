@@ -156,3 +156,64 @@ describe("SVG text wrapping (canvas/export parity)", () => {
     expect(last).toBeGreaterThan(65);
   });
 });
+
+describe("React/Tailwind flow output for stack frames", () => {
+  // The bug this feature exists to fix: the renderer emitted `flex flex-col gap-[12px]` on a parent
+  // whose every child was `absolute`, and CSS removes absolute children from flex flow — so the
+  // classes were decoration. A stack parent must produce children that actually flow.
+  const stackProject = () => {
+    const project = BoardProjectSchema.parse(createDefaultProject());
+    const artboard = project.artboards[0]!;
+    const base = {
+      artboardId: artboard.id, locked: false, visible: true, style: {}, props: {},
+      layout: { mode: "absolute" as const }
+    };
+    project.elements = [
+      { ...base, id: "frame", type: "frame", name: "List", parentId: null, x: 20, y: 20, width: 300, height: 200, zIndex: 0,
+        layout: { mode: "stack" as const, direction: "column" as const, gap: 12, padding: 16 } },
+      { ...base, id: "row1", type: "shape", name: "Row 1", parentId: "frame", x: 16, y: 16, width: 268, height: 40, zIndex: 0 },
+      { ...base, id: "row2", type: "shape", name: "Row 2", parentId: "frame", x: 16, y: 68, width: 268, height: 40, zIndex: 1 }
+    ] as never;
+    return { project, artboardId: artboard.id };
+  };
+
+  const classesFor = (jsx: string, id: string) =>
+    jsx.match(new RegExp(`data-board-element="${id}" className="([^"]*)"`))?.[1] ?? "";
+
+  it("puts the parent in flex flow with its gap and padding", () => {
+    const { project, artboardId } = stackProject();
+    const classes = classesFor(renderArtboardReactTailwind(project, artboardId).contents, "frame");
+    expect(classes).toContain("flex");
+    expect(classes).toContain("flex-col");
+    expect(classes).toContain("gap-[12px]");
+    expect(classes).toContain("p-[16px]");
+  });
+
+  it("takes children OUT of absolute positioning so the flex actually applies", () => {
+    const { project, artboardId } = stackProject();
+    const jsx = renderArtboardReactTailwind(project, artboardId).contents;
+    for (const id of ["row1", "row2"]) {
+      const classes = classesFor(jsx, id);
+      expect(classes).not.toContain("absolute");
+      expect(classes).not.toMatch(/left-\[/);
+      expect(classes).not.toMatch(/top-\[/);
+      expect(classes).toContain("w-[268px]");
+    }
+  });
+
+  it("leaves children of an absolute parent absolutely positioned", () => {
+    const { project, artboardId } = stackProject();
+    project.elements[0]!.layout = { mode: "absolute" };
+    const classes = classesFor(renderArtboardReactTailwind(project, artboardId).contents, "row1");
+    expect(classes).toContain("absolute");
+    expect(classes).toMatch(/left-\[/);
+  });
+
+  it("never emits a duplicated layout class", () => {
+    const jsx = renderReactTailwind(createDefaultProject()).files.map((file) => file.contents).join("\n");
+    for (const className of jsx.match(/className="[^"]*"/g) ?? []) {
+      const tokens = className.slice(11, -1).split(/\s+/).filter(Boolean);
+      expect(new Set(tokens).size).toBe(tokens.length);
+    }
+  });
+});

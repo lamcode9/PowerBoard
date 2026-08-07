@@ -3,6 +3,75 @@
 Source of truth for the v2 pivot. Full rationale + feature matrix: `docs/powerboard-desktop-roadmap.html`.
 Written 2026-07-04. Status legend: [ ] todo · [~] in progress · [x] done.
 
+## Active — Auto-layout frames: make `layout.mode` real (2026-08-07)
+
+Scope endorsed by the user after the 2026-07-29 finding. **`stack` only** — direction, gap, padding, align,
+justify. `absolute` stays the default and stays correct for diagrams (D5 already allows both per element).
+`grid` and `constraints` are explicitly NOT built; they keep their schema slots and stay inert, documented.
+
+**The problem being fixed.** `layoutModes` has declared `stack` since the beginning and nothing honoured it:
+the canvas always emitted `left/top/width/height`, and the React exporter wrote `flex flex-col gap-[12px]` on
+a parent whose every child was `absolute` — which CSS discards, so the classes were decoration. The seed
+board's three `stack` elements had zero children, so it never looked broken.
+
+**Why it earns the work.** Not Paper parity — agent economics. Under absolute positioning "add a row to this
+list" forces an agent to recompute every sibling below it, which is the damage `polish_layout` exists to
+undo. Flow makes structural edits local. And "the export is real code" is the mockup half's whole value
+proposition; `absolute left-[24px]` is not code anyone ships.
+
+### Decisions taken before coding
+
+- **D-a — One resolver, reflow on write.** `reflowStackLayouts(project)` runs at the single chokepoint at the
+  end of `applyBoardOperation`, materialising children's x/y. Rejected the alternative (resolve lazily at
+  render time) because it would force *every* consumer — canvas, SVG, React, connector geometry, layout
+  diagnostics — to learn about layout, and any one that forgot would disagree with the others. That is
+  exactly the divergence class the text-wrap bug came from. Derived x/y is safe here only because the
+  operation model is the sole write path.
+- **D-b — Stack order is `zIndex` ascending.** Renderers already sort children that way, so order on canvas,
+  in the export and in the layer tree agree for free. Makes "reorder" reuse the existing forward/back ops.
+- **D-c — Hidden children take no space**, matching Figma and CSS `display:none`.
+- **D-d — No per-child absolute escape hatch.** Figma's `layoutPositioning: absolute` is real and useful, but
+  it is a new schema field and a new inspector control; out of scope, noted here so it isn't re-derived.
+- **D-e — Parent keeps its authored size.** Hug/fill sizing cascades to grandparents and is its own piece of
+  work; `stretch` on the cross axis is included because it is free.
+
+### Build
+
+- [x] `packages/schema`: `resolveStackChildren()` + `reflowStackLayouts()`; wire into `applyBoardOperation`'s
+      single return path so every writer — browser, MCP, migration — reflows identically.
+- [x] `set_layout` operation (merging patch, so setting `gap` doesn't clear `direction`), Zod + undo + MCP.
+- [x] React/Tailwind renderer: a `stack` parent emits real flow — children drop `absolute`/`left`/`top`, the
+      parent gets `flex`+direction+`gap`+padding+align+justify. This is the half of the bug that makes the
+      export a lie today.
+- [x] Canvas: dragging a child inside a stack **reorders** it (drop position vs sibling midpoints → zIndex)
+      rather than silently snapping back.
+- [x] Inspector: Layout group gains mode (Absolute | Stack) and, when stack, direction/gap/padding/align/
+      justify.
+- [x] Tests: reflow geometry per justify/align, nesting, hidden children, reorder, export flow output.
+- [x] Verify in the running app + re-export; then TestFlight.
+
+**Result.** Verified end to end against a live board through the *agent* path, which is the path this
+feature exists for: three rows authored at x=999,y=999 snapped to x=16, y=16/84/152, width stretched
+345→313. Then the actual argument, demonstrated: **add a row + `reorder_child` = two operations, and
+every sibling below repositioned itself** — no per-sibling arithmetic, no `polish_layout` pass. Canvas
+drag reorders in both directions, one ⌘Z restores the previous order exactly (the reason reorder had to
+be a single operation), and the inspector shows x/y dimmed with "Position is set by the parent's
+auto-layout." 110 tests, typecheck, build, `mcp:check` 42 exposed / 41 checked, console clean.
+
+The export is no longer a lie. The same frame now emits
+`absolute flex flex-col … p-[16px] gap-[12px] items-stretch` with children carrying **no `absolute`,
+no `left-`, no `top-`** — shippable React instead of a picture drawn in JSX.
+
+**The bug that only a real drag could find.** `stackReorderTarget` returns an index, and `if (reorder)`
+treats **index 0 — dragging to the top of the stack, the most likely reorder there is** — as falsy. It
+fell through to a plain move, which the reflow then silently undid, so the canvas looked frozen. Every
+unit test passed; the model was correct the whole time. Fixed to `!== undefined`.
+
+**Follow-up noticed, not taken:** the layer tree lists highest `zIndex` first, so inside a stack the
+panel reads bottom-to-top relative to the canvas. Correct for z-order, confusing for flow order, and
+Figma solves it by matching layer order to flow order. Changing the tree's sort affects every element
+type, so it needs its own decision.
+
 ## Active — Text that fits the box: canvas/SVG wrap parity + the deferred diagnostic (2026-08-07)
 
 **Why now.** Deferred on 2026-07-28 because exports only wrote files to a sandbox path nobody could reach,

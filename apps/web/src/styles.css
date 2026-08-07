@@ -1901,6 +1901,31 @@ button {
   user-select: none;
 }
 
+/*
+ * A derived number (x/y inside an auto-layout frame) still has to be readable — it is the answer to
+ * "where did it land?" — so it dims rather than disappears, and drops the scrub affordance that would
+ * otherwise promise an edit the next reflow immediately undoes.
+ */
+.field.is-derived {
+  opacity: 0.62;
+}
+
+.field.is-derived .field-glyph,
+.field.is-derived .field-row-label {
+  cursor: default;
+}
+
+.field.is-derived input {
+  cursor: not-allowed;
+}
+
+.field-hint {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .field-row-control {
   display: grid;
   height: 30px;
