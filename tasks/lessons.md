@@ -123,3 +123,27 @@ bugs: any incorrect write is quietly corrected, so a broken interaction produces
 **How to apply:** When a feature makes state derived, list the interactions that write to it and drive
 each one for real. And when an interaction "does nothing," first drive a known-good interaction the same
 way — a control case turns an ambiguous silence into a located fault.
+
+## 2026-08-07 — "Absent from App Store Connect" is not "failed"
+
+**Correction:** I reported that `fastlane mac beta` had built the `.pkg` but never uploaded it. It had
+uploaded fine. I checked ASC roughly two minutes after the upload, saw no new build, and called it a
+failure — then re-ran `upload_only`, which Apple rejected with *Redundant Binary Upload*. That rejection
+was the only reason I found out the original upload had succeeded.
+
+**Rule:**
+- **ASC indexing lag is ~3–4 minutes, and I had already measured it twice in the same session** (both
+  earlier builds were "not indexed yet" on the first check and VALID a few minutes later). Absence inside
+  that window carries no information. Poll it; don't diagnose it.
+- **Never pipe a release lane through `tail`.** `fastlane mac beta 2>&1 | tail -5` reports *`tail`'s* exit
+  code — always 0 — and truncates the one line that says whether the upload happened. This is the second
+  time in one session; the first was `bundle exec fastlane … | tail -80` silently swallowing a "no
+  Gemfile" failure. Run release lanes unpiped and grep the saved log afterwards.
+- **A redundant-upload error is good news.** `90189 Redundant Binary Upload` means the binary is already
+  on Apple's side. Treat it as confirmation, not as a failure to fix.
+
+**Why:** Both halves of the mistake were self-inflicted: I hid the evidence with a pipe, then filled the
+gap with the pessimistic guess instead of the one my own earlier measurements supported.
+
+**How to apply:** Before concluding a release step failed, name the observation window and check it
+against known latency. If the answer is "I looked too early," wait — don't act.

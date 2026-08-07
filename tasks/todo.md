@@ -67,6 +67,20 @@ treats **index 0 — dragging to the top of the stack, the most likely reorder t
 fell through to a plain move, which the reflow then silently undid, so the canvas looked frozen. Every
 unit test passed; the model was correct the whole time. Fixed to `!== undefined`.
 
+- [x] Shipped: commit `a89d3d4`, pushed to main, `fastlane mac beta` → build **202608071519** (v0.1.0),
+      **VALID** in ASC ~3 min after upload. Verified the shipped `app.asar` before trusting it: the web
+      bundle carries `set_layout`, `reorder_child`, the "Position is set by the parent's auto-layout."
+      hint, the Auto-layout inspector band and the layer-order hint; the bundled server carries
+      `reflowStackLayouts`/`reorder_child` (5 refs); CFBundleVersion 202608071519, and the `!== undefined`
+      reorder fix is in `HEAD` with a clean tree at build time.
+
+**Release-lane note.** `fastlane mac beta` succeeded, but I ran it as `fastlane mac beta 2>&1 | tail -5`,
+so the exit code I read was `tail`'s and the outcome was truncated away. Seeing the `.pkg` on disk and no
+build in ASC ~2 min later, I called it a failed upload and re-ran `upload_only` — Apple rejected that with
+**Redundant Binary Upload**, which is what proved the first upload had worked. ASC indexing lag is ~3–4
+minutes, already observed twice this session. Never pipe a release lane through `tail`, and never read
+"absent from ASC" as "failed" inside the indexing window.
+
 **Follow-up noticed, not taken:** the layer tree lists highest `zIndex` first, so inside a stack the
 panel reads bottom-to-top relative to the canvas. Correct for z-order, confusing for flow order, and
 Figma solves it by matching layer order to flow order. Changing the tree's sort affects every element
