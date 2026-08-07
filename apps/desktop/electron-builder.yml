@@ -18,6 +18,9 @@ mac:
   extendInfo:
     ITSAppUsesNonExemptEncryption: false
 mas:
+  # Explicit, not inherited: electron-builder 26.15.x stops after signing the .app unless the pkg
+  # target is named, and `fastlane mac beta` uploads a .pkg — without this the lane dies on a nil path.
+  target: pkg
   type: distribution
   category: public.app-category.graphics-design
   entitlements: build/entitlements.mas.plist

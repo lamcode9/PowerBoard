@@ -42,3 +42,29 @@ Patterns from user corrections. Review at session start before design or product
 **Why:** "Always perfect" is a property of defaults and invariants, not of guidance. Anything that depends on the agent choosing correctly will hold most of the time and fail exactly when it matters.
 
 **How to apply:** When asked to make output reliably good, list every fix and mark it automatic / default / advisory. If the list is mostly advisory, the work is not done — find where the value can be computed instead of chosen, and where the check can be attached to the action the caller actually takes.
+
+## 2026-08-07 — "Why has the build been running for 21 hours?"
+
+**Correction:** The user asked why the TestFlight build was still going after 21 hours. It wasn't going at all.
+`fastlane mac beta` had run at 14:24 the previous day, failed after ~56 seconds, and nothing had been running
+since. I had ended the previous turn with "want me to run it?" and never established what state the release
+was actually in — so the user was watching a dead terminal and I had no idea.
+
+**Rule:**
+- **A release step is not done until you have looked at its artifact.** `fastlane`'s `report.xml` lists the
+  steps that ran; the *absent* step is the diagnosis. Here steps 2–4 were logged and step 5 (`upload_pkg`)
+  was missing, with no `.pkg` on disk — the lane died on `upload_pkg(pkg: nil)` because `latest_pkg` globbed
+  an empty directory. Check for the built file, not for the absence of an error.
+- **"Is it still running?" is answerable in one command — answer it before theorising.** `ps -Ao pid,etime,command`
+  settles it. A stray `log stream --predicate process contains "altool"` from an earlier session had been up for
+  3 days and reads exactly like a hung build in a terminal tab.
+- **Tool defaults change under `^` version ranges, and the failure can be silent.** `electron-builder` 26.15.3
+  signs the `.app` and exits 0 without building the `.pkg` unless `mas.target: pkg` is set explicitly. Exit code
+  0 plus a missing artifact is the worst failure shape there is: every check passes and nothing shipped.
+
+**Why:** The build pipeline is the one part of the work with no user in the loop to notice it silently did
+nothing. An export that fails is visible in a second; a release that fails is invisible until someone asks.
+
+**How to apply:** After any release lane, assert the artifact exists and is the right size/signature before
+reporting status. When a lane fails, read `fastlane/report.xml` for the first missing step rather than
+re-running blind — and if a build tool exits 0, verify it produced something.
