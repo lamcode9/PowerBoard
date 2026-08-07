@@ -29,7 +29,8 @@ const LAYOUT_DIAGNOSTIC_CODES = new Set([
   "connector-endpoints-collide",
   "connector-label-collides",
   "elements-overlap",
-  "element-outside-artboard"
+  "element-outside-artboard",
+  "text-overflows-box"
 ]);
 
 /** Element types that read as diagram nodes rather than app-mockup surfaces. */
@@ -912,7 +913,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
       title: "Validate board",
       description:
         "Validate a board file by id, or validate a provided project object. Reports structural problems (ids, parent cycles, missing roles) AND layout problems that make a diagram unpresentable: " +
-        "connector-crosses-element, connector-endpoints-collide, elements-overlap, element-outside-artboard. " +
+        "connector-crosses-element, connector-endpoints-collide, elements-overlap, element-outside-artboard, text-overflows-box. " +
         "Clear the layout warnings before exporting a poster — they are exactly what makes an otherwise valid board look wrong.",
       inputSchema: {
         boardId: z.string().optional(),

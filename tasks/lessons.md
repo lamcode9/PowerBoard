@@ -68,3 +68,31 @@ nothing. An export that fails is visible in a second; a release that fails is in
 **How to apply:** After any release lane, assert the artifact exists and is the right size/signature before
 reporting status. When a lane fails, read `fastlane/report.xml` for the first missing step rather than
 re-running blind — and if a build tool exits 0, verify it produced something.
+
+## 2026-08-07 — A green assertion that measures the wrong pixels
+
+**Context:** Fixing the canvas/SVG text-wrap divergence. Two verification steps passed while proving nothing,
+and a third only worked because the code under test was stale.
+
+**Rule:**
+- **`sharp`'s `stats()` reads the INPUT image, not the queued pipeline.** `sharp(png).extract({…}).stats()`
+  returns the *whole picture's* numbers. Two different crops reported an identical stddev to 14 decimal
+  places — that identity was the tell. Materialise the crop with `.toBuffer()` and re-open it. Any
+  measurement API that can silently ignore your transform needs a control case: if two regions that should
+  differ report the same number, the measurement is broken, not the subject.
+- **Verify against a real artefact before trusting a diagnostic.** The new `text-overflows-box` check passed
+  every synthetic test and then fired 11 false positives on the real 506-element board — including a 15px
+  letter in an 18px box — because it charged a full line-height to the first line. Seed fixtures are sized by
+  whoever wrote the fixture; real boards are sized by a human with taste, and only they expose an
+  off-by-one-line-height.
+- **Workspace `dist` is a silent staleness trap.** `apps/server` imports `@powerboard/renderers` and
+  `@powerboard/schema` from their built output, so a source change is invisible to server tests until
+  `npm run build`. A typecheck error (`no exported member`) is the lucky version of this; the unlucky version
+  is a test that renders the old code and passes.
+
+**Why:** All three failure modes look like success. The pipeline reports green, the diagnostic reports
+findings, the raster reports ink — and none of it is measuring what you think.
+
+**How to apply:** For any measurement-based assertion, first make it fail on purpose. If you cannot state what
+the number would be if the fix were absent, the assertion is decorative. (Here the raster test *did* fail
+against the stale unwrapped renderer, which is the only reason it can be trusted.)

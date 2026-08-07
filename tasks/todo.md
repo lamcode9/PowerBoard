@@ -3,6 +3,62 @@
 Source of truth for the v2 pivot. Full rationale + feature matrix: `docs/powerboard-desktop-roadmap.html`.
 Written 2026-07-04. Status legend: [ ] todo · [~] in progress · [x] done.
 
+## Active — Text that fits the box: canvas/SVG wrap parity + the deferred diagnostic (2026-08-07)
+
+**Why now.** Deferred on 2026-07-28 because exports only wrote files to a sandbox path nobody could reach,
+so the divergence was invisible. Since 2026-08-06 **Export → Download lands a real file in Downloads**, so it
+now ships to whoever the user hands the file to. Same bug, new blast radius.
+
+**The bug.** The canvas renders element text as a `<span>` inside a sized div, so CSS wraps it.
+`renderElementSvg` emits **one unwrapped `<text>` per element** — the `text` branch even carries a `width=`
+attribute, which SVG 1.1 ignores outright. Any label longer than its box looks correct on screen and
+overflows in every SVG and PNG export.
+
+**Why not `<foreignObject>`** (the obvious "just embed the HTML" fix): the PNG path rasterizes through
+`sharp`/librsvg, which does not render `foreignObject`. That would silently drop *all* text from PNG
+exports — strictly worse than the bug being fixed. Wrapping has to be computed, then emitted as `tspan`s.
+
+### Fix — in dependency order
+
+- [x] **Measurement, shared.** `packages/schema`: generalize `connectorLabelWidth`'s per-character-class
+      Inter approximation into `textAdvanceWidth(text, fontSize, fontWeight)` + `wrapTextToWidth(...)`.
+      `connectorLabelWidth` becomes `textAdvanceWidth(…) + 20` — one implementation, not two. Long words
+      with no space must hard-break, or a URL still runs out of the box.
+- [x] **Renderer.** Emit `<text>` + one `<tspan>` per line for `text`, `shape` (label *and* subtitle),
+      `button`/`badge`, and the `default` card/section title + secondary line; clip to the box height the
+      way `sticky` already does. Replace `sticky`'s `width / (fontSize * 0.62)` char-count guess with the
+      measured wrapper.
+- [x] **The deferred diagnostic.** `validate_board` gains `text-overflows-box` — honest now that wrapping is
+      real: it fires when the text still exceeds the box *after* wrapping, which is a genuine authoring
+      problem the agent can fix, not a rendering artefact.
+- [x] **Verify.** Tests; re-export the real 506-element board to PNG *and* SVG and confirm long labels wrap
+      inside their nodes instead of bleeding past the edge.
+
+### Plan hygiene (same pass)
+
+- [x] Reconcile Phase 9 P1–P7 and Phase 0 checkboxes against what the code actually does — P1 tokens, P2
+      typography, P4 signature surface and P7 taste pass all shipped while their boxes stayed empty.
+- [x] `AGENTS.md` (`CLAUDE.md` symlinks to it) said **24 MCP tools**; `mcp:check` reports **41 exposed /
+      40 checked**. Corrected, and pointed at `mcp:check` so the number cannot rot again.
+
+**Result.** 395 `<tspan>`s and **zero `width=` attributes on `<text>`** across the real 506-element board;
+the label that used to run out of its node now wraps, a bare URL hard-breaks, and a title+subtitle pair
+centres as one block. 95 tests (up from 81), typecheck and build clean.
+
+**Two things the verification caught that the code review would not have.**
+1. **The diagnostic's first formula was wrong and the seed board never showed it.** Charging a full
+   line-height to the *first* line flagged 11 healthy labels on the real board — a 32px heading in a 40px
+   box, and a 15px single letter in an 18px box. Only the first line costs its glyph height; the extras
+   cost line-height. The synthetic tests all passed either way; the real board is what exposed it.
+2. **`sharp`'s `stats()` reads the input image, not the queued pipeline.** Two different crops both
+   reported the whole picture's numbers, so the containment check passed while measuring nothing. The crop
+   has to be materialised with `toBuffer()` first — a green assertion that measures the wrong pixels is
+   worse than a red one.
+
+Also worth keeping: the server imports `@powerboard/renderers` from `dist`, so a renderer change is invisible
+to `apps/server` tests until `npm run build` runs. The first raster run rendered the *old* unwrapped `<text>`
+— which accidentally proved the new test detects the bug it was written for.
+
 ## Active — Export: the file never reaches the user (2026-08-06)
 
 **Verified against the running TestFlight build**, not from source. `POST /export/png` on the live board
@@ -418,8 +474,8 @@ Gap: board manager had create/read/update but **no delete** anywhere (server rou
 ## Phase 0 — Foundation & P0 fixes (before the shell)
 
 - [x] **P0 data-loss fix:** browser-local store now IndexedDB (`powerboard.local` db, one record per board), loud failure (throw + console.error), auto-migration from legacy localStorage keys. Verified: create → reload → restore + 8MB asset write. (2026-07-04)
-- [ ] Split `App.tsx` (2.6k lines) into modules — deferred to Phase 3 start (not needed to ship the shell; keeps this diff surgical).
-- [ ] Extract design tokens into CSS variables + dark-mode layer — deferred to Phase 3 start.
+- [ ] Split `App.tsx` into modules — still open, and the file has grown past 5k lines since this was written.
+- [x] Extract design tokens into CSS variables + dark-mode layer — delivered by Phase 9 P0/P1 (see below).
 
 ## Phase 1 — macOS app on TestFlight (user's #1)
 
@@ -499,14 +555,27 @@ User installed 202607051047 and reported 7 problems. Theme of this round: **the 
 Goal: from "clean web app" to best-in-class canvas tool (Linear/Figma/Excalidraw bar). Full plan + rationale: `docs/design/powerboard-design-overhaul.html`. Doctrine: `playbooks/design.md`.
 
 - [x] **P0 — Brand-accent migration:** rebuilt `--accent`/`--accent-soft` into a mode-aware violet ramp derived from the app icon (`--accent`,`-hover`,`-strong`,`-fg`,`-rgb`,`-soft`,`-tint`,`-border`); replaced ~20 scattered hardcoded blues in chrome with tokens; glows retint per theme via `rgba(var(--accent-rgb),α)`; added `--accent-fg` so accent fills flip to ink in dark (fixes latent white-on-light-violet contrast). Verified light+dark AA, console clean, 98 accent refs from one source. `styles.css`.
-- [ ] **P1 — Token foundation:** add missing scales — spacing (`--space-1..8`), radius (`--r-*`, kills the 15-value chaos), elevation (`--shadow-1/2/3`, kills 48 ad-hoc shadows), motion (`--dur-*`,`--ease-*`), semantic `--focus-ring`. Non-breaking vocabulary for P2–P3.
-- [ ] **P2 — Typography:** bundle Inter variable (self-hosted woff2, offline-first); collapse odd weights (650/730/760/850) → 400/500/600/700; ~5-step size scale; tabular figures on all compared numbers.
-- [ ] **P3 — Component consolidation:** map every radius/shadow/spacing literal → tokens; unify the control family (button/field/segmented) onto one spec; remove-until-it-breaks border cleanup.
-- [ ] **P4 — Signature surface (the differentiator):** live agent canvas — element pulse highlights, readable Agent Activity timeline (click-to-focus, live badge), alive connect-agent flow, icon motif in empty state. `AgentFeed.tsx` + canvas layer.
-- [ ] **P5 — Every state + content palette:** empty/loading/error/offline/success per panel+dialog; skeletons not spinners; loud save/backup failure; **decide board-content default palette** (rec: neutral ink defaults, accent on demand) — App.tsx seeds ~1279/3332/3757.
-- [ ] **P6 — Canvas craft:** verify/refine ⌘Z, space-pan, cursor-centered zoom, ⌘0/⌘1, marquee, inertial pan; polish selection ring/snap/connector handles on the token scale.
-- [ ] **P7 — A11y floor + taste pass:** focus rings everywhere, icon-button labels, AA both modes, large-text survival; §10 squint / remove-until-breaks / cheap-tell hunt / best-in-class compare.
-- Open decisions (see plan doc): board-content palette (a/b/c); bundle Inter (~110KB, rec yes); sequence P1→P3 before P4 (or P4 in parallel after P1).
+**Status reconciled 2026-08-07 by reading the code, not the checkboxes** — P1–P7 sat unticked for three weeks
+while most of the work shipped inside Phases 7/8/10 and the Paper-parity pass. Counts below are what the
+files actually contain today.
+
+- [x] **P1 — Token foundation.** Shipped. `styles.css` carries `--space-1..8` (18 refs), `--r-*` (103 refs),
+      `--shadow-1/2/3` (20 refs), `--dur-fast/med`, `--ease-out`, `--focus-ring`.
+- [x] **P2 — Typography.** Shipped. `InterVariable.woff2` self-hosted in `apps/web/public/fonts` behind one
+      `@font-face`; odd weights down to 2 stragglers from the original 650/730/760/850 spread.
+- [~] **P3 — Component consolidation.** Radii done (103 token refs vs **1** surviving px literal); shadows
+      **half migrated — 20 tokenised vs 29 still ad-hoc**. The control family was unified in the Paper pass
+      (`.field.compact` / `.field.row` / segmented on one spec). Finish the shadow sweep and this closes.
+- [x] **P4 — Signature surface.** Shipped — see "Phase 9 · P4a — Agent presence field" below: pulse
+      highlights, click-to-focus feed, phased live badges, agent reticle, empty-state motif.
+- [~] **P5 — Every state + content palette.** Skeletons in place (22 refs); save failure surfaces loudly from
+      `api.ts`. **Not closed:** the board-content default palette decision (a/b/c) was never taken, and no
+      audit has confirmed empty/loading/error/offline per panel *and* dialog.
+- [x] **P6 — Canvas craft.** Shipped across Phases 7/8 — ⌘Z, space-pan, cursor-centred zoom, ⌘0/⌘1, marquee,
+      selection ring and connector handles all present and on the token scale.
+- [x] **P7 — A11y floor + taste pass.** Shipped as commit `3a91a9c` ("Phase 7: a11y floor + taste pass — ship
+      gate"); 55 `aria-label`s in `App.tsx`, focus ring tokenised, both modes checked.
+- Remaining open decision: board-content default palette (a/b/c). Inter is bundled, so that one is settled.
 
 ## Phase 10 · Multi-agent boards (2026-07-29)
 

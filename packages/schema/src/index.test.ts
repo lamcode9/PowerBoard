@@ -314,3 +314,61 @@ describe("Connector v2 + diagram operations", () => {
     expect(report.valid).toBe(true);
   });
 });
+
+describe("text-overflows-box", () => {
+  const nodeBoard = (text: string, width: number, height: number): BoardProject =>
+    BoardProjectSchema.parse({
+      ...createDefaultProject(),
+      elements: [
+        {
+          id: "node", type: "shape", name: "Decision", artboardId: "art", parentId: null,
+          x: 0, y: 0, width, height, zIndex: 0, locked: false, visible: true,
+          style: { fontSize: 14, fontWeight: 600 }, layout: { mode: "absolute" },
+          props: { shape: "rounded", text }
+        }
+      ],
+      artboards: [
+        { id: "art", name: "Sheet", type: "custom", x: 0, y: 0, width: 900, height: 600,
+          background: "#FFFFFF", frameless: true, locked: false, visible: true }
+      ],
+      pages: [{ id: "page", name: "Page 1", artboardIds: ["art"] }],
+      connectors: []
+    });
+
+  const codes = (project: BoardProject) => validateBoardStructure(project).issues.map((issue) => issue.code);
+
+  it("stays quiet when the label fits its node", () => {
+    expect(codes(nodeBoard("Approve", 200, 80))).not.toContain("text-overflows-box");
+  });
+
+  it("fires when the node is too small for its own label", () => {
+    expect(codes(nodeBoard("Escalate to the regional compliance review board", 120, 40)))
+      .toContain("text-overflows-box");
+  });
+
+  it("does not flag a single line in a box sized snug to its glyphs", () => {
+    // The real board had 11 of these — a 32px heading in a 40px box, even a 15px letter in an 18px
+    // box — all fine on canvas and in export. Charging a full line-height to the first line is wrong.
+    const snug = BoardProjectSchema.parse({
+      ...createDefaultProject(),
+      elements: [
+        { id: "t", type: "text", name: "Heading", artboardId: "art", parentId: null,
+          x: 0, y: 0, width: 3100, height: 40, zIndex: 0, locked: false, visible: true,
+          style: { fontSize: 32, fontWeight: 700 }, layout: { mode: "absolute" },
+          props: { text: "AI-Embedded Organization — the operating matrix" } }
+      ],
+      artboards: [{ id: "art", name: "Sheet", type: "custom", x: 0, y: 0, width: 3200, height: 600,
+        background: "#FFFFFF", frameless: true, locked: false, visible: true }],
+      pages: [{ id: "page", name: "Page 1", artboardIds: ["art"] }],
+      connectors: []
+    });
+    expect(validateBoardStructure(snug).issues.map((i) => i.code)).not.toContain("text-overflows-box");
+  });
+
+  it("says how much height the text actually needs", () => {
+    const issue = validateBoardStructure(nodeBoard("Escalate to the regional compliance review board", 120, 40))
+      .issues.find((candidate) => candidate.code === "text-overflows-box");
+    expect(issue?.message).toMatch(/needs \d+px of height in a 40px box/);
+    expect(issue?.severity).toBe("warning");
+  });
+});

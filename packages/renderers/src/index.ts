@@ -9,6 +9,8 @@ import {
   connectorObstacles,
   readPointArray,
   strokeDashPattern,
+  textAdvanceWidth,
+  wrapTextToWidth,
   type AnchorSlot,
   type Artboard,
   type BoardConnector,
@@ -371,7 +373,18 @@ function renderElementSvg(project: BoardProject, element: BoardElement, offsetX 
       return `<g opacity="${opacity}">${isHierarchyOnly(element) ? "" : `<rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}" stroke-width="${element.style.strokeWidth ?? 0}"${dashAttr}/>`}${children}</g>`;
     case "text": {
       const { textX, textAnchor } = svgTextAlignment(element, x);
-      return `<text x="${textX}" y="${y + fontSize}" width="${element.width}" fill="${escapeAttr(color)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${escapeAttr(String(element.style.fontWeight ?? 600))}" text-anchor="${textAnchor}">${escapeXml(readString(element.props.text, element.name))}</text>`;
+      return svgTextBlock(readString(element.props.text, element.name), {
+        x: textX,
+        baseline: y + fontSize,
+        width: element.width,
+        maxHeight: element.height,
+        fontSize,
+        fontFamily,
+        fontWeight: Number(element.style.fontWeight ?? 600),
+        fill: color,
+        anchor: textAnchor as "start" | "middle" | "end",
+        lineHeight: element.style.lineHeight ? element.style.lineHeight / fontSize : undefined
+      });
     }
     case "icon": {
       const size = Math.min(element.width, element.height) * 0.56;
@@ -395,22 +408,62 @@ function renderElementSvg(project: BoardProject, element: BoardElement, offsetX 
       return `<g opacity="${opacity}">${element.props.showArea === true ? `<polygon points="${areaPoints}" fill="${escapeAttr(strokeColor)}" opacity="0.12"/>` : ""}<polyline points="${points}" fill="none" stroke="${escapeAttr(strokeColor)}" stroke-width="${element.style.strokeWidth ?? 3}" stroke-linecap="round" stroke-linejoin="round"/>${children}</g>`;
     }
     case "button":
-    case "badge":
-      return `<g opacity="${opacity}"><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}"/><text x="${x + element.width / 2}" y="${y + element.height / 2 + fontSize / 3}" fill="${escapeAttr(color)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="700" text-anchor="middle">${escapeXml(readString(element.props.text, element.name))}</text>${children}</g>`;
+    case "badge": {
+      const label = svgTextBlock(readString(element.props.text, element.name), {
+        x: x + element.width / 2,
+        centerY: y + element.height / 2,
+        width: element.width - 16,
+        maxHeight: element.height,
+        fontSize,
+        fontFamily,
+        fontWeight: 700,
+        fill: color,
+        anchor: "middle"
+      });
+      return `<g opacity="${opacity}"><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}"/>${label}${children}</g>`;
+    }
     case "shape": {
       const kind = readString(element.props.shape, "rectangle");
       const outline = shapeOutlineSvg(kind, x, y, element.width, element.height, radius, escapeAttr(fill), escapeAttr(stroke), element.style.strokeWidth ?? 1.5, dashAttr);
       const label = readString(element.props.text, "");
       const subtitle = readString(element.props.subtitle, "");
-      // A titled node centres its pair as one optical block rather than centring the title alone.
+      // A titled node centres its pair as one optical block rather than centring the title alone —
+      // which now means measuring both *after* wrapping, since either can run to several lines.
       const subtitleSize = Math.max(11, Math.round(fontSize * 0.72));
-      const baseline = y + element.height / 2 + fontSize / 3 - (subtitle ? subtitleSize * 0.7 : 0);
-      const text = label
-        ? `<text x="${x + element.width / 2}" y="${baseline}" fill="${escapeAttr(color)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${escapeAttr(String(element.style.fontWeight ?? 600))}" text-anchor="middle">${escapeXml(label)}</text>`
-        : "";
-      const subtitleText = subtitle
-        ? `<text x="${x + element.width / 2}" y="${baseline + subtitleSize * 1.5}" fill="${escapeAttr(color)}" opacity="0.72" font-family="${fontFamily}" font-size="${subtitleSize}" font-weight="500" text-anchor="middle">${escapeXml(subtitle)}</text>`
-        : "";
+      const labelWeight = Number(element.style.fontWeight ?? 600);
+      const inner = Math.max(24, element.width - 24);
+      const centerX = x + element.width / 2;
+      const labelStep = fontSize * 1.3;
+      const subtitleStep = subtitleSize * 1.35;
+      const labelLines = label ? wrapTextToWidth(label, inner, fontSize, labelWeight).length : 0;
+      const subtitleLines = subtitle ? wrapTextToWidth(subtitle, inner, subtitleSize, 500).length : 0;
+      const blockHeight = labelLines * labelStep + (subtitleLines ? subtitleLines * subtitleStep + 4 : 0);
+      const top = y + element.height / 2 - blockHeight / 2;
+      // Deliberately not clipped: inside a diagram node a silently truncated label reads as a broken
+      // renderer, and `text-overflows-box` now tells the author when it genuinely does not fit.
+      const text = svgTextBlock(label, {
+        x: centerX,
+        baseline: top + fontSize,
+        width: inner,
+        fontSize,
+        fontFamily,
+        fontWeight: labelWeight,
+        fill: color,
+        anchor: "middle",
+        lineHeight: 1.3
+      });
+      const subtitleText = svgTextBlock(subtitle, {
+        x: centerX,
+        baseline: top + labelLines * labelStep + 4 + subtitleSize,
+        width: inner,
+        fontSize: subtitleSize,
+        fontFamily,
+        fontWeight: 500,
+        fill: color,
+        anchor: "middle",
+        opacity: 0.72,
+        lineHeight: 1.35
+      });
       return `<g opacity="${opacity}">${outline}${text}${subtitleText}${children}</g>`;
     }
     case "ink": {
@@ -422,11 +475,17 @@ function renderElementSvg(project: BoardProject, element: BoardElement, offsetX 
       return `<g opacity="${opacity}"><path d="${path}" fill="none" stroke="${escapeAttr(element.style.stroke ?? color)}" stroke-width="${element.style.strokeWidth ?? 2.5}" stroke-linecap="round" stroke-linejoin="round"/>${children}</g>`;
     }
     case "sticky": {
-      const lines = wrapSvgText(readString(element.props.text, "Note"), Math.max(8, Math.floor(element.width / (fontSize * 0.62))));
-      const textLines = lines
-        .slice(0, Math.max(1, Math.floor((element.height - 32) / (fontSize * 1.4))))
-        .map((line, index) => `<text x="${x + 16}" y="${y + 28 + index * fontSize * 1.4}" fill="${escapeAttr(color)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="600">${escapeXml(line)}</text>`)
-        .join("");
+      const textLines = svgTextBlock(readString(element.props.text, "Note"), {
+        x: x + 16,
+        baseline: y + 28,
+        width: element.width - 32,
+        maxHeight: element.height - 32,
+        fontSize,
+        fontFamily,
+        fontWeight: 600,
+        fill: color,
+        lineHeight: 1.4
+      });
       return `<g opacity="${opacity}"><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius || 12}" fill="${escapeAttr(fill === "transparent" ? "#FEF3C7" : fill)}" stroke="${escapeAttr(stroke)}"/>${textLines}${children}</g>`;
     }
     case "chart": {
@@ -449,8 +508,23 @@ function renderElementSvg(project: BoardProject, element: BoardElement, offsetX 
       const image = asset ? `<image href="${escapeAttr(asset.src)}" x="${x}" y="${y}" width="${element.width}" height="${element.height}" preserveAspectRatio="xMidYMid slice" opacity="${opacity}"/>` : "";
       return `<g><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill || "#E2E8F0")}" stroke="${escapeAttr(stroke)}" opacity="${opacity}"/>${image}<text x="${x + element.width / 2}" y="${y + element.height / 2}" fill="#64748B" font-family="${fontFamily}" font-size="13" text-anchor="middle">${asset ? "" : escapeXml(element.type === "screenshotOverlay" ? "Screenshot overlay" : "Image")}</text>${children}</g>`;
     }
-    default:
-      return `<g opacity="${opacity}"><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}"/><text x="${x + 18}" y="${y + 32}" fill="${escapeAttr(color)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="800">${escapeXml(readString(element.props.title ?? element.props.text ?? element.name, element.name))}</text>${renderSecondarySvgLines(project, element, x, y)}${children}</g>`;
+    default: {
+      const titleText = readString(element.props.title ?? element.props.text ?? element.name, element.name);
+      const titleWidth = element.width - 36;
+      // The secondary line sits under the title, so it has to know how tall the title actually got.
+      const titleLines = wrapTextToWidth(titleText, titleWidth, fontSize, 800).length;
+      const title = svgTextBlock(titleText, {
+        x: x + 18,
+        baseline: y + 32,
+        width: titleWidth,
+        fontSize,
+        fontFamily,
+        fontWeight: 800,
+        fill: color
+      });
+      const secondary = renderSecondarySvgLines(project, element, x, y + (titleLines - 1) * fontSize * 1.35);
+      return `<g opacity="${opacity}"><rect x="${x}" y="${y}" width="${element.width}" height="${element.height}" rx="${radius}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(stroke)}"/>${title}${secondary}${children}</g>`;
+    }
   }
 }
 
@@ -459,7 +533,16 @@ function renderSecondarySvgLines(project: BoardProject, element: BoardElement, x
   if (!subtitle) {
     return "";
   }
-  return `<text x="${x + 18}" y="${y + 58}" fill="${escapeAttr(element.style.color ?? "#64748B")}" font-family="${escapeAttr(svgFontFamily(project, element))}" opacity="0.7" font-size="13">${escapeXml(subtitle)}</text>`;
+  return svgTextBlock(subtitle, {
+    x: x + 18,
+    baseline: y + 58,
+    width: element.width - 36,
+    fontSize: 13,
+    fontFamily: escapeAttr(svgFontFamily(project, element)),
+    fontWeight: 400,
+    fill: element.style.color ?? "#64748B",
+    opacity: 0.7
+  });
 }
 
 function svgFontFamily(project: BoardProject, element: BoardElement): string {
@@ -691,20 +774,72 @@ function starPoints(): Array<[number, number]> {
   return points;
 }
 
-function wrapSvgText(text: string, maxChars: number): string[] {
-  const words = text.split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let current = "";
-  for (const word of words) {
-    if (current && (current.length + word.length + 1) > maxChars) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = current ? `${current} ${word}` : word;
+interface SvgTextBlockOptions {
+  x: number;
+  /** Baseline of the first line. Mutually exclusive with `centerY`. */
+  baseline?: number;
+  /** Vertical centre of the wrapped block — what a node label wants, since it grows both ways. */
+  centerY?: number;
+  /** Wrap budget in user units. */
+  width: number;
+  /** Clip the block to this many user units, ellipsising the last line that fits. */
+  maxHeight?: number;
+  fontSize: number;
+  fontFamily: string;
+  fontWeight?: number;
+  fill: string;
+  anchor?: "start" | "middle" | "end";
+  opacity?: number;
+  lineHeight?: number;
+}
+
+/**
+ * The exporters' text primitive. SVG does not wrap text and `<foreignObject>` is not rendered by the
+ * librsvg/sharp path we rasterize PNGs through, so every line break has to be computed here and emitted
+ * as its own `<tspan>`. Without this the canvas (a wrapping HTML box) and the export disagree on every
+ * label longer than its element, and only the export is wrong.
+ */
+function svgTextBlock(raw: string, options: SvgTextBlockOptions): string {
+  const text = raw.trim();
+  if (!text) return "";
+  const { x, width, fontSize, fontFamily, fill } = options;
+  const weight = options.fontWeight ?? 400;
+  const step = fontSize * (options.lineHeight ?? 1.35);
+  let lines = wrapTextToWidth(text, width, fontSize, weight);
+
+  if (options.maxHeight !== undefined) {
+    const maxLines = Math.max(1, Math.floor(options.maxHeight / step));
+    if (lines.length > maxLines) {
+      lines = lines.slice(0, maxLines);
+      // Say "there is more" rather than ending mid-word — a clipped label reads as a rendering fault.
+      const last = lines[maxLines - 1]!;
+      lines[maxLines - 1] = ellipsizeToWidth(last, width, fontSize, weight);
     }
   }
-  if (current) lines.push(current);
-  return lines.length ? lines : [text];
+
+  const firstBaseline =
+    options.centerY !== undefined
+      ? options.centerY - ((lines.length - 1) * step) / 2 + fontSize / 3
+      : (options.baseline ?? 0);
+  const tspans = lines
+    .map(
+      (line, index) =>
+        `<tspan x="${roundForSvg(x)}" y="${roundForSvg(firstBaseline + index * step)}">${escapeXml(line)}</tspan>`
+    )
+    .join("");
+  const opacityAttr = options.opacity !== undefined && options.opacity !== 1 ? ` opacity="${options.opacity}"` : "";
+  const anchorAttr = options.anchor ? ` text-anchor="${options.anchor}"` : "";
+  return `<text fill="${escapeAttr(fill)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${weight}"${anchorAttr}${opacityAttr}>${tspans}</text>`;
+}
+
+/** Trim a line until it plus an ellipsis fits the width budget. */
+function ellipsizeToWidth(line: string, width: number, fontSize: number, fontWeight: number): string {
+  if (textAdvanceWidth(`${line}…`, fontSize, fontWeight) <= width) return `${line}…`;
+  let trimmed = line;
+  while (trimmed.length > 1 && textAdvanceWidth(`${trimmed}…`, fontSize, fontWeight) > width) {
+    trimmed = trimmed.slice(0, -1);
+  }
+  return `${trimmed.trimEnd()}…`;
 }
 
 /** Render a full page (all artboards + connectors) to one SVG — diagrams export whole. */

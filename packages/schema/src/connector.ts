@@ -418,10 +418,65 @@ export function strokeDashArray(style: BoardStyle, fallbackWidth = 1): string | 
 }
 
 /**
- * Width of a connector's label pill. Canvas and SVG both need the same number, and neither can
- * measure text, so this approximates Inter's advance widths by character class — close enough that
- * the pill hugs its text instead of the old `length * 7.2`, which left "IIII" clipped and "····" swimming.
+ * Rendered width of a run of text. Canvas and SVG both need the same number and neither can measure
+ * text, so this approximates Inter's advance widths by character class — close enough that a pill hugs
+ * its text instead of the old `length * 7.2`, which left "IIII" clipped and "····" swimming.
+ *
+ * Heavier weights are wider: Inter's bold advances run a few percent over regular, and at heading sizes
+ * that difference is the one that decides whether a title wraps.
  */
+export function textAdvanceWidth(text: string, fontSize: number, fontWeight: number = 400): number {
+  let units = 0;
+  for (const character of text) {
+    if (" ·.,:;'!|il".includes(character)) units += 0.32;
+    else if ("fjrt()[]-".includes(character)) units += 0.44;
+    else if ("mwMW".includes(character)) units += 0.86;
+    else if (character >= "A" && character <= "Z") units += 0.68;
+    else units += 0.56;
+  }
+  // 400 → 1.0, 700 → ~1.03, 800 → ~1.04. Flat below regular; Inter's light advances barely differ.
+  const weightFactor = 1 + Math.max(0, fontWeight - 400) * 0.0001;
+  return units * fontSize * weightFactor;
+}
+
+/**
+ * Greedy word wrap against a real width budget — the SVG exporters' answer to the fact that SVG has no
+ * text wrapping and `<foreignObject>` is not rendered by the librsvg/sharp raster path we export PNGs
+ * through. A word that cannot fit on a line of its own is hard-broken rather than allowed to bleed past
+ * the box, because the common case is a URL or an identifier, and silently overflowing is what this
+ * whole function exists to stop.
+ */
+export function wrapTextToWidth(text: string, maxWidth: number, fontSize: number, fontWeight: number = 400): string[] {
+  const budget = Math.max(1, maxWidth);
+  const lines: string[] = [];
+  const fits = (candidate: string) => textAdvanceWidth(candidate, fontSize, fontWeight) <= budget;
+
+  // Break an unbreakable run (URL, identifier) at the last character that still fits.
+  const pushHardBroken = (word: string) => {
+    let rest = word;
+    while (rest && !fits(rest)) {
+      let cut = 1;
+      while (cut < rest.length && fits(rest.slice(0, cut + 1))) cut++;
+      lines.push(rest.slice(0, cut));
+      rest = rest.slice(cut);
+    }
+    return rest;
+  };
+
+  let current = "";
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (fits(candidate)) {
+      current = candidate;
+      continue;
+    }
+    if (current) lines.push(current);
+    current = fits(word) ? word : pushHardBroken(word);
+  }
+  if (current) lines.push(current);
+  return lines.length ? lines : [text];
+}
+
 /** Height of a connector's label pill — fixed by the canvas and SVG label styles. */
 export const CONNECTOR_LABEL_HEIGHT = 26;
 
@@ -465,16 +520,13 @@ export function connectorLabelPoint(
   return { point: requested, fits: false };
 }
 
+/**
+ * Pill width for a connector label: the text's own advance plus the pill's horizontal padding.
+ * Deliberately weight-neutral — the padding already absorbs the semibold difference, and the pill's
+ * measured geometry is load-bearing for `connector-label-collides`, so it stays bit-identical.
+ */
 export function connectorLabelWidth(label: string, fontSize = 12): number {
-  let units = 0;
-  for (const character of label) {
-    if (" ·.,:;'!|il".includes(character)) units += 0.32;
-    else if ("fjrt()[]-".includes(character)) units += 0.44;
-    else if ("mwMW".includes(character)) units += 0.86;
-    else if (character >= "A" && character <= "Z") units += 0.68;
-    else units += 0.56;
-  }
-  return Math.round(units * fontSize) + 20;
+  return Math.round(textAdvanceWidth(label, fontSize)) + 20;
 }
 
 // ---------------------------------------------------------------------------

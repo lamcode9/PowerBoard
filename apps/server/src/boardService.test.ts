@@ -569,3 +569,45 @@ function countDarkPixels(data: Buffer, width: number, channels: number, bounds: 
   }
   return count;
 }
+
+describe("PNG raster keeps text inside its box", () => {
+  // SVG has no text wrapping, and the librsvg path sharp rasterizes through ignores <foreignObject> —
+  // so the exporters compute line breaks themselves. Asserted through the real production rasterizer:
+  // ink inside the node, none in the padding beside it.
+  const inkIn = async (png: Buffer, left: number, top: number, width: number, height: number) => {
+    // stats() reads the INPUT image, not the queued pipeline — the crop has to be materialised first.
+    const crop = await sharp(png).extract({ left, top, width, height }).greyscale().toBuffer();
+    return (await sharp(crop).stats()).channels[0]!.stdev;
+  };
+
+  it("wraps a long node label rather than bleeding it past the node", async () => {
+    const { store } = await tempStore();
+    const board = await store.createBoard("Wrap Test");
+    const artboardId = board.artboards[0]!.id;
+    // Clear the seed content: a selection-scoped export frames a *region*, so anything else sitting
+    // under those bounds renders too and would be mistaken for escaped text.
+    for (let current = await store.readBoard(board.id); current.elements.length; current = await store.readBoard(board.id)) {
+      await store.applyOperation(board.id, { type: "delete_element", elementId: current.elements[0]!.id });
+    }
+    const node = createElementFromPreset("shape", artboardId, 0, 0);
+    await store.applyOperation(board.id, {
+      type: "add_element",
+      element: {
+        ...node,
+        width: 220,
+        height: 120,
+        style: { ...node.style, fill: "#FFFFFF", stroke: "#334155", fontSize: 16, fontWeight: 600, color: "#0F172A" },
+        props: { ...node.props, shape: "rounded", text: "Customer support escalation queue" }
+      }
+    });
+
+    // Selection scope frames exactly this node plus 32px of padding, so the geometry is exact:
+    // a 220x120 node lands at (32,32)-(252,152) inside a 284x184 image.
+    const rendered = await store.renderExport(board.id, { scope: "selection", ids: [node.id], format: "png", scale: 1 });
+    const png = rendered.data;
+    expect(await sharp(png).metadata()).toMatchObject({ width: 284, height: 184 });
+
+    expect(await inkIn(png, 42, 52, 200, 80)).toBeGreaterThan(5);   // the label is drawn
+    expect(await inkIn(png, 256, 36, 26, 112)).toBeLessThan(0.5);   // and none of it escaped the node
+  });
+});

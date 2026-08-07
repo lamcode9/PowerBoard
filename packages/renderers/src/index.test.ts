@@ -106,3 +106,53 @@ function createPrimitiveProject() {
   sparkline.name = "Mobile Home / Revenue Sparkline";
   return BoardProjectSchema.parse({ ...project, elements: [...project.elements, icon, line, sparkline] });
 }
+
+describe("SVG text wrapping (canvas/export parity)", () => {
+  // The canvas draws element text as a <span> in a sized box, so CSS wraps it. SVG has no wrapping and
+  // the sharp/librsvg raster path ignores <foreignObject>, so the exporter has to wrap explicitly —
+  // otherwise long labels look right on screen and bleed out of the node in every PNG and SVG.
+  const boardWithNode = (text: string, width: number, height: number) => {
+    const project = BoardProjectSchema.parse(createDefaultProject());
+    const artboard = project.artboards[0]!;
+    project.elements = [
+      {
+        id: "node", type: "shape", name: "Node", artboardId: artboard.id, parentId: null,
+        x: 20, y: 20, width, height, zIndex: 0, locked: false, visible: true,
+        style: { fill: "#FFFFFF", stroke: "#94A3B8", fontSize: 14, fontWeight: 600 },
+        layout: { mode: "absolute" }, props: { shape: "rounded", text }
+      } as never
+    ];
+    return { project, artboardId: artboard.id };
+  };
+
+  it("breaks a long node label into several tspans", () => {
+    const { project, artboardId } = boardWithNode("Customer support escalation queue", 160, 90);
+    const svg = renderArtboardSvg(project, artboardId);
+    expect((svg.match(/<tspan/g) ?? []).length).toBeGreaterThan(1);
+    expect(svg).not.toContain(">Customer support escalation queue<");
+  });
+
+  it("keeps a short label on one line", () => {
+    const { project, artboardId } = boardWithNode("Queue", 160, 90);
+    const svg = renderArtboardSvg(project, artboardId);
+    expect((svg.match(/<tspan/g) ?? []).length).toBe(1);
+    expect(svg).toContain(">Queue</tspan>");
+  });
+
+  it("emits no width attribute on <text> — SVG 1.1 ignores it, which is why this bug existed", () => {
+    const { project, artboardId } = boardWithNode("Queue", 160, 90);
+    expect(renderArtboardSvg(project, artboardId)).not.toMatch(/<text[^>]*\swidth=/);
+  });
+
+  it("centres a wrapped label as one block, not on the first line", () => {
+    const { project, artboardId } = boardWithNode("Customer support escalation queue", 160, 90);
+    const svg = renderArtboardSvg(project, artboardId);
+    const ys = [...svg.matchAll(/<tspan x="[^"]*" y="([\d.]+)"/g)].map((match) => Number(match[1]));
+    expect(ys.length).toBeGreaterThan(1);
+    // Node spans y 20..110, centre 65. The line block should straddle it.
+    const first = ys[0]!;
+    const last = ys[ys.length - 1]!;
+    expect(first).toBeLessThan(65);
+    expect(last).toBeGreaterThan(65);
+  });
+});

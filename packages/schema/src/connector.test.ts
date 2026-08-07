@@ -4,12 +4,15 @@ import {
   BoardProjectSchema,
   connectorAnchorSlots,
   connectorGeometry,
+  connectorLabelWidth,
   connectorObstacles,
   createDefaultProject,
   rectsOverlap,
   segmentIntersectsRect,
   strokeDashPattern,
+  textAdvanceWidth,
   validateBoardStructure,
+  wrapTextToWidth,
   type BoardConnector,
   type BoardElement,
   type BoardProject,
@@ -368,5 +371,41 @@ describe("polish_layout — cluster membership guards", () => {
     const inner = result.elements.find((element) => element.id === "inner")!;
     expect(inner.y).toBeGreaterThan(1100);
     expect(inner.y).toBeLessThan(1400);
+  });
+});
+
+describe("text measurement and wrapping", () => {
+  it("keeps connector label pills bit-identical after the shared-measurement refactor", () => {
+    // Regression guard: the pill's width feeds `connector-label-collides`, so a silent 2% drift
+    // would quietly change which diagrams validate.
+    expect(connectorLabelWidth("Approve", 12)).toBe(Math.round(textAdvanceWidth("Approve", 12)) + 20);
+    expect(connectorLabelWidth("IIII", 12)).toBeLessThan(connectorLabelWidth("MMMM", 12));
+  });
+
+  it("charges wide glyphs more than narrow ones", () => {
+    expect(textAdvanceWidth("MMMM", 14)).toBeGreaterThan(textAdvanceWidth("iiii", 14));
+  });
+
+  it("wraps to the width budget instead of overflowing", () => {
+    const lines = wrapTextToWidth("Customer support escalation queue", 120, 14, 600);
+    expect(lines.length).toBeGreaterThan(1);
+    for (const line of lines) {
+      expect(textAdvanceWidth(line, 14, 600)).toBeLessThanOrEqual(120);
+    }
+    expect(lines.join(" ")).toBe("Customer support escalation queue");
+  });
+
+  it("hard-breaks a word that cannot fit on a line of its own", () => {
+    // The common case is a URL or an identifier — the whole point is that nothing bleeds past the box.
+    const lines = wrapTextToWidth("https://powerboard.lamonade.xyz/boards/very-long-identifier", 100, 12);
+    expect(lines.length).toBeGreaterThan(1);
+    for (const line of lines) {
+      expect(textAdvanceWidth(line, 12)).toBeLessThanOrEqual(100);
+    }
+    expect(lines.join("")).toContain("powerboard.lamonade.xyz");
+  });
+
+  it("never returns an empty line list", () => {
+    expect(wrapTextToWidth("x", 1, 14)).toEqual(["x"]);
   });
 });

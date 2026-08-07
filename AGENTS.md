@@ -27,7 +27,7 @@ npm-workspaces monorepo, ~8k lines TS:
 
 - `packages/schema/` — Zod schemas: `BoardProject` → `pages` / `artboards` / `elements` (typed, nestable via `parentId`, `semanticRole`, `style`, `layout`, `props`) / `connectors` / `assets` / `tokens`; the operations discriminated union; `validateBoardStructure`, hierarchy inspection. **The data model is the product — change it first, carefully, with migration.**
 - `packages/renderers/` — React/Tailwind, spec-markdown, SVG export generators.
-- `apps/server/` — `boardService.ts` (operation application, undo/redo stacks), `mcpServer.ts` (24 MCP tools, stdio + HTTP `/mcp`), `cloudStore.ts`, Express API (`/api/boards`, operations, exports), WS broadcast (`board.changed` + `agentActivity`).
+- `apps/server/` — `boardService.ts` (operation application, undo/redo stacks), `mcpServer.ts` (41 MCP tools, stdio + HTTP `/mcp` — `npm run mcp:check` is the source of truth, not this number), `cloudStore.ts`, Express API (`/api/boards`, operations, exports), WS broadcast (`board.changed` + `agentActivity`).
 - `apps/web/` — `App.tsx` (being split into `canvas/`/`panels/`/`inspector/`/`state/`), DOM canvas (CSS `translate3d`+`scale` camera, SVG connector layer), `api.ts` (server + browser-local fallback).
 - `apps/desktop/` — Electron shell (Phase 1): main process runs the server in-process, loads the built web bundle, owns native menus + storage paths.
 

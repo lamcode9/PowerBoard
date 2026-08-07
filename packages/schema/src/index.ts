@@ -6,6 +6,7 @@ import {
   connectorGeometry,
   connectorLabelPoint,
   connectorLabelWidth,
+  wrapTextToWidth,
   connectorObstacleElements,
   elementWorldRect,
   rectsNest,
@@ -974,7 +975,65 @@ function layoutDiagnostics(project: BoardProject): BoardValidationIssue[] {
     }
   }
 
+  issues.push(...textOverflowDiagnostics(project));
   return issues;
+}
+
+/**
+ * Text that will not fit its own box once wrapped. Deferred until 2026-08-07 because the SVG exporter
+ * emitted one unwrapped `<text>` per element, so *every* long label overflowed and the diagnostic would
+ * have been noise. Now that the exporters wrap on the same measurement this uses, a hit here is a real
+ * authoring problem — the node is too small for its label — and the agent can act on it.
+ */
+function textOverflowDiagnostics(project: BoardProject): BoardValidationIssue[] {
+  const issues: BoardValidationIssue[] = [];
+  for (const element of project.elements) {
+    if (!element.visible) continue;
+    const content = elementTextContent(element);
+    if (!content) continue;
+
+    const fontSize = typeof element.style.fontSize === "number" ? element.style.fontSize : 14;
+    const fontWeight = Number(element.style.fontWeight ?? 600);
+    const inner = Math.max(24, element.width - content.horizontalPadding);
+    const lines = wrapTextToWidth(content.text, inner, fontSize, fontWeight);
+    // First line costs its glyph height; only the *extra* lines cost a full line-height. Charging
+    // line-height to a single line flagged 11 perfectly good labels on the real board — including a
+    // 15px letter in an 18px box — because authors legitimately size a text box snug to its glyphs.
+    const needed = fontSize + (lines.length - 1) * fontSize * 1.35 + content.verticalPadding;
+    if (needed <= element.height + 1) continue;
+
+    issues.push({
+      severity: "warning",
+      code: "text-overflows-box",
+      message: `Text does not fit ${element.name}: "${truncateForMessage(content.text)}" needs ${Math.ceil(needed)}px of height in a ${Math.round(element.height)}px box (${lines.length} lines at ${fontSize}px). Grow the element, shorten the text, or reduce the font size.`,
+      artboardId: element.artboardId,
+      elementId: element.id
+    });
+  }
+  return issues;
+}
+
+/** The one string an element actually renders, plus the padding its renderer reserves around it. */
+function elementTextContent(element: BoardElement): { text: string; horizontalPadding: number; verticalPadding: number } | undefined {
+  const read = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
+  switch (element.type) {
+    case "text":
+      return read(element.props.text) ? { text: read(element.props.text), horizontalPadding: 0, verticalPadding: 0 } : undefined;
+    case "shape": {
+      const label = read(element.props.text);
+      return label ? { text: label, horizontalPadding: 24, verticalPadding: 8 } : undefined;
+    }
+    case "sticky": {
+      const note = read(element.props.text);
+      return note ? { text: note, horizontalPadding: 32, verticalPadding: 32 } : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+function truncateForMessage(text: string): string {
+  return text.length > 48 ? `${text.slice(0, 47)}…` : text;
 }
 
 export function inspectBoardHierarchy(input: BoardProject): BoardHierarchyArtboard[] {
