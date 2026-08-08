@@ -43,7 +43,7 @@ moved under you — serialization stops lost writes, but it doesn't make your re
 5. After edits, `validate_board` and fix hierarchy/primitive diagnostics before exporting.
 6. Treat tool errors as data: every error is `{ code, tool, message, hint, details }` (codes: `validation_failed`, `not_found`, `missing_input`, `conflict`, `internal_error`). Read `hint`; don't retry blind.
 
-### MCP tools (39)
+### MCP tools (`npm run mcp:check` is the source of truth for the count)
 
 The MCP surface is **application-wide**, not scoped to one board — an agent (e.g. Claude Desktop via a custom connector on `…/mcp`) can manage the whole workspace: list every board, create, rename, delete, and see the files backing each one, then edit inside any of them.
 
@@ -51,6 +51,7 @@ The MCP surface is **application-wide**, not scoped to one board — an agent (e
 - **Board lifecycle (application-level):** `create_board`, `rename_board`, `delete_board` (irreversible — deletes JSON/assets/exports/history; not covered by board undo, but versioned backup snapshots are kept). These are store-level lifecycle actions, not operations-union edits.
 - **Mockup edits:** `create_artboard`, `update_artboard`, `delete_artboard`, `create_variant`, `add_element`, `update_element`, `move_resize_element`, `delete_element`, `group_elements`, `set_selection`, `import_screenshot_overlay`.
 - **Diagram edits (same object model):** `add_element` with `presetType: "shape"` (12 kinds: rectangle, rounded, ellipse, diamond, parallelogram, cylinder, hexagon, triangle, star, cloud, document, arrow-right — `props.shape` + `props.text`) or `"ink"`; `add_connector` / `update_connector` / `delete_connector` (element anchoring, `fromPort`/`toPort` = auto|n|s|e|w, `routing` = straight|orthogonal|curved, `arrowStart`/`arrowEnd` = none|arrow|triangle|dot|diamond, `waypoints`, `label`, `labelPosition`); `apply_layout` (`tree` for org charts, `flow` for left→right process, `align-*`, `distribute-*`).
+- **Comments (the human↔agent feedback loop):** `list_comments` (unresolved threads are actionable requests — check them when picking up a board), `add_comment` (start a thread on an element), `reply_comment` (say what you changed), `resolve_comment` (mark done, or reopen with `resolved: false`), `delete_comment` (destructive — prefer resolving). Threads anchor to one element and never appear in exports.
 - **Batch + history:** `batch_operations`, `board_undo`, `board_redo`.
 - **Export:** `export_react_tailwind`, `export_board_spec`, `export_artboard_png`, `export_selection_handoff` (mockups); `export_page_svg`, `export_page_pdf`, `export_mermaid` (diagrams — Mermaid is shape-aware: diamonds → `{}`, cylinders → `[()]`, etc.).
 

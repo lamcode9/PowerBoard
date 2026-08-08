@@ -3,6 +3,86 @@
 Source of truth for the v2 pivot. Full rationale + feature matrix: `docs/powerboard-desktop-roadmap.html`.
 Written 2026-07-04. Status legend: [ ] todo · [~] in progress · [x] done.
 
+## Active — Comments: right-click → comment on any element (2026-08-08)
+
+User ask: right-click a selected element → add a comment; polished end-to-end, then TestFlight.
+Greenfield — repo-wide grep confirms no comment/annotation code and **no context menu of any kind** exists.
+
+**The product frame.** Comments are the human↔agent feedback channel: the user leaves a comment on an
+element, an agent reads it over MCP, fixes the thing, replies, and resolves. So comments must be
+first-class board data flowing through the operation model — not UI-local state — and the MCP surface
+ships in the same pass as the pins.
+
+### Decisions taken before coding
+
+- **D-i — Sibling collection, not an element type.** `comments: CommentThread[]` beside `connectors`.
+  A comment has no zIndex/style/export representation; renderers iterate `elements` + `connectors`
+  only, so annotations stay out of every export for free. D5 ("extend the existing object") doesn't
+  apply — a thread is not a canvas object.
+- **D-ii — Threads with embedded messages**, anchored to one `elementId`. No `parentCommentId` graph:
+  a flat `messages[]` inside the thread means no cycle checks, one popover, one resolve bit. Free-
+  floating canvas comments (Figma's click-anywhere) are out of scope — the ask is element comments.
+- **D-iii — No schemaVersion bump.** `.default([])` IS the migration; bumping the `z.literal(1)`
+  would hard-fail every stored board (no migrator exists).
+- **D-iv — Comments are not selectable.** No `filterValidSelection` change; comment ops leave
+  `selection` untouched.
+- **D-v — Ops: `add_comment` (thread, first message inside), `reply_comment`, `set_comment_resolved`
+  (boolean, so reopen is the same op), `delete_comment`.** Replying does NOT auto-reopen a resolved
+  thread — resolution is an explicit act. No message-edit op in v1 (flagged follow-up).
+- **D-vi — Cascades**: `delete_element`/`delete_artboard` prune threads of removed elements (same as
+  connectors). `create_variant` does NOT clone comments — feedback belongs to the original.
+- **D-vii — Right-click menu is element-scoped v1**: Add comment · Duplicate · Delete. Native menu
+  suppressed on canvas. Multi-select right-click anchors the comment to the clicked element.
+
+### Build — in dependency order
+
+- [x] `packages/schema` (schemas live in `index.ts` — the `connector.ts` split is for geometry, which
+      comments don't have): `CommentMessageSchema` /
+      `CommentThreadSchema` + factories (`createCommentThread`/`createCommentMessage` — id + nowIso
+      stamping in one place); collection + superRefine (unique ids, dangling `elementId` = error,
+      matching connectors); 4 op variants + `applyBoardOperation` cases (throw `... not found` — the
+      string is load-bearing for MCP error codes); cascade pruning; tests.
+- [x] `apps/server`: `targetIdsForOperation` cases (pulse the commented element), `projectCounts.comments`;
+      MCP tools `list_comments` / `add_comment` / `reply_comment` / `resolve_comment` / `delete_comment`
+      (author = `currentAgent().name`, `authorKind: "agent"`); `mcpCheck` REQUIRED_TOOLS; undo/redo +
+      attribution test; connector doc update.
+- [x] `apps/web` — context menu: `onContextMenu` on the viewport (preventDefault, screen-coords menu),
+      right-click selects the element under cursor if unselected; fixed the latent `ElementView`
+      `onPointerDown` bug (button 2 selected AND started a drag — now guarded `button !== 0`).
+      Native menu preserved inside text fields so cut/copy/paste survive.
+- [x] `apps/web` — pins: plane-level layer beside `.selection-actionbar-anchor`, anchored at
+      `elementWorldBounds` top-right, counter-scaled `1/zoom`; unresolved threads only; message-count
+      chip; accent dot when an agent has written in the thread (agent-presence language); entrance
+      animation opacity-only (the transform slot is the positioning math) and registered in the
+      reduce-motion block.
+- [x] `apps/web` — thread popover (same counter-scale pattern, edge-flip when the right edge would
+      leave the viewport): messages (author · humanized time, "You" for user-kind, agent-lane dot for
+      agents), composer (Enter submits, Shift+Enter newline, Esc closes), Resolve/Reopen, two-step
+      Delete confirm. Composer-only mode for a fresh thread. All writes via `runOperation` →
+      undo/WS/failLoud for free. Actionbar gained an Add-comment button; ⌘K palette gained
+      "Add comment on selection".
+- [x] `apps/web` — Comments panel in the right rail: unresolved rows (element name · snippet · time)
+      with click-to-focus + open thread; "N resolved" expander so resolved threads stay reachable.
+      `agentOperationVerb` cases so agent comments read "left a comment", not "edited the board".
+- [x] Verified in the running app, console clean throughout: right-click → menu → composer → Enter →
+      pin; reply; resolve (pin leaves, banner + Reopen); reopen from the panel's resolved expander
+      (row click focuses + zooms to the element and opens the thread); two-step delete then **⌘Z
+      brought the thread back** (server-snapshot undo covers comments with zero new code); full
+      reload → pins/panel restore from disk. **Agent path over live MCP**: a "Claude" client ran
+      list → reply → resolve → add_comment; the open popover live-updated with the reply mid-view,
+      the feed logged "AI replied to a comment / resolved a comment / left a comment", the status
+      bar read "AI left a comment", and the new agent thread's pin carried the accent dot. Both
+      themes verified (popover/menu/panel are all-token, zero dark overrides needed). 120 tests
+      (10 new), typecheck, build, `mcp:check` 47 exposed / 46 checked.
+- [x] Verification notes: the browser harness's synthetic Return never reaches React's keydown —
+      a real dispatched KeyboardEvent proved Enter-submit works; don't chase phantom bugs there.
+      Known minor nit: a thread popover anchored to an element at the very top of the viewport can
+      clip its header until the canvas is panned; focus-from-panel centres the element so the
+      common path is unaffected.
+- [ ] Ship: commit + push, `fastlane mac beta` (unpiped, verify the .pkg artifact exists before
+      trusting exit), ASC VALID (indexing lag ~3–4 min — poll, don't diagnose), verify shipped
+      `app.asar` carries the feature.
+
 ## Active — Auto-layout frames: make `layout.mode` real (2026-08-07)
 
 Scope endorsed by the user after the 2026-07-29 finding. **`stack` only** — direction, gap, padding, align,

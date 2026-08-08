@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyBoardOperation, BoardProjectSchema, createDefaultProject, createElementFromPreset, DEVICE_PRESETS, inspectBoardHierarchy, validateBoardStructure } from "./index";
+import { applyBoardOperation, BoardProjectSchema, createCommentMessage, createCommentThread, createDefaultProject, createElementFromPreset, DEVICE_PRESETS, inspectBoardHierarchy, validateBoardStructure } from "./index";
 
 describe("Board schema", () => {
   it("validates the default project", () => {
@@ -498,5 +498,94 @@ describe("auto-layout (stack)", () => {
     ]);
     const out = applyBoardOperation(board, { type: "reorder_child", elementId: "a", toIndex: 99 });
     expect(frames(out).a!.y).toBe(40);
+  });
+});
+
+describe("Comments", () => {
+  const boardWithElement = () => {
+    const project = createDefaultProject("C", "blank");
+    const element = createElementFromPreset("button", project.artboards[0]!.id, 24, 24);
+    return { project: applyBoardOperation(project, { type: "add_element", element }), element };
+  };
+
+  it("adds a thread anchored to a real element and refuses a missing one", () => {
+    const { project, element } = boardWithElement();
+    const thread = createCommentThread(element.id, "Make this bigger", "You", "user");
+    const out = applyBoardOperation(project, { type: "add_comment", thread });
+    expect(out.comments).toHaveLength(1);
+    expect(out.comments[0]!.messages[0]!.text).toBe("Make this bigger");
+    expect(() =>
+      applyBoardOperation(project, { type: "add_comment", thread: createCommentThread("ghost", "hi", "You", "user") })
+    ).toThrow(/not found/i);
+  });
+
+  it("appends a reply and bumps the thread's updatedAt to the reply's timestamp", () => {
+    const { project, element } = boardWithElement();
+    const thread = createCommentThread(element.id, "First", "You", "user");
+    const withThread = applyBoardOperation(project, { type: "add_comment", thread });
+    const message = createCommentMessage("Done — resized it", "Claude", "agent");
+    const out = applyBoardOperation(withThread, { type: "reply_comment", threadId: thread.id, message });
+    expect(out.comments[0]!.messages.map((m) => m.text)).toEqual(["First", "Done — resized it"]);
+    expect(out.comments[0]!.updatedAt).toBe(message.createdAt);
+    expect(out.comments[0]!.messages[1]!.authorKind).toBe("agent");
+  });
+
+  it("resolves and reopens through the same operation, without auto-reopen on reply", () => {
+    const { project, element } = boardWithElement();
+    const thread = createCommentThread(element.id, "Check spacing", "You", "user");
+    let out = applyBoardOperation(project, { type: "add_comment", thread });
+    out = applyBoardOperation(out, { type: "set_comment_resolved", threadId: thread.id, resolved: true });
+    expect(out.comments[0]!.resolved).toBe(true);
+    out = applyBoardOperation(out, { type: "reply_comment", threadId: thread.id, message: createCommentMessage("late note", "You", "user") });
+    expect(out.comments[0]!.resolved).toBe(true);
+    out = applyBoardOperation(out, { type: "set_comment_resolved", threadId: thread.id, resolved: false });
+    expect(out.comments[0]!.resolved).toBe(false);
+  });
+
+  it("deletes a thread and throws for an unknown one", () => {
+    const { project, element } = boardWithElement();
+    const thread = createCommentThread(element.id, "temp", "You", "user");
+    const withThread = applyBoardOperation(project, { type: "add_comment", thread });
+    const out = applyBoardOperation(withThread, { type: "delete_comment", threadId: thread.id });
+    expect(out.comments).toHaveLength(0);
+    expect(() => applyBoardOperation(out, { type: "delete_comment", threadId: thread.id })).toThrow(/not found/i);
+  });
+
+  it("comment ops leave the user's selection alone", () => {
+    const { project, element } = boardWithElement();
+    const selected = applyBoardOperation(project, { type: "set_selection", selection: [element.id] });
+    const out = applyBoardOperation(selected, { type: "add_comment", thread: createCommentThread(element.id, "note", "You", "user") });
+    expect(out.selection).toEqual([element.id]);
+  });
+
+  it("deleting an element (or its ancestor) removes its threads", () => {
+    const { project, element } = boardWithElement();
+    const child = { ...createElementFromPreset("text", project.artboards[0]!.id, 30, 30), parentId: element.id };
+    let out = applyBoardOperation(project, { type: "add_element", element: child });
+    out = applyBoardOperation(out, { type: "add_comment", thread: createCommentThread(child.id, "on the child", "You", "user") });
+    out = applyBoardOperation(out, { type: "delete_element", elementId: element.id });
+    expect(out.comments).toHaveLength(0);
+  });
+
+  it("deleting an artboard removes the threads of its elements", () => {
+    const { project, element } = boardWithElement();
+    const out = applyBoardOperation(project, { type: "add_comment", thread: createCommentThread(element.id, "note", "You", "user") });
+    const gone = applyBoardOperation(out, { type: "delete_artboard", artboardId: element.artboardId });
+    expect(gone.comments).toHaveLength(0);
+  });
+
+  it("duplicating a frame does not clone its feedback", () => {
+    const { project, element } = boardWithElement();
+    const out = applyBoardOperation(project, { type: "add_comment", thread: createCommentThread(element.id, "original only", "You", "user") });
+    const varied = applyBoardOperation(out, { type: "create_variant", sourceArtboardId: element.artboardId });
+    expect(varied.comments).toHaveLength(1);
+    expect(varied.comments[0]!.elementId).toBe(element.id);
+  });
+
+  it("rejects a board whose thread points at a missing element", () => {
+    const { project, element } = boardWithElement();
+    const out = applyBoardOperation(project, { type: "add_comment", thread: createCommentThread(element.id, "note", "You", "user") });
+    const corrupted = { ...structuredClone(out), comments: [{ ...out.comments[0]!, elementId: "ghost" }] };
+    expect(() => BoardProjectSchema.parse(corrupted)).toThrow(/Unknown element id/);
   });
 });

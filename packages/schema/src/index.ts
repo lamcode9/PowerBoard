@@ -368,6 +368,32 @@ export const ConnectorSchema = z.object({
 
 export type BoardConnector = z.infer<typeof ConnectorSchema>;
 
+export const commentAuthorKinds = ["user", "agent"] as const;
+
+export const CommentMessageSchema = z.object({
+  id: z.string().min(1),
+  author: z.string().min(1),
+  authorKind: z.enum(commentAuthorKinds).default("user"),
+  text: z.string().min(1).max(4000),
+  createdAt: z.string()
+});
+
+export type CommentMessage = z.infer<typeof CommentMessageSchema>;
+
+// Comments are annotations, not canvas objects: a thread anchors to one element, carries a flat
+// message list, and never appears in any export (renderers iterate elements + connectors only).
+// They are the human↔agent feedback channel — an agent reads them over MCP, fixes, replies, resolves.
+export const CommentThreadSchema = z.object({
+  id: z.string().min(1),
+  elementId: z.string().min(1),
+  resolved: z.boolean().default(false),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  messages: z.array(CommentMessageSchema).min(1)
+});
+
+export type CommentThread = z.infer<typeof CommentThreadSchema>;
+
 export const DesignTokensSchema = z.object({
   colors: z.record(z.string(), z.string()).default({}),
   fonts: z.record(z.string(), z.string()).default({}),
@@ -395,6 +421,8 @@ export const BoardProjectSchema = z
     artboards: z.array(ArtboardSchema).default([]),
     elements: z.array(BoardElementSchema).default([]),
     connectors: z.array(ConnectorSchema).default([]),
+    // No schemaVersion bump: `.default([])` is the migration — every stored board parses forward.
+    comments: z.array(CommentThreadSchema).default([]),
     assets: z.array(AssetSchema).default([]),
     tokens: DesignTokensSchema.default({ colors: {}, fonts: {}, radii: {}, shadows: {}, spacing: {} }),
     selection: z.array(z.string()).default([]),
@@ -419,6 +447,10 @@ export const BoardProjectSchema = z
     project.elements.forEach((element, index) => checkUnique(element.id, ["elements", index, "id"]));
     project.connectors.forEach((connector, index) => checkUnique(connector.id, ["connectors", index, "id"]));
     project.assets.forEach((asset, index) => checkUnique(asset.id, ["assets", index, "id"]));
+    project.comments.forEach((thread, index) => {
+      checkUnique(thread.id, ["comments", index, "id"]);
+      thread.messages.forEach((message, messageIndex) => checkUnique(message.id, ["comments", index, "messages", messageIndex, "id"]));
+    });
 
     const artboardIds = new Set(project.artboards.map((artboard) => artboard.id));
     const elementIds = new Set(project.elements.map((element) => element.id));
@@ -460,6 +492,12 @@ export const BoardProjectSchema = z
       }
       if (connector.toElementId && !elementIds.has(connector.toElementId)) {
         ctx.addIssue({ code: "custom", message: `Unknown to element id: ${connector.toElementId}`, path: ["connectors", index, "toElementId"] });
+      }
+    });
+
+    project.comments.forEach((thread, index) => {
+      if (!elementIds.has(thread.elementId)) {
+        ctx.addIssue({ code: "custom", message: `Unknown element id: ${thread.elementId}`, path: ["comments", index, "elementId"] });
       }
     });
   });
@@ -564,6 +602,13 @@ export const OperationSchema = z.discriminatedUnion("type", [
   // Reordering renumbers a whole sibling run, which has to be ONE operation: N `update_element`s would
   // be N undo entries, so a single drag would take N presses of ⌘Z to put back.
   z.object({ type: z.literal("reorder_child"), elementId: z.string(), toIndex: z.number().int().nonnegative() }),
+  // Comment ops: annotations, not canvas objects — they never touch `selection`, so leaving a
+  // comment mid-edit doesn't yank the user's (or an agent's) selection away.
+  z.object({ type: z.literal("add_comment"), thread: CommentThreadSchema }),
+  z.object({ type: z.literal("reply_comment"), threadId: z.string(), message: CommentMessageSchema }),
+  // One op for resolve AND reopen so both directions share undo, broadcast, and MCP plumbing.
+  z.object({ type: z.literal("set_comment_resolved"), threadId: z.string(), resolved: z.boolean() }),
+  z.object({ type: z.literal("delete_comment"), threadId: z.string() }),
   z.object({ type: z.literal("set_selection"), selection: z.array(z.string()) })
 ]);
 
@@ -577,6 +622,25 @@ export function createId(prefix: string): string {
 
 export function nowIso(): string {
   return new Date().toISOString();
+}
+
+// The one place comment ids + timestamps are stamped, so the browser and the MCP handlers
+// cannot drift on shape. `author` defaults to "You" for user comments purely as stored display
+// text; agents pass their identity name.
+export function createCommentMessage(text: string, author: string, authorKind: CommentMessage["authorKind"]): CommentMessage {
+  return CommentMessageSchema.parse({ id: createId("cmsg"), author, authorKind, text, createdAt: nowIso() });
+}
+
+export function createCommentThread(elementId: string, text: string, author: string, authorKind: CommentMessage["authorKind"]): CommentThread {
+  const at = nowIso();
+  return CommentThreadSchema.parse({
+    id: createId("comment"),
+    elementId,
+    resolved: false,
+    createdAt: at,
+    updatedAt: at,
+    messages: [createCommentMessage(text, author, authorKind)]
+  });
 }
 
 export const boardTemplates = ["blank", "mobile", "web", "diagram", "starter"] as const;
@@ -1272,6 +1336,7 @@ export function applyBoardOperation(project: BoardProject, rawOperation: BoardOp
       const idsToDelete = new Set([operation.elementId, ...childIds]);
       next.elements = next.elements.filter((element) => !idsToDelete.has(element.id));
       next.connectors = next.connectors.filter((connector) => !idsToDelete.has(connector.fromElementId ?? "") && !idsToDelete.has(connector.toElementId ?? ""));
+      next.comments = next.comments.filter((thread) => !idsToDelete.has(thread.elementId));
       next.selection = next.selection.filter((id) => !idsToDelete.has(id));
       break;
     }
@@ -1352,6 +1417,7 @@ export function applyBoardOperation(project: BoardProject, rawOperation: BoardOp
           !removedElementIds.has(connector.fromElementId ?? "") &&
           !removedElementIds.has(connector.toElementId ?? "")
       );
+      next.comments = next.comments.filter((thread) => !removedElementIds.has(thread.elementId));
       next.pages = next.pages.map((page) => ({ ...page, artboardIds: page.artboardIds.filter((id) => id !== operation.artboardId) }));
       next.selection = next.selection.filter((id) => id !== operation.artboardId && !removedElementIds.has(id));
       break;
@@ -1399,6 +1465,39 @@ export function applyBoardOperation(project: BoardProject, rawOperation: BoardOp
         });
       }
       next.selection = [operation.elementId];
+      break;
+    }
+    case "add_comment": {
+      if (!next.elements.some((element) => element.id === operation.thread.elementId)) {
+        throw new Error(`Element not found: ${operation.thread.elementId}`);
+      }
+      next.comments.push(operation.thread);
+      break;
+    }
+    case "reply_comment": {
+      const thread = next.comments.find((candidate) => candidate.id === operation.threadId);
+      if (!thread) {
+        throw new Error(`Comment not found: ${operation.threadId}`);
+      }
+      thread.messages.push(operation.message);
+      thread.updatedAt = operation.message.createdAt;
+      break;
+    }
+    case "set_comment_resolved": {
+      const thread = next.comments.find((candidate) => candidate.id === operation.threadId);
+      if (!thread) {
+        throw new Error(`Comment not found: ${operation.threadId}`);
+      }
+      thread.resolved = operation.resolved;
+      thread.updatedAt = nowIso();
+      break;
+    }
+    case "delete_comment": {
+      const before = next.comments.length;
+      next.comments = next.comments.filter((thread) => thread.id !== operation.threadId);
+      if (next.comments.length === before) {
+        throw new Error(`Comment not found: ${operation.threadId}`);
+      }
       break;
     }
     case "set_selection":

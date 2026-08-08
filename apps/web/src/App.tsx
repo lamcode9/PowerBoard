@@ -43,6 +43,8 @@ import {
   Lock,
   LockOpen,
   Maximize2,
+  MessageSquare,
+  MessageSquarePlus,
   Minimize2,
   Minus,
   Monitor,
@@ -74,10 +76,11 @@ import {
   WifiOff,
   Wand2,
   Workflow,
+  X,
   ZoomIn,
   ZoomOut
 } from "lucide-react";
-import type { Artboard, BoardConnector, BoardElement, BoardOperation, BoardProject, BoardTemplate } from "@powerboard/schema";
+import type { Artboard, BoardConnector, BoardElement, BoardOperation, BoardProject, BoardTemplate, CommentThread } from "@powerboard/schema";
 import {
   arrowheadIsFilled,
   arrowheadPath,
@@ -87,6 +90,8 @@ import {
   connectorLabelPoint,
   connectorLabelWidth,
   connectorObstacles,
+  createCommentMessage,
+  createCommentThread,
   createElementFromPreset,
   createId,
   DEVICE_PRESETS,
@@ -119,7 +124,7 @@ import {
 import { agentRgb } from "./agentColor";
 import { cameraTransform, panCamera, zoomCameraAroundPoint, type Camera, type ViewportPoint } from "./canvasCamera";
 import { CommandPalette, type PaletteCommand } from "./components/CommandPalette";
-import { AgentFeed, type AgentFeedEntry } from "./components/AgentFeed";
+import { AgentFeed, formatFeedTime, type AgentFeedEntry } from "./components/AgentFeed";
 import { RestoreDialog } from "./components/RestoreDialog";
 import { ExportDialog, type ExportTarget } from "./components/ExportDialog";
 import { ShortcutOverlay } from "./components/ShortcutOverlay";
@@ -373,6 +378,11 @@ export function App() {
   const [marquee, setMarquee] = useState<MarqueeState | null>(null);
   const [snapGuides, setSnapGuides] = useState<SnapGuides>(NO_GUIDES);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  // Comment surfaces: a right-click menu (screen coords), a composer draft anchored to an
+  // element, and one open thread popover. Mutually exclusive with each other by construction.
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; elementId: string } | null>(null);
+  const [commentDraftFor, setCommentDraftFor] = useState<string | null>(null);
+  const [openThreadId, setOpenThreadId] = useState<string | null>(null);
   const [connectFromId, setConnectFromId] = useState<string | null>(null);
   const [connectDraft, setConnectDraft] = useState<ConnectDraft | null>(null);
   const [inkDraft, setInkDraft] = useState<InkDraft | null>(null);
@@ -741,6 +751,51 @@ export function App() {
     if (!project || !selectedIds.length) return null;
     return boundsForSelection(project, selectedIds);
   }, [project, selectedIds]);
+
+  /**
+   * One pin per unresolved thread, at its element's top-right corner in plane coords; several
+   * threads on one element fan out horizontally in screen pixels inside the counter-scaled pin.
+   */
+  const commentPins = useMemo(() => {
+    if (!project) return [];
+    const stackByElement = new Map<string, number>();
+    const pins: { thread: CommentThread; x: number; y: number; offset: number }[] = [];
+    for (const thread of project.comments) {
+      if (thread.resolved) continue;
+      const element = project.elements.find((candidate) => candidate.id === thread.elementId);
+      if (!element || !element.visible) continue;
+      const artboard = project.artboards.find((candidate) => candidate.id === element.artboardId);
+      if (!artboard?.visible) continue;
+      const bounds = elementWorldBounds(project, element);
+      if (!bounds) continue;
+      const offset = stackByElement.get(element.id) ?? 0;
+      stackByElement.set(element.id, offset + 1);
+      pins.push({ thread, x: bounds.x + bounds.width, y: bounds.y, offset });
+    }
+    return pins;
+  }, [project]);
+
+  /** Anchor for the composer draft or the open thread popover — element top-right, plane coords. */
+  const commentAnchor = useMemo(() => {
+    if (!project) return null;
+    const openThreadEntry = openThreadId ? project.comments.find((thread) => thread.id === openThreadId) : null;
+    const elementId = commentDraftFor ?? openThreadEntry?.elementId ?? null;
+    const element = elementId ? project.elements.find((candidate) => candidate.id === elementId) : null;
+    if (!element) return null;
+    const bounds = elementWorldBounds(project, element);
+    if (!bounds) return null;
+    return { x: bounds.x + bounds.width, y: bounds.y, element, thread: openThreadEntry ?? null };
+  }, [project, commentDraftFor, openThreadId]);
+
+  // Clicking anywhere that changes the selection away from the commented element dismisses the
+  // comment surfaces — the popover always refers to something visibly selected.
+  useEffect(() => {
+    if (openThreadId) {
+      const thread = projectRef.current?.comments.find((candidate) => candidate.id === openThreadId);
+      if (thread && !selectedIds.includes(thread.elementId)) setOpenThreadId(null);
+    }
+    if (commentDraftFor && !selectedIds.includes(commentDraftFor)) setCommentDraftFor(null);
+  }, [selectedIds]);
 
   /**
    * What the Export dialog can render, most specific first. Sizes here are the 1x estimate for the
@@ -2027,7 +2082,67 @@ export function App() {
     pulseElements(ids);
   }
 
+  function onViewportContextMenu(event: React.MouseEvent) {
+    const node = event.target as HTMLElement;
+    // Text fields keep the native menu — the user needs cut/copy/paste while editing.
+    if (node.closest("textarea, input, [contenteditable]")) return;
+    event.preventDefault();
+    if (toolRef.current !== "select") return;
+    const host = node.closest("[data-board-element]");
+    const elementId = host?.getAttribute("data-board-element") ?? null;
+    if (!elementId) {
+      setContextMenu(null);
+      return;
+    }
+    if (!selectedIdsRef.current.includes(elementId)) void select([elementId]);
+    setContextMenu({ x: event.clientX, y: event.clientY, elementId });
+  }
+
+  function beginCommentDraft(elementId: string) {
+    setContextMenu(null);
+    setOpenThreadId(null);
+    if (!selectedIdsRef.current.includes(elementId)) void select([elementId]);
+    setCommentDraftFor(elementId);
+  }
+
+  function openThread(thread: CommentThread, focus = false) {
+    setContextMenu(null);
+    setCommentDraftFor(null);
+    if (focus) {
+      const current = projectRef.current;
+      const bounds = current ? boundsForSelection(current, [thread.elementId]) : null;
+      if (bounds) focusBounds(bounds, "Comment");
+    }
+    if (!selectedIdsRef.current.includes(thread.elementId)) void select([thread.elementId]);
+    setOpenThreadId(thread.id);
+  }
+
+  async function submitComment(elementId: string, text: string) {
+    const thread = createCommentThread(elementId, text, "You", "user");
+    setCommentDraftFor(null);
+    setOpenThreadId(thread.id);
+    await runOperation({ type: "add_comment", thread });
+  }
+
+  async function replyToThread(threadId: string, text: string) {
+    await runOperation({ type: "reply_comment", threadId, message: createCommentMessage(text, "You", "user") });
+  }
+
+  async function setThreadResolved(threadId: string, resolved: boolean) {
+    await runOperation({ type: "set_comment_resolved", threadId, resolved });
+    setStatus(resolved ? "Comment resolved" : "Comment reopened");
+  }
+
+  async function deleteThread(threadId: string) {
+    if (openThreadId === threadId) setOpenThreadId(null);
+    await runOperation({ type: "delete_comment", threadId });
+    setStatus("Comment deleted");
+  }
+
   function escapeAction() {
+    if (contextMenu) return setContextMenu(null);
+    if (commentDraftFor) return setCommentDraftFor(null);
+    if (openThreadId) return setOpenThreadId(null);
     if (commandOpen) return setCommandOpen(false);
     if (shortcutsOpen) return setShortcutsOpen(false);
     if (restoreOpen) return setRestoreOpen(false);
@@ -2337,12 +2452,22 @@ export function App() {
 
   const canDeleteSelection = Boolean(project && selectedIds.some((id) => project.elements.some((element) => element.id === id)));
 
+  // Flip the comment popover to the element's left when its right edge would leave the viewport.
+  // Screen-space check against the live camera; pin and popover ride the plane transform either way.
+  const commentPopoverFlip = (() => {
+    if (!commentAnchor || !viewportRef.current) return false;
+    const camera = cameraRef.current;
+    const screenX = commentAnchor.x * camera.zoom + camera.x;
+    return screenX + 330 > viewportRef.current.getBoundingClientRect().width;
+  })();
+
   const paletteCommands: PaletteCommand[] = project
     ? [
         { id: "new-board", section: "Board", title: "New board", run: () => void createNewBoard(), keywords: "create" },
         { id: "go-home", section: "Board", title: "Go to all boards", run: () => void showHome() },
         { id: "undo", section: "Edit", title: "Undo", hint: "⌘Z", run: () => void undoBoard() },
         { id: "redo", section: "Edit", title: "Redo", hint: "⌘⇧Z", run: () => void redoBoard() },
+        ...(selectedElement ? [{ id: "add-comment", section: "Edit", title: "Add comment on selection", keywords: "feedback note annotate", run: () => beginCommentDraft(selectedElement.id) }] : []),
         { id: "duplicate", section: "Edit", title: "Duplicate selection", hint: "⌘D", run: () => void duplicateSelection() },
         { id: "group", section: "Edit", title: "Group selection", hint: "⌘G", run: () => void groupSelection() },
         { id: "delete", section: "Edit", title: "Delete selection", hint: "⌫", run: () => void deleteSelection() },
@@ -2655,6 +2780,7 @@ export function App() {
         onPointerDownCapture={onCanvasPointerDownCapture}
         onPointerMove={rememberViewportPointFromReact}
         onPointerDown={onViewportPointerDown}
+        onContextMenu={onViewportContextMenu}
       >
         <div className="canvas-space">
           <div ref={canvasPlaneRef} className="canvas-plane" style={{ transform: cameraTransform(cameraRef.current), width: CANVAS_WIDTH, height: CANVAS_HEIGHT, ["--zoom" as string]: cameraRef.current.zoom }}>
@@ -2726,10 +2852,43 @@ export function App() {
                   {selectedIds.length === 2 ? (
                     <button data-tip="Connect these two" aria-label="Connect these two" onClick={() => void createConnectorBetween(selectedIds[0]!, selectedIds[1]!)}><Spline size={14} /></button>
                   ) : null}
+                  {selectedElementCount === 1 && selectedIds.length === 1 ? (
+                    <button data-tip="Add comment" aria-label="Add comment" onClick={() => beginCommentDraft(selectedIds[0]!)}><MessageSquarePlus size={14} /></button>
+                  ) : null}
                   <span className="sel-divider" />
                   <button className="danger" data-tip="Delete (⌫)" aria-label="Delete" onClick={() => void deleteSelection()}><Trash2 size={14} /></button>
                 </div>
               </div>
+            ) : null}
+            {commentPins.map((pin) => (
+              <div key={pin.thread.id} className="comment-pin-anchor" style={{ left: pin.x, top: pin.y }}>
+                <button
+                  className={classNames("comment-pin", openThreadId === pin.thread.id && "open", pin.thread.messages.some((message) => message.authorKind === "agent") && "has-agent")}
+                  style={{ transform: `scale(${1 / zoom}) translate(calc(-50% + ${pin.offset * 26}px), calc(-100% - 6px))` }}
+                  aria-label={`Comment thread on ${project.elements.find((candidate) => candidate.id === pin.thread.elementId)?.name ?? "element"}`}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={() => openThread(pin.thread)}
+                >
+                  <MessageSquare size={12} />
+                  {pin.thread.messages.length > 1 ? <span className="comment-pin-count">{pin.thread.messages.length}</span> : null}
+                </button>
+              </div>
+            ))}
+            {commentAnchor && (commentDraftFor || commentAnchor.thread) ? (
+              <CommentPopover
+                key={commentAnchor.thread?.id ?? `draft-${commentDraftFor}`}
+                anchor={commentAnchor}
+                zoom={zoom}
+                flip={commentPopoverFlip}
+                onSubmit={(text) => void submitComment(commentAnchor.element.id, text)}
+                onReply={(text) => commentAnchor.thread && void replyToThread(commentAnchor.thread.id, text)}
+                onResolve={(resolved) => commentAnchor.thread && void setThreadResolved(commentAnchor.thread.id, resolved)}
+                onDelete={() => commentAnchor.thread && void deleteThread(commentAnchor.thread.id)}
+                onClose={() => {
+                  setCommentDraftFor(null);
+                  setOpenThreadId(null);
+                }}
+              />
             ) : null}
           </div>
         </div>
@@ -2776,6 +2935,10 @@ export function App() {
               onFitAll={fitAll}
             />
           )}
+        </CollapsiblePanel>
+
+        <CollapsiblePanel id="comments" icon={<MessageSquare size={16} />} title="Comments" collapsed={Boolean(collapsedPanels.comments)} onToggle={togglePanel}>
+          <CommentsPanel project={project} onOpen={(thread) => openThread(thread, true)} />
         </CollapsiblePanel>
 
         <CollapsiblePanel id="agent-activity" icon={<Bot size={16} />} title="Agent activity" collapsed={Boolean(collapsedPanels["agent-activity"])} onToggle={togglePanel}>
@@ -2837,6 +3000,24 @@ export function App() {
           onToggleFocusMode={() => setFocusMode((current) => !current)}
         />
         </>
+      ) : null}
+
+      {contextMenu && project ? (
+        <CanvasContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          elementName={project.elements.find((candidate) => candidate.id === contextMenu.elementId)?.name ?? "Element"}
+          onAddComment={() => beginCommentDraft(contextMenu.elementId)}
+          onDuplicate={() => {
+            setContextMenu(null);
+            void duplicateSelection();
+          }}
+          onDelete={() => {
+            setContextMenu(null);
+            void deleteSelection();
+          }}
+          onClose={() => setContextMenu(null)}
+        />
       ) : null}
 
       {newBoardDialogOpen ? (
@@ -3581,6 +3762,12 @@ function ElementView({
           return;
         }
         event.stopPropagation();
+        // Only the left button selects-and-drags. Right-click selects (so the context menu that
+        // follows targets this element) but must never start a drag; middle-click is pan.
+        if (event.button !== 0) {
+          if (event.button === 2 && !selected) onSelect([element.id]);
+          return;
+        }
         onSelect([element.id], event.shiftKey);
         if (!element.locked && !event.shiftKey) {
           capturePointer(event.currentTarget, event.pointerId);
@@ -4752,6 +4939,228 @@ function CollapsiblePanel({
   );
 }
 
+function CanvasContextMenu({
+  x,
+  y,
+  elementName,
+  onAddComment,
+  onDuplicate,
+  onDelete,
+  onClose
+}: {
+  x: number;
+  y: number;
+  elementName: string;
+  onAddComment: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  // Keep the menu on screen when invoked near the viewport edge.
+  const left = Math.min(x, Math.max(0, window.innerWidth - 208));
+  const top = Math.min(y, Math.max(0, window.innerHeight - 148));
+  return (
+    <div
+      className="context-menu-backdrop"
+      role="presentation"
+      onPointerDown={onClose}
+      onWheel={onClose}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+    >
+      <div className="canvas-context-menu" role="menu" aria-label={`Actions for ${elementName}`} style={{ left, top }} onPointerDown={(event) => event.stopPropagation()}>
+        <button role="menuitem" onClick={onAddComment}>
+          <MessageSquarePlus size={14} /> Add comment
+        </button>
+        <button role="menuitem" onClick={onDuplicate}>
+          <Copy size={14} /> Duplicate <kbd>⌘D</kbd>
+        </button>
+        <span className="menu-divider" role="separator" />
+        <button role="menuitem" className="danger" onClick={onDelete}>
+          <Trash2 size={14} /> Delete <kbd>⌫</kbd>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CommentPopover({
+  anchor,
+  zoom,
+  flip,
+  onSubmit,
+  onReply,
+  onResolve,
+  onDelete,
+  onClose
+}: {
+  anchor: { x: number; y: number; element: BoardElement; thread: CommentThread | null };
+  zoom: number;
+  flip: boolean;
+  onSubmit: (text: string) => void;
+  onReply: (text: string) => void;
+  onResolve: (resolved: boolean) => void;
+  onDelete: () => void;
+  onClose: () => void;
+}) {
+  const thread = anchor.thread;
+  const [draft, setDraft] = useState("");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const messagesRef = useRef<HTMLDivElement | null>(null);
+  const messageCount = thread?.messages.length ?? 0;
+
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, []);
+  useEffect(() => {
+    const node = messagesRef.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [messageCount]);
+
+  function send() {
+    const text = draft.trim();
+    if (!text) return;
+    setDraft("");
+    if (thread) onReply(text);
+    else onSubmit(text);
+  }
+
+  return (
+    <div className="comment-popover-anchor" style={{ left: anchor.x, top: anchor.y }}>
+      <div
+        className="comment-popover"
+        role="dialog"
+        aria-label={thread ? `Comment thread on ${anchor.element.name}` : `New comment on ${anchor.element.name}`}
+        style={{ transform: `scale(${1 / zoom}) translate(${flip ? "calc(-100% - 12px)" : "12px"}, 0)` }}
+        onPointerDown={(event) => event.stopPropagation()}
+        onDoubleClick={(event) => event.stopPropagation()}
+        onWheel={(event) => event.stopPropagation()}
+      >
+        <header className="comment-popover-head">
+          <MessageSquare size={13} aria-hidden="true" />
+          <span className="comment-popover-title">{anchor.element.name}</span>
+          {thread ? (
+            <>
+              {confirmingDelete ? (
+                <button className="comment-confirm-delete" onClick={onDelete}>
+                  Delete thread?
+                </button>
+              ) : (
+                <button data-tip="Delete thread" aria-label="Delete thread" onClick={() => setConfirmingDelete(true)}>
+                  <Trash2 size={13} />
+                </button>
+              )}
+              <button
+                data-tip={thread.resolved ? "Reopen" : "Resolve"}
+                aria-label={thread.resolved ? "Reopen thread" : "Resolve thread"}
+                className={classNames(thread.resolved && "resolved")}
+                onClick={() => onResolve(!thread.resolved)}
+              >
+                {thread.resolved ? <RotateCcw size={13} /> : <Check size={13} />}
+              </button>
+            </>
+          ) : null}
+          <button data-tip="Close" aria-label="Close comments" onClick={onClose}>
+            <X size={13} />
+          </button>
+        </header>
+        {thread?.resolved ? (
+          <p className="comment-resolved-note">
+            <Check size={12} aria-hidden="true" /> Resolved — reopen to put it back on the canvas.
+          </p>
+        ) : null}
+        {thread ? (
+          <div className="comment-messages" ref={messagesRef}>
+            {thread.messages.map((message) => (
+              <div key={message.id} className="comment-message">
+                <div className="comment-message-meta">
+                  {message.authorKind === "agent" ? <span className="comment-author-dot" style={{ ["--agent-rgb" as string]: agentRgb(message.author.toLowerCase()) }} /> : null}
+                  <strong>{message.authorKind === "user" ? "You" : message.author}</strong>
+                  <time dateTime={message.createdAt}>{formatFeedTime(message.createdAt)}</time>
+                </div>
+                <p>{message.text}</p>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <div className="comment-composer">
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            rows={thread ? 1 : 2}
+            placeholder={thread ? "Reply…" : "Leave feedback — agents can read and act on it"}
+            aria-label={thread ? "Reply to thread" : "New comment"}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                send();
+              }
+              if (event.key === "Escape") onClose();
+            }}
+          />
+          <button className="comment-send" aria-label={thread ? "Send reply" : "Add comment"} data-tip={thread ? "Reply (↵)" : "Comment (↵)"} disabled={!draft.trim()} onClick={send}>
+            <Send size={13} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CommentsPanel({ project, onOpen }: { project: BoardProject; onOpen: (thread: CommentThread) => void }) {
+  const [showResolved, setShowResolved] = useState(false);
+  const elementNames = useMemo(() => new Map(project.elements.map((element) => [element.id, element.name])), [project.elements]);
+  const byNewest = (a: CommentThread, b: CommentThread) => b.updatedAt.localeCompare(a.updatedAt);
+  const unresolved = project.comments.filter((thread) => !thread.resolved).sort(byNewest);
+  const resolved = project.comments.filter((thread) => thread.resolved).sort(byNewest);
+
+  if (!project.comments.length) {
+    return <p className="muted">No comments yet. Right-click any element to leave feedback — connected agents can read and resolve it.</p>;
+  }
+
+  const row = (thread: CommentThread) => {
+    const last = thread.messages[thread.messages.length - 1]!;
+    return (
+      <button key={thread.id} className={classNames("comment-row", thread.resolved && "resolved")} onClick={() => onOpen(thread)}>
+        <span className="comment-row-top">
+          {thread.resolved ? <Check size={12} aria-hidden="true" /> : <MessageSquare size={12} aria-hidden="true" />}
+          <strong>{elementNames.get(thread.elementId) ?? "Element"}</strong>
+          <time dateTime={thread.updatedAt}>{formatFeedTime(thread.updatedAt)}</time>
+        </span>
+        <span className="comment-row-snippet">
+          {last.authorKind === "user" ? "You" : last.author}: {last.text}
+        </span>
+      </button>
+    );
+  };
+
+  return (
+    <div className="comment-list">
+      {unresolved.length ? unresolved.map(row) : <p className="muted">All caught up — every thread is resolved.</p>}
+      {resolved.length ? (
+        <>
+          <button className="comment-resolved-toggle" aria-expanded={showResolved} onClick={() => setShowResolved((current) => !current)}>
+            {showResolved ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            {resolved.length} resolved
+          </button>
+          {showResolved ? resolved.map(row) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 function IconButton({ label, active, disabled, onClick, children }: { label: string; active?: boolean; disabled?: boolean; onClick?: () => void; children: React.ReactNode }) {
   return (
     <button className={active ? "icon-button active" : "icon-button"} onClick={onClick} data-tip={label} aria-label={label} disabled={disabled}>
@@ -5416,6 +5825,14 @@ function agentOperationVerb(operationType?: string): string {
       return "changed a frame's auto-layout";
     case "reorder_child":
       return "reordered an item";
+    case "add_comment":
+      return "left a comment";
+    case "reply_comment":
+      return "replied to a comment";
+    case "set_comment_resolved":
+      return "resolved a comment";
+    case "delete_comment":
+      return "deleted a comment";
     default:
       return "edited the board";
   }

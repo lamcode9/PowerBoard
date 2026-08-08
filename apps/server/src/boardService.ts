@@ -1031,6 +1031,7 @@ function projectCounts(project: BoardProject) {
     artboards: project.artboards.length,
     elements: project.elements.length,
     connectors: project.connectors.length,
+    comments: project.comments.length,
     assets: project.assets.length
   };
 }
@@ -1244,6 +1245,16 @@ export function targetIdsForOperation(operation: BoardOperation, projectAfter?: 
       return [operation.artboardId];
     case "apply_layout":
       return operation.elementIds ?? projectAfter?.selection ?? [];
+    // Comment activity pulses the ELEMENT the thread anchors to — that's where the eye should go.
+    case "add_comment":
+      return [operation.thread.elementId];
+    case "reply_comment":
+    case "set_comment_resolved": {
+      const thread = projectAfter?.comments.find((candidate) => candidate.id === operation.threadId);
+      return thread ? [thread.elementId] : [];
+    }
+    case "delete_comment":
+      return [];
     case "set_selection":
       return operation.selection;
     default:

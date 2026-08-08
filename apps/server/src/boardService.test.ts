@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
-import { BoardElement, BoardProject, BoardProjectSchema, createElementFromPreset } from "@powerboard/schema";
+import { BoardElement, BoardProject, BoardProjectSchema, createCommentThread, createElementFromPreset } from "@powerboard/schema";
 import { BoardStore, MAX_EXPORT_PIXELS, type StorageMode } from "./boardService";
 import { CloudBoardSummary, CloudFileRecord, CloudStore } from "./cloudStore";
 
@@ -162,6 +162,25 @@ describe("BoardStore", () => {
     expect(metadata.lastAgentEditedBy).toBe("test-agent");
     expect(metadata.lastAgentEditedOperation).toBe("add_element");
     expect(metadata.lastAgentEditedIds).toEqual([element.id]);
+  });
+
+  it("undoes a comment like any other edit and attributes agent comments in the metadata", async () => {
+    const { store } = await tempStore();
+    const board = await store.createBoard("Comment Board");
+    const element = createElementFromPreset("button", board.artboards[0]!.id, 24, 24);
+    await store.applyOperation(board.id, { type: "add_element", element });
+
+    const thread = createCommentThread(element.id, "Please try a taller variant", "Claude", "agent");
+    const commented = await store.applyOperation(board.id, { type: "add_comment", thread }, { source: "agent", actor: "Claude" });
+    expect(commented.comments).toHaveLength(1);
+    const metadata = commented.metadata as Record<string, unknown>;
+    expect(metadata.lastAgentEditedOperation).toBe("add_comment");
+    expect(metadata.lastAgentEditedIds).toEqual([element.id]);
+
+    const undone = await store.undo(board.id);
+    expect(undone.comments).toHaveLength(0);
+    const redone = await store.redo(board.id);
+    expect(redone.comments).toHaveLength(1);
   });
 
   it("returns hierarchy and validation diagnostics for agent inspection", async () => {

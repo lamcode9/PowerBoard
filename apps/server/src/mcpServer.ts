@@ -9,6 +9,8 @@ import {
   BoardProject,
   BoardProjectSchema,
   ConnectorSchema,
+  createCommentMessage,
+  createCommentThread,
   createElementFromPreset,
   createId,
   OperationSchema,
@@ -695,6 +697,105 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
         })
         .map((element) => element.name);
       return text({ adjusted: adjusted.length, elements: adjusted, layout: layoutDiagnosticsFor(project), board: project });
+    }
+  );
+
+  // ————— Comments: the human↔agent feedback loop —————
+  // The user right-clicks an element and leaves a note; the agent lists it, does the work,
+  // replies with what changed, and resolves. Threads anchor to one element and never render
+  // into any export.
+
+  registerTool(
+    "list_comments",
+    {
+      title: "List comments",
+      description:
+        "List comment threads on a board — the user's feedback, anchored to specific elements. Each thread carries the element's id and name, a resolved flag, and its messages (author, authorKind user|agent, text, createdAt). " +
+        "Check this when picking up a board: unresolved threads are actionable requests. After acting on one, reply_comment with what you changed, then resolve_comment. By default only unresolved threads return; pass includeResolved for history, or elementId to scope to one element.",
+      inputSchema: {
+        boardId: z.string(),
+        elementId: z.string().optional(),
+        includeResolved: z.boolean().optional()
+      }
+    },
+    async ({ boardId, elementId, includeResolved }) => {
+      const project = await store.readBoard(boardId);
+      const elementNames = new Map(project.elements.map((element) => [element.id, element.name]));
+      const threads = project.comments
+        .filter((thread) => (includeResolved ? true : !thread.resolved))
+        .filter((thread) => (elementId ? thread.elementId === elementId : true))
+        .map((thread) => ({ ...thread, elementName: elementNames.get(thread.elementId) ?? "(missing element)" }));
+      return text({ boardId, unresolved: project.comments.filter((thread) => !thread.resolved).length, threads });
+    }
+  );
+
+  registerTool(
+    "add_comment",
+    {
+      title: "Add comment",
+      description:
+        "Start a new comment thread on an element. Use it to flag something for the user's attention or to leave review feedback; to answer an EXISTING thread use reply_comment instead, so the conversation stays in one place.",
+      inputSchema: {
+        boardId: z.string(),
+        elementId: z.string(),
+        text: z.string().min(1).max(4000)
+      }
+    },
+    async ({ boardId, elementId, text: body }) => {
+      const thread = createCommentThread(elementId, body, currentAgent().name, "agent");
+      const project = await applyAgentOperation(boardId, { type: "add_comment", thread });
+      return text({ threadId: thread.id, board: project });
+    }
+  );
+
+  registerTool(
+    "reply_comment",
+    {
+      title: "Reply to comment",
+      description:
+        "Append a reply to an existing comment thread. When you act on a user's comment, reply with what you actually changed — then resolve_comment. Replying does not resolve or reopen a thread by itself.",
+      inputSchema: {
+        boardId: z.string(),
+        threadId: z.string(),
+        text: z.string().min(1).max(4000)
+      }
+    },
+    async ({ boardId, threadId, text: body }) => {
+      const message = createCommentMessage(body, currentAgent().name, "agent");
+      const project = await applyAgentOperation(boardId, { type: "reply_comment", threadId, message });
+      return text(project);
+    }
+  );
+
+  registerTool(
+    "resolve_comment",
+    {
+      title: "Resolve comment",
+      description:
+        "Mark a comment thread resolved (or reopen it with resolved: false). Resolve only after the request in the thread is actually done — ideally right after a reply_comment saying what changed. Resolved threads leave the canvas but stay in the board's history.",
+      inputSchema: {
+        boardId: z.string(),
+        threadId: z.string(),
+        resolved: z.boolean().optional()
+      }
+    },
+    async ({ boardId, threadId, resolved }) => {
+      const project = await applyAgentOperation(boardId, { type: "set_comment_resolved", threadId, resolved: resolved ?? true });
+      return text(project);
+    }
+  );
+
+  registerTool(
+    "delete_comment",
+    {
+      title: "Delete comment",
+      description:
+        "Delete a whole comment thread. Destructive and rarely right for an agent — prefer resolve_comment, which keeps the conversation. Reversible only via board undo.",
+      inputSchema: { boardId: z.string(), threadId: z.string() }
+    },
+    async ({ boardId, threadId }) => {
+      const project = await applyAgentOperation(boardId, { type: "delete_comment", threadId });
+      return text(project);
     }
   );
 

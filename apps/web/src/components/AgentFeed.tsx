@@ -126,7 +126,7 @@ function AgentEmptyMotif() {
   );
 }
 
-function formatFeedTime(value: string): string {
+export function formatFeedTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   const deltaSeconds = Math.round((Date.now() - date.getTime()) / 1000);
