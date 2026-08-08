@@ -79,9 +79,14 @@ ships in the same pass as the pins.
       Known minor nit: a thread popover anchored to an element at the very top of the viewport can
       clip its header until the canvas is panned; focus-from-panel centres the element so the
       common path is unaffected.
-- [ ] Ship: commit + push, `fastlane mac beta` (unpiped, verify the .pkg artifact exists before
-      trusting exit), ASC VALID (indexing lag ~3–4 min — poll, don't diagnose), verify shipped
-      `app.asar` carries the feature.
+- [x] Shipped: commit `f9e7869`, pushed to main, `fastlane mac beta` → build **202608081257**
+      (v0.1.0), **VALID** in ASC ~4 min after upload (polled, not diagnosed — the lesson held).
+      `bundle exec fastlane` failed fast on the missing Gemfile (caught in the log this time, not
+      swallowed by a pipe); plain `fastlane mac beta` exit 0, 112MB `.pkg` verified on disk before
+      trusting the exit code. Shipped `app.asar` verified to carry this session's code:
+      `comment-pin`, "Leave feedback", "Add comment on selection", "Delete thread?",
+      `reply_comment`/`list_comments`/`set_comment_resolved` all baked in; CFBundleVersion
+      202608081257.
 
 ## Active — Auto-layout frames: make `layout.mode` real (2026-08-07)
 
