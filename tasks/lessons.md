@@ -206,3 +206,33 @@ its own `data-tip` tooltip rule was written specifically for it — by the same 
 **How to apply:** When a control "does nothing," get its rect and hit-test its centre before reading its
 CSS. And grep for later `[attr]` rules whenever a component's `position`, `display` or `overflow` is
 mysteriously not what the source says.
+
+## 2026-08-11 — A native `abort()` in a codec is not an exception, and the sandbox is a different machine
+
+**Correction:** An agent session reported PNG export "crashes the app" and worked around it with SVG.
+Two crash reports said `EXC_BREAKPOINT` on a `libvips worker` thread inside
+`rsvg_handle_render_document`. The cause: under the MAS App Sandbox, pango can resolve no emoji font,
+and pango answers that with `g_error()` — which always calls `abort()`. Because the server runs inside
+the Electron main process, that abort killed PowerBoard. Any emoji anywhere in a board's text made PNG,
+JPG and PDF export lethal; boards without emoji were fine, and dev never reproduced it.
+
+**Rule:**
+- **Native library failures are not catchable.** libvips, librsvg, pango and glib respond to a bad input
+  by aborting the process. Anything that hands user content to them must run in a child process, or one
+  malformed glyph takes the whole app with it. `try/catch` around a native call is theatre.
+- **The App Sandbox is a different environment, not a stricter one.** Fonts, caches and config paths that
+  exist for `npm run dev` are simply absent inside the container. A feature that touches fonts, temp
+  files, or anything under `~` must be exercised in a sandboxed build before it ships, not in dev.
+- **`asarUnpack` must cover the dependency closure, not the package.** A spawned Node child cannot read
+  anything inside `app.asar`. Unpacking `sharp` alone left it unable to load `detect-libc`; the
+  in-process path never noticed, because Electron's patched `fs` reads the archive for it.
+
+**Why:** Every layer hid the one below. The crash log named a font, the font problem only existed in the
+sandbox, and the sandbox only mattered because the rasterizer shared a process with the UI. Diagnosing
+from the reported symptom ("PNG export is broken") would have found none of it — the crash report and a
+reproduction inside the real sandboxed binary found all three.
+
+**How to apply:** For any "the app just disappeared" report, read
+`~/Library/Logs/DiagnosticReports/<App>-*.ips` first — the faulting thread's stack names the library and
+the abort path in one step. Then reproduce against the *installed* build by driving its own HTTP
+endpoint, with stderr captured, rather than trying to reproduce in dev.
