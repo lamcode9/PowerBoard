@@ -88,6 +88,31 @@ ships in the same pass as the pins.
       `reply_comment`/`list_comments`/`set_comment_resolved` all baked in; CFBundleVersion
       202608081257.
 
+## Active — Auto-layout, finished: hug, escape hatch, honest modes (2026-08-07)
+
+Closing every item left open by the first auto-layout pass rather than leaving them as "noted".
+
+- [ ] **A — Layer tree reads in flow order inside a stack.** The tree sorts `zIndex` descending, which is
+      right for absolute z-order and backwards for a stack, where `zIndex` *is* the flow order — so the
+      panel read bottom-to-top against the canvas. Stack children sort ascending; everything else is
+      untouched.
+- [ ] **B — Hug sizing (`layout.sizing: "fixed" | "hug"`).** Today a fifth row in a four-row frame just
+      overflows the box, silently. Hug makes the frame grow to its content on the main axis. Reflow becomes
+      two passes: size **deepest-first** (a nested hug must be measured before its parent can measure
+      itself), then position **shallowest-first**.
+- [ ] **C — `stack-overflows-frame` diagnostic.** Hug is opt-in, so a *fixed* frame can still be too small.
+      That is now a real authoring error the agent can act on, and it should be told — same reasoning that
+      made `text-overflows-box` worth shipping once wrapping was real.
+- [ ] **D — Per-child escape hatch (`layout.position: "flow" | "absolute"`).** Without it a badge, close
+      button or overlay cannot sit on top of a stacked card — the whole frame has to be restructured.
+      Figma has this for the same reason. Excluded from flow, stays absolute in the export.
+- [ ] **E — Delete `grid` and `constraints` from `layoutModes`.** They have never done anything. Leaving
+      inert values in the enum is precisely the "declared but not implemented" disease this whole feature
+      was built to cure, and documenting them as dead is a weaker fix than removing them. No board on disk
+      uses either (checked); a legacy value still coerces to `absolute` on load so nothing can fail to
+      open. `columns` goes with them.
+- [ ] Tests for each; verify in the running app; TestFlight.
+
 ## Active — Auto-layout frames: make `layout.mode` real (2026-08-07)
 
 Scope endorsed by the user after the 2026-07-29 finding. **`stack` only** — direction, gap, padding, align,
@@ -921,12 +946,21 @@ price-free · availability · submit · get`. For the next release only `attach`
 
 - **App Privacy and Content Rights are web-UI only** — no ASC API endpoint exists. Fine now that
   they are set, but a fresh app record will need the browser again. See `tasks/lessons.md`.
-- **The Supabase cloud project (`Creo`, `jwllfgqwqrnqdgsqpkdt`) is INACTIVE**, so cloud storage
-  mode fails at boot and the seven boards the original website screenshots were taken against are
-  unreachable. Not a blocker — the app is offline-first by decision D2 — but `POWERBOARD_STORAGE_MODE=cloud`
-  is broken until someone resumes or retires that project.
-- **Three demo boards were created in the app container** (`Habit tracker — app screens`,
-  `Month-end close — process map`) to shoot the screenshots. They are real boards in your local
-  PowerBoard; delete them from the board list if you don't want them.
-- `AGENTS.md` still says "24 MCP tools"; `npm run mcp:check` answers 47. The website is now correct;
-  the brief is not.
+- **The Supabase cloud project (`Creo`, `jwllfgqwqrnqdgsqpkdt`) is INACTIVE**, so
+  `POWERBOARD_STORAGE_MODE=cloud` fails at boot with `(ENOTFOUND) tenant/user … not found`. Not a
+  blocker — the app is offline-first by decision D2 — but the mode is broken until someone resumes
+  or retires that project.
+- **There are two separate board containers on this Mac, and they are easy to confuse.** The
+  installed MAS/TestFlight app is sandboxed and stores boards under
+  `~/Library/Containers/com.lamonade.powerboard/Data/Library/Application Support/PowerBoard/boards`
+  — that is where the real set lives (`AI Embedded Organization` 506 elements, `Vellum AI Connect`,
+  `AI Hauz`, `Logo`, `Presence Test`, `Auto-layout Test`, two starters). A `npm start` dev run is
+  unsandboxed and uses `~/Library/Application Support/PowerBoard/boards` instead, which holds only
+  `Smoke Test`. Same app name, same `getPath("userData")` call, two different stores. Pin
+  `POWERBOARD_ROOT` explicitly before any scripted write, and note that `npm start` silently quits
+  (exit 0, single-instance lock) if the installed app is already running — so `127.0.0.1:4318` may
+  be answering from the *other* container than the one you think you launched.
+- **Demo boards from the screenshot session are deleted** (`Habit tracker — app screens`,
+  `Month-end close — process map`), but their compressed snapshots remain in iCloud at
+  `~/Library/Mobile Documents/com~apple~CloudDocs/PowerBoard/Backups/board_3u8my_sldegb` and
+  `…/board_3u8nt_lr4sn9` — the unsandboxed dev run backs up to iCloud. Safe to delete by hand.
