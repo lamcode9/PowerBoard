@@ -589,3 +589,111 @@ describe("Comments", () => {
     expect(() => BoardProjectSchema.parse(corrupted)).toThrow(/Unknown element id/);
   });
 });
+
+describe("auto-layout: hug, escape hatch, honest modes", () => {
+  const board = (
+    frameLayout: Record<string, unknown>,
+    kids: Array<{ id: string; h: number; z: number; layout?: Record<string, unknown> }>,
+    frameHeight = 400
+  ): BoardProject =>
+    BoardProjectSchema.parse({
+      ...createDefaultProject(),
+      artboards: [{ id: "art", name: "Sheet", type: "custom", x: 0, y: 0, width: 900, height: 900,
+        background: "#FFFFFF", frameless: true, locked: false, visible: true }],
+      pages: [{ id: "page", name: "Page 1", artboardIds: ["art"] }],
+      connectors: [],
+      elements: [
+        { id: "frame", type: "frame", name: "Frame", artboardId: "art", parentId: null,
+          x: 0, y: 0, width: 300, height: frameHeight, zIndex: 0, locked: false, visible: true,
+          style: {}, layout: frameLayout, props: {} },
+        ...kids.map((kid) => ({
+          id: kid.id, type: "shape", name: kid.id, artboardId: "art", parentId: "frame",
+          x: 7, y: 7, width: 100, height: kid.h, zIndex: kid.z, locked: false, visible: true,
+          style: {}, layout: kid.layout ?? { mode: "absolute" }, props: {}
+        }))
+      ]
+    });
+
+  const settle = (project: BoardProject) => applyBoardOperation(project, { type: "set_selection", selection: [] });
+  const el = (project: BoardProject, id: string) => project.elements.find((e) => e.id === id)!;
+  const codes = (project: BoardProject) => validateBoardStructure(project).issues.map((i) => i.code);
+
+  it("hug grows the frame to fit its children", () => {
+    const out = settle(board({ mode: "stack", direction: "column", gap: 10, padding: 20, sizing: "hug" }, [
+      { id: "a", h: 40, z: 0 },
+      { id: "b", h: 60, z: 1 }
+    ]));
+    // 20 + 40 + 10 + 60 + 20
+    expect(el(out, "frame").height).toBe(150);
+  });
+
+  it("hug leaves an empty frame at its authored size instead of collapsing to padding", () => {
+    const out = settle(board({ mode: "stack", sizing: "hug", padding: 20 }, []));
+    expect(el(out, "frame").height).toBe(400);
+  });
+
+  it("sizes a nested hug before its parent measures itself", () => {
+    // inner hugs to 2×30 = 60, so outer must hug to 60 + 40 = 100, not to the inner's stale height.
+    const project = BoardProjectSchema.parse({
+      ...board({ mode: "stack", direction: "column", gap: 0, padding: 0, sizing: "hug" }, [{ id: "inner", h: 999, z: 0 }]),
+    });
+    const inner = project.elements.find((e) => e.id === "inner")!;
+    inner.layout = { mode: "stack", direction: "column", gap: 0, padding: 0, sizing: "hug" } as never;
+    project.elements.push(
+      { ...inner, id: "leaf1", name: "leaf1", parentId: "inner", height: 30, zIndex: 0, layout: { mode: "absolute" } } as never,
+      { ...inner, id: "leaf2", name: "leaf2", parentId: "inner", height: 30, zIndex: 1, layout: { mode: "absolute" } } as never
+    );
+    const out = settle(project);
+    expect(el(out, "inner").height).toBe(60);
+    expect(el(out, "frame").height).toBe(60);
+  });
+
+  it("takes an escaped child out of the flow and leaves its x/y alone", () => {
+    const out = settle(board({ mode: "stack", direction: "column", gap: 0, padding: 0 }, [
+      { id: "a", h: 40, z: 0 },
+      { id: "badge", h: 20, z: 1, layout: { mode: "absolute", position: "absolute" } },
+      { id: "b", h: 40, z: 2 }
+    ]));
+    expect(el(out, "badge")).toMatchObject({ x: 7, y: 7 });
+    // b follows a directly — the badge occupies no space in the stack.
+    expect(el(out, "b").y).toBe(40);
+  });
+
+  it("excludes escaped children from a hug measurement", () => {
+    const out = settle(board({ mode: "stack", direction: "column", gap: 0, padding: 0, sizing: "hug" }, [
+      { id: "a", h: 40, z: 0 },
+      { id: "badge", h: 999, z: 1, layout: { mode: "absolute", position: "absolute" } }
+    ]));
+    expect(el(out, "frame").height).toBe(40);
+  });
+
+  it("warns when a fixed frame is too small for its contents", () => {
+    const out = settle(board({ mode: "stack", direction: "column", gap: 10, padding: 10 }, [
+      { id: "a", h: 100, z: 0 },
+      { id: "b", h: 100, z: 1 }
+    ], 80));
+    const issue = validateBoardStructure(out).issues.find((i) => i.code === "stack-overflows-frame");
+    expect(issue?.message).toMatch(/needs 230px tall but is 80px/);
+    expect(issue?.severity).toBe("warning");
+  });
+
+  it("never warns about a hug frame — it resizes itself", () => {
+    const out = settle(board({ mode: "stack", direction: "column", gap: 10, padding: 10, sizing: "hug" }, [
+      { id: "a", h: 100, z: 0 },
+      { id: "b", h: 100, z: 1 }
+    ], 80));
+    expect(codes(out)).not.toContain("stack-overflows-frame");
+  });
+
+  it("opens a legacy board that used the removed grid/constraints modes", () => {
+    const legacy = BoardProjectSchema.parse(board({ mode: "grid", columns: 3 } as never, [{ id: "a", h: 40, z: 0 }]));
+    expect(el(legacy, "frame").layout.mode).toBe("absolute");
+    // and it stays absolute — nothing reflows it
+    expect(el(settle(legacy), "a")).toMatchObject({ x: 7, y: 7 });
+  });
+
+  it("rejects grid as a new value rather than quietly storing it", () => {
+    expect(() => applyBoardOperation(board({ mode: "stack" }, []), { type: "set_layout", elementId: "frame", layout: { mode: "grid" } as never }))
+      .toThrow();
+  });
+});

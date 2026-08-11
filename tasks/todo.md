@@ -92,26 +92,48 @@ ships in the same pass as the pins.
 
 Closing every item left open by the first auto-layout pass rather than leaving them as "noted".
 
-- [ ] **A — Layer tree reads in flow order inside a stack.** The tree sorts `zIndex` descending, which is
+- [x] **A — Layer tree reads in flow order inside a stack.** The tree sorts `zIndex` descending, which is
       right for absolute z-order and backwards for a stack, where `zIndex` *is* the flow order — so the
       panel read bottom-to-top against the canvas. Stack children sort ascending; everything else is
       untouched.
-- [ ] **B — Hug sizing (`layout.sizing: "fixed" | "hug"`).** Today a fifth row in a four-row frame just
+- [x] **B — Hug sizing (`layout.sizing: "fixed" | "hug"`).** Today a fifth row in a four-row frame just
       overflows the box, silently. Hug makes the frame grow to its content on the main axis. Reflow becomes
       two passes: size **deepest-first** (a nested hug must be measured before its parent can measure
       itself), then position **shallowest-first**.
-- [ ] **C — `stack-overflows-frame` diagnostic.** Hug is opt-in, so a *fixed* frame can still be too small.
+- [x] **C — `stack-overflows-frame` diagnostic.** Hug is opt-in, so a *fixed* frame can still be too small.
       That is now a real authoring error the agent can act on, and it should be told — same reasoning that
       made `text-overflows-box` worth shipping once wrapping was real.
-- [ ] **D — Per-child escape hatch (`layout.position: "flow" | "absolute"`).** Without it a badge, close
+- [x] **D — Per-child escape hatch (`layout.position: "flow" | "absolute"`).** Without it a badge, close
       button or overlay cannot sit on top of a stacked card — the whole frame has to be restructured.
       Figma has this for the same reason. Excluded from flow, stays absolute in the export.
-- [ ] **E — Delete `grid` and `constraints` from `layoutModes`.** They have never done anything. Leaving
+- [x] **E — Delete `grid` and `constraints` from `layoutModes`.** They have never done anything. Leaving
       inert values in the enum is precisely the "declared but not implemented" disease this whole feature
       was built to cure, and documenting them as dead is a weaker fix than removing them. No board on disk
       uses either (checked); a legacy value still coerces to `absolute` on load so nothing can fail to
       open. `columns` goes with them.
-- [ ] Tests for each; verify in the running app; TestFlight.
+- [x] Tests for each; verify in the running app.
+
+**Result (verified live through the agent path, not just unit tests).** Hugging the 4-row frame took it
+320 → **280px** (32 padding + 212 children + 36 gaps). Adding a fifth row grew it to **286** by itself.
+Lifting a child out of the flow left it at its last position while its successor took the vacated slot,
+and the hug measurement correctly ignored it; putting it back regrew the frame to **342**. The React
+export tells the same story: parent `flex flex-col … p-[16px]`, flowing children with no positioning at
+all, and the escaped child keeping `absolute left-[16px] top-[152px]` — which is what an overlay needs.
+Layer tree now reads top-down in flow order inside a stack. 130 tests, typecheck, build,
+`mcp:check` 47 exposed / 46 checked, console clean.
+
+**Two things the work itself decided.**
+1. **Coerce on read, reject on write.** A legacy `grid` board opens (mode coerced to `absolute`, which is
+   what it always rendered as), but `set_layout {mode: "grid"}` now *throws* instead of quietly storing
+   `absolute`. Silently granting a different thing than was asked for is the same class of dishonesty as
+   the inert enum this change removed. A test asserts both halves.
+2. **`laidOutByParent` was doing two jobs**, and it took looking at the screen to see it: the moment you
+   set a child to Free, the control that would put it back disappeared, because the same flag gated both
+   "is x/y derived?" and "is this inside a stack?". Split into `insideStack` and `laidOutByParent`.
+
+Also corrected `inspect_selection`'s computed style, which reported `position: absolute` with a left/top
+for every element — for a flow child that is CSS contradicting the export generated from the same board.
+It now reports `position: static` and omits left/top for flowing children.
 
 ## Active — Auto-layout frames: make `layout.mode` real (2026-08-07)
 

@@ -1071,7 +1071,7 @@ function inspectSelectionNode(project: BoardProject, id: string, pathByElementId
       semanticRole: element.semanticRole,
       frame: absoluteFrame,
       localFrame: { x: element.x, y: element.y, width: element.width, height: element.height },
-      computedStyle: computedElementStyle(element, absoluteFrame),
+      computedStyle: computedElementStyle(project, element, absoluteFrame),
       layout: element.layout,
       props: element.props,
       locked: element.locked,
@@ -1139,17 +1139,20 @@ function absoluteElementFrame(project: BoardProject, element: BoardProject["elem
   return { x, y, width: element.width, height: element.height };
 }
 
-function computedElementStyle(element: BoardProject["elements"][number], frame: { x: number; y: number; width: number; height: number }): Record<string, string | number | boolean | undefined> {
+function computedElementStyle(project: BoardProject, element: BoardProject["elements"][number], frame: { x: number; y: number; width: number; height: number }): Record<string, string | number | boolean | undefined> {
   const hierarchyOnly = (element.type === "frame" || element.type === "group") && element.props.hierarchyOnly === true;
+  // A child of an auto-layout frame is placed by flow, so reporting `position: absolute` with a left/top
+  // would hand the implementer CSS that contradicts the export they get from the same board.
+  const parent = element.parentId ? project.elements.find((candidate) => candidate.id === element.parentId) : undefined;
+  const inFlow = parent?.layout.mode === "stack" && element.layout.position !== "absolute";
   return {
-    position: "absolute",
-    left: px(frame.x),
-    top: px(frame.y),
+    position: inFlow ? "static" : "absolute",
+    left: inFlow ? undefined : px(frame.x),
+    top: inFlow ? undefined : px(frame.y),
     width: px(frame.width),
     height: px(frame.height),
-    display: element.layout.mode === "stack" ? "flex" : element.layout.mode === "grid" ? "grid" : "block",
+    display: element.layout.mode === "stack" ? "flex" : "block",
     flexDirection: element.layout.mode === "stack" ? element.layout.direction ?? "column" : undefined,
-    gridTemplateColumns: element.layout.mode === "grid" && element.layout.columns ? `repeat(${element.layout.columns}, minmax(0, 1fr))` : undefined,
     gap: pxOrUndefined(element.style.gap ?? element.layout.gap),
     padding: pxOrUndefined(element.style.padding ?? element.layout.padding),
     alignItems: cssAlign(element.style.align ?? element.layout.align),

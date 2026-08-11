@@ -209,6 +209,20 @@ describe("React/Tailwind flow output for stack frames", () => {
     expect(classes).toMatch(/left-\[/);
   });
 
+  it("keeps an escaped child absolutely positioned inside a flex parent", () => {
+    // The overlay case: a badge on top of a stacked card. It must NOT lose left/top, or it collapses
+    // into the flow it was explicitly taken out of.
+    const { project, artboardId } = stackProject();
+    project.elements[2]!.layout = { mode: "absolute", position: "absolute" };
+    const jsx = renderArtboardReactTailwind(project, artboardId).contents;
+    const escaped = classesFor(jsx, "row2");
+    expect(escaped).toContain("absolute");
+    expect(escaped).toMatch(/left-\[/);
+    expect(escaped).toMatch(/top-\[/);
+    // its flowing sibling is unaffected
+    expect(classesFor(jsx, "row1")).not.toContain("absolute");
+  });
+
   it("never emits a duplicated layout class", () => {
     const jsx = renderReactTailwind(createDefaultProject()).files.map((file) => file.contents).join("\n");
     for (const className of jsx.match(/className="[^"]*"/g) ?? []) {

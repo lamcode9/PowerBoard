@@ -210,14 +210,15 @@ function renderElementJsx(project: BoardProject, element: BoardElement, depth: n
   // absolute child is removed from flex layout, which is precisely why the gap/align/justify classes
   // this renderer already emitted did nothing at all.
   const parent = element.parentId ? project.elements.find((candidate) => candidate.id === element.parentId) : undefined;
-  const inFlow = parent?.layout.mode === "stack";
+  // `position: "absolute"` opts a child out of its parent's flow, so it keeps left/top like any other
+  // absolutely-placed element — that is the whole point of the escape hatch.
+  const inFlow = parent?.layout.mode === "stack" && element.layout.position !== "absolute";
   const stack = element.layout.mode === "stack";
   const wrapperClass = joinClasses([
     inFlow ? "" : "absolute",
     stack ? "flex" : "",
     stack && element.layout.direction === "row" ? "flex-row" : "",
     stack && element.layout.direction !== "row" ? "flex-col" : "",
-    element.layout.mode === "grid" ? "grid" : "",
     inFlow ? "" : `left-[${px(element.x)}]`,
     inFlow ? "" : `top-[${px(element.y)}]`,
     `w-[${px(element.width)}]`,

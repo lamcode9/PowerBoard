@@ -73,7 +73,20 @@ export const connectorPorts = ["auto", "n", "s", "e", "w"] as const;
 export const connectorRoutings = ["straight", "orthogonal", "curved"] as const;
 export const connectorArrowheads = ["none", "arrow", "triangle", "dot", "diamond"] as const;
 
-export const layoutModes = ["absolute", "stack", "grid", "constraints"] as const;
+/**
+ * Two modes, both implemented. `grid` and `constraints` were declared here from the beginning and never
+ * did anything — the same "declared but inert" problem that made `stack` a lie for months — so they are
+ * gone rather than documented as dead. Boards written with either still open: `LayoutModeSchema` coerces
+ * a legacy value to `absolute`, which is what they actually rendered as anyway.
+ */
+export const layoutModes = ["absolute", "stack"] as const;
+
+const LEGACY_LAYOUT_MODES = new Set(["grid", "constraints"]);
+
+const LayoutModeSchema = z.preprocess(
+  (value) => (typeof value === "string" && LEGACY_LAYOUT_MODES.has(value) ? "absolute" : value),
+  z.enum(layoutModes)
+);
 
 export const DevicePresetSchema = z.object({
   id: z.string(),
@@ -162,13 +175,24 @@ export const BoardStyleSchema = z.object({
 export type BoardStyle = z.infer<typeof BoardStyleSchema>;
 
 export const ElementLayoutSchema = z.object({
-  mode: z.enum(layoutModes).default("absolute"),
+  mode: LayoutModeSchema.default("absolute"),
   direction: z.enum(["row", "column"]).optional(),
-  columns: z.number().int().positive().optional(),
   gap: Numberish.nonnegative().optional(),
   padding: Numberish.nonnegative().optional(),
   align: z.enum(["start", "center", "end", "stretch"]).optional(),
-  justify: z.enum(["start", "center", "end", "between"]).optional()
+  justify: z.enum(["start", "center", "end", "between"]).optional(),
+  /**
+   * Main-axis sizing for a `stack`. `hug` grows the frame to fit its children, so adding a row extends
+   * the list instead of overflowing the box; `fixed` keeps the authored size and lets
+   * `stack-overflows-frame` report it if the content no longer fits.
+   */
+  sizing: z.enum(["fixed", "hug"]).optional(),
+  /**
+   * Set on a *child* to take it out of its parent's flow — a badge, close button or overlay that has to
+   * sit on top of a stacked card rather than beside it. Without this the only way to place one is to
+   * restructure the frame.
+   */
+  position: z.enum(["flow", "absolute"]).optional()
 });
 
 export type ElementLayout = z.infer<typeof ElementLayoutSchema>;
@@ -179,13 +203,16 @@ export type ElementLayout = z.infer<typeof ElementLayoutSchema>;
  * parsed into `{mode: "absolute", gap: 20}` and silently un-stacked the frame it was tuning.
  */
 export const ElementLayoutPatchSchema = z.object({
+  // Strict, unlike the storage schema: reading a legacy board must succeed, but *asking* for a mode that
+  // does not exist must fail loudly rather than silently becoming "absolute" behind the caller's back.
   mode: z.enum(layoutModes).optional(),
   direction: z.enum(["row", "column"]).optional(),
-  columns: z.number().int().positive().optional(),
   gap: Numberish.nonnegative().optional(),
   padding: Numberish.nonnegative().optional(),
   align: z.enum(["start", "center", "end", "stretch"]).optional(),
-  justify: z.enum(["start", "center", "end", "between"]).optional()
+  justify: z.enum(["start", "center", "end", "between"]).optional(),
+  sizing: z.enum(["fixed", "hug"]).optional(),
+  position: z.enum(["flow", "absolute"]).optional()
 });
 
 /**
@@ -200,12 +227,40 @@ export const ElementLayoutPatchSchema = z.object({
  * `constraints` remain inert schema slots: they are not built, and pretending otherwise is what made
  * `stack` a lie for so long.
  */
+/**
+ * The children a stack actually lays out, in flow order. Hidden children take no space (D-c), and a child
+ * marked `position: "absolute"` opts out entirely so it can overlay the frame.
+ */
+export function stackFlowChildren(children: BoardElement[]): BoardElement[] {
+  return children
+    .filter((child) => child.visible && child.layout.position !== "absolute")
+    .sort((a, b) => a.zIndex - b.zIndex);
+}
+
+/**
+ * Main-axis size a `hug` stack needs to contain its children: padding on both ends, every child, and a gap
+ * between each pair. Returns undefined when there is nothing to hug, so the caller keeps the authored size
+ * rather than collapsing an empty frame to its padding.
+ */
+export function stackContentSize(
+  parent: Pick<BoardElement, "layout">,
+  children: BoardElement[]
+): number | undefined {
+  const laid = stackFlowChildren(children);
+  if (!laid.length) return undefined;
+  const row = parent.layout.direction === "row";
+  const padding = parent.layout.padding ?? 0;
+  const gap = parent.layout.gap ?? 0;
+  const total = laid.reduce((sum, child) => sum + (row ? child.width : child.height), 0);
+  return round2(total + gap * (laid.length - 1) + padding * 2);
+}
+
 export function resolveStackChildren(
   parent: Pick<BoardElement, "width" | "height" | "layout">,
   children: BoardElement[]
 ): Map<string, { x: number; y: number; width: number; height: number }> {
   const placed = new Map<string, { x: number; y: number; width: number; height: number }>();
-  const laid = children.filter((child) => child.visible).sort((a, b) => a.zIndex - b.zIndex);
+  const laid = stackFlowChildren(children);
   if (!laid.length) return placed;
 
   const layout = parent.layout;
@@ -248,9 +303,15 @@ export function resolveStackChildren(
 }
 
 /**
- * Apply every `stack` parent's layout to its children, outermost first so a nested stack is positioned
- * inside an already-placed parent. Called once at the end of `applyBoardOperation`; safe to call on any
- * project (a board with no stacks is untouched).
+ * Apply every `stack` parent's layout. Two passes, and the order of each is load-bearing:
+ *
+ * 1. **Size, deepest-first.** A `hug` frame measures its children, so any nested hug inside it must have
+ *    finished growing before its parent can measure itself. Outermost-first would size the parent against
+ *    stale child heights.
+ * 2. **Position, shallowest-first.** Positions depend on the final sizes from pass 1, and a nested stack
+ *    must be placed inside an already-placed parent.
+ *
+ * Called once at the end of `applyBoardOperation`; safe on any project (a board with no stacks is untouched).
  */
 export function reflowStackLayouts(project: BoardProject): void {
   const childrenByParent = new Map<string, BoardElement[]>();
@@ -261,6 +322,7 @@ export function reflowStackLayouts(project: BoardProject): void {
     childrenByParent.set(element.parentId, siblings);
   }
 
+  const elementById = new Map(project.elements.map((element) => [element.id, element]));
   const depth = (element: BoardElement): number => {
     let steps = 0;
     let parentId = element.parentId;
@@ -268,16 +330,24 @@ export function reflowStackLayouts(project: BoardProject): void {
     while (parentId && !seen.has(parentId)) {
       seen.add(parentId);
       steps++;
-      parentId = project.elements.find((candidate) => candidate.id === parentId)?.parentId ?? null;
+      parentId = elementById.get(parentId)?.parentId ?? null;
     }
     return steps;
   };
 
   const stacks = project.elements
     .filter((element) => element.layout.mode === "stack" && childrenByParent.has(element.id))
-    .sort((a, b) => depth(a) - depth(b));
+    .map((element) => ({ element, depth: depth(element) }));
 
-  for (const parent of stacks) {
+  for (const { element } of [...stacks].sort((a, b) => b.depth - a.depth)) {
+    if (element.layout.sizing !== "hug") continue;
+    const content = stackContentSize(element, childrenByParent.get(element.id) ?? []);
+    if (content === undefined) continue;
+    if (element.layout.direction === "row") element.width = Math.max(1, content);
+    else element.height = Math.max(1, content);
+  }
+
+  for (const { element: parent } of [...stacks].sort((a, b) => a.depth - b.depth)) {
     const placed = resolveStackChildren(parent, childrenByParent.get(parent.id) ?? []);
     for (const child of childrenByParent.get(parent.id) ?? []) {
       const frame = placed.get(child.id);
@@ -1167,6 +1237,42 @@ function layoutDiagnostics(project: BoardProject): BoardValidationIssue[] {
   }
 
   issues.push(...textOverflowDiagnostics(project));
+  issues.push(...stackOverflowDiagnostics(project));
+  return issues;
+}
+
+/**
+ * A fixed-size stack whose children no longer fit. Hug sizing is opt-in, so this is the case the author
+ * chose to control by hand and then outgrew — exactly the kind of thing an agent can fix (grow the frame,
+ * or switch it to hug) if it is told. Hug frames are never reported: they resize themselves.
+ */
+function stackOverflowDiagnostics(project: BoardProject): BoardValidationIssue[] {
+  const issues: BoardValidationIssue[] = [];
+  const childrenByParent = new Map<string, BoardElement[]>();
+  for (const element of project.elements) {
+    if (!element.parentId) continue;
+    const siblings = childrenByParent.get(element.parentId) ?? [];
+    siblings.push(element);
+    childrenByParent.set(element.parentId, siblings);
+  }
+
+  for (const parent of project.elements) {
+    if (parent.layout.mode !== "stack" || !parent.visible) continue;
+    if (parent.layout.sizing === "hug") continue;
+    const content = stackContentSize(parent, childrenByParent.get(parent.id) ?? []);
+    if (content === undefined) continue;
+    const row = parent.layout.direction === "row";
+    const available = row ? parent.width : parent.height;
+    if (content <= available + 1) continue;
+
+    issues.push({
+      severity: "warning",
+      code: "stack-overflows-frame",
+      message: `Auto-layout frame ${parent.name} is too small for its contents: needs ${Math.ceil(content)}px ${row ? "wide" : "tall"} but is ${Math.round(available)}px. Grow the frame, reduce the gap or padding, or set its layout sizing to "hug" so it grows itself.`,
+      artboardId: parent.artboardId,
+      elementId: parent.id
+    });
+  }
   return issues;
 }
 

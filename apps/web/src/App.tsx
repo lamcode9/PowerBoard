@@ -4404,7 +4404,11 @@ function ElementInspector({
   // X/Y are derived, not authored, once a parent stacks its children — the fields stay visible so the
   // number is still readable, but editing them would be a lie the next reflow immediately undoes.
   const parentElement = element.parentId ? project.elements.find((candidate) => candidate.id === element.parentId) : undefined;
-  const laidOutByParent = parentElement?.layout.mode === "stack";
+  // Two different questions, and conflating them hid the escape control the moment you used it:
+  // "is this element inside a stack?" gates the flow/free toggle, while "is its position derived?"
+  // is only true while it is actually flowing.
+  const insideStack = parentElement?.layout.mode === "stack";
+  const laidOutByParent = insideStack && element.layout.position !== "absolute";
   const childCount = project.elements.filter((candidate) => candidate.parentId === element.id).length;
 
   // A Content band with nothing in it is worse than no band — only render it when this element type
@@ -4433,6 +4437,21 @@ function ElementInspector({
       </InspectorGroup>
 
       <InspectorGroup title="Auto-layout">
+        {insideStack ? (
+          <>
+            <SegmentedControl
+              label="In parent"
+              value={element.layout.position === "absolute" ? "absolute" : "flow"}
+              options={LAYOUT_POSITION_OPTIONS}
+              onChange={(position) => onChange({ layout: { ...element.layout, position } })}
+            />
+            <p className="field-hint">
+              {element.layout.position === "absolute"
+                ? "Free — this element sits on top of the frame and keeps its own x/y."
+                : "Flowing — the frame places this element and the ones after it."}
+            </p>
+          </>
+        ) : null}
         <SegmentedControl
           label="Mode"
           value={element.layout.mode === "stack" ? "stack" : "absolute"}
@@ -4455,6 +4474,12 @@ function ElementInspector({
             </div>
             <SegmentedControl label="Align" value={element.layout.align ?? "start"} options={LAYOUT_ALIGN_OPTIONS} onChange={(align) => onChange({ layout: { ...element.layout, align } })} />
             <SegmentedControl label="Distribute" value={element.layout.justify ?? "start"} options={LAYOUT_JUSTIFY_OPTIONS} onChange={(justify) => onChange({ layout: { ...element.layout, justify } })} />
+            <SegmentedControl
+              label={element.layout.direction === "row" ? "Width" : "Height"}
+              value={element.layout.sizing ?? "fixed"}
+              options={LAYOUT_SIZING_OPTIONS}
+              onChange={(sizing) => onChange({ layout: { ...element.layout, sizing } })}
+            />
             <p className="field-hint">
               {childCount === 0
                 ? "No children yet — nest elements inside this frame and they will flow automatically."
@@ -4596,6 +4621,14 @@ const LAYOUT_JUSTIFY_OPTIONS = [
   { value: "center", label: "Center" },
   { value: "end", label: "End" },
   { value: "between", label: "Space" }
+];
+const LAYOUT_SIZING_OPTIONS = [
+  { value: "fixed", label: "Fixed" },
+  { value: "hug", label: "Hug contents" }
+];
+const LAYOUT_POSITION_OPTIONS = [
+  { value: "flow", label: "Flow" },
+  { value: "absolute", label: "Free" }
 ];
 
 /** Tiny arrowhead preview glyph for the segmented pickers. */
@@ -5632,12 +5665,15 @@ function stackReorderTarget(
   const element = project.elements.find((candidate) => candidate.id === elementId);
   const parent = element?.parentId ? project.elements.find((candidate) => candidate.id === element.parentId) : undefined;
   if (!element || parent?.layout.mode !== "stack") return undefined;
+  // An escaped child is positioned freely, so its drag is an ordinary move, not a reorder.
+  if (element.layout.position === "absolute") return undefined;
 
   const row = parent.layout.direction === "row";
   const dropCenter = row ? dropped.x + dropped.width / 2 : dropped.y + dropped.height / 2;
   let index = 0;
   for (const sibling of project.elements) {
-    if (sibling.parentId !== parent.id || sibling.id === element.id || !sibling.visible) continue;
+    if (sibling.parentId !== parent.id || sibling.id === element.id) continue;
+    if (!sibling.visible || sibling.layout.position === "absolute") continue;
     const center = row ? sibling.x + sibling.width / 2 : sibling.y + sibling.height / 2;
     if (center < dropCenter) index++;
   }
@@ -5720,6 +5756,14 @@ function buildElementIndexes(project: BoardProject): ElementIndexes {
   sortMapValues(canvasChildrenByParent, (a, b) => a.zIndex - b.zIndex);
   sortMapValues(layerRootsByArtboard, (a, b) => b.zIndex - a.zIndex);
   sortMapValues(layerChildrenByParent, (a, b) => b.zIndex - a.zIndex);
+
+  // Inside a stack, zIndex *is* the flow order, so the descending sort that reads correctly for
+  // z-order reads backwards against the canvas — first row at the bottom of the list. Flip just those
+  // parents, the way Figma does for auto-layout frames; absolute parents keep top-most-first.
+  for (const parent of project.elements) {
+    if (parent.layout.mode !== "stack") continue;
+    layerChildrenByParent.get(parent.id)?.sort((a, b) => a.zIndex - b.zIndex);
+  }
 
   return { canvasRootsByArtboard, canvasChildrenByParent, layerRootsByArtboard, layerChildrenByParent };
 }

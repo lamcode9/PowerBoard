@@ -32,7 +32,8 @@ const LAYOUT_DIAGNOSTIC_CODES = new Set([
   "connector-label-collides",
   "elements-overlap",
   "element-outside-artboard",
-  "text-overflows-box"
+  "text-overflows-box",
+  "stack-overflows-frame"
 ]);
 
 /** Element types that read as diagram nodes rather than app-mockup surfaces. */
@@ -626,7 +627,9 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
       description:
         "Turn an element into an auto-layout (stack) frame, or back to absolute. A stack owns its children's positions: they flow in zIndex order along `direction`, separated by `gap`, inset by `padding`, and you never set their x/y again — insert or reorder a child and the rest move themselves. " +
         "Use this for lists, toolbars, cards and any column of rows, so that adding an item does not mean recomputing every sibling below it. Keep `absolute` for diagram nodes, which are placed rather than flowed. " +
-        "The patch merges, so setting `gap` alone leaves `direction` intact. Note `grid` and `constraints` are accepted by the schema but NOT implemented — use `stack` or `absolute`.",
+        "`sizing: \"hug\"` grows the frame to fit its children, so adding a row extends the list instead of overflowing; a fixed frame that outgrows its contents is reported as `stack-overflows-frame`. " +
+        "Set `position: \"absolute\"` on a CHILD to lift it out of the parent's flow — a badge or overlay that sits on top of a stacked card rather than beside it. " +
+        "The patch merges, so setting `gap` alone leaves `direction` intact. Only `absolute` and `stack` exist; `grid` and `constraints` were removed because they never did anything.",
       inputSchema: {
         boardId: z.string(),
         elementId: z.string(),
@@ -635,14 +638,16 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
         gap: z.number().nonnegative().optional(),
         padding: z.number().nonnegative().optional(),
         align: z.enum(["start", "center", "end", "stretch"]).optional(),
-        justify: z.enum(["start", "center", "end", "between"]).optional()
+        justify: z.enum(["start", "center", "end", "between"]).optional(),
+        sizing: z.enum(["fixed", "hug"]).optional(),
+        position: z.enum(["flow", "absolute"]).optional()
       }
     },
-    async ({ boardId, elementId, mode, direction, gap, padding, align, justify }) => {
+    async ({ boardId, elementId, mode, direction, gap, padding, align, justify, sizing, position }) => {
       const project = await applyAgentOperation(boardId, {
         type: "set_layout",
         elementId,
-        layout: { mode, direction, gap, padding, align, justify }
+        layout: { mode, direction, gap, padding, align, justify, sizing, position }
       });
       return text(project);
     }
@@ -1043,7 +1048,7 @@ export function createBoardMcpServer(store: BoardStore, options: BoardMcpOptions
       title: "Validate board",
       description:
         "Validate a board file by id, or validate a provided project object. Reports structural problems (ids, parent cycles, missing roles) AND layout problems that make a diagram unpresentable: " +
-        "connector-crosses-element, connector-endpoints-collide, elements-overlap, element-outside-artboard, text-overflows-box. " +
+        "connector-crosses-element, connector-endpoints-collide, elements-overlap, element-outside-artboard, text-overflows-box, stack-overflows-frame. " +
         "Clear the layout warnings before exporting a poster — they are exactly what makes an otherwise valid board look wrong.",
       inputSchema: {
         boardId: z.string().optional(),
