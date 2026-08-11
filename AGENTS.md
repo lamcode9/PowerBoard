@@ -23,12 +23,12 @@ The v2 pivot is phased — check `tasks/todo.md` (locked decisions D1–D6 + pha
 
 ## Architecture map
 
-npm-workspaces monorepo, ~8k lines TS:
+npm-workspaces monorepo, ~18k lines TS (~16k excluding tests):
 
 - `packages/schema/` — Zod schemas: `BoardProject` → `pages` / `artboards` / `elements` (typed, nestable via `parentId`, `semanticRole`, `style`, `layout`, `props`) / `connectors` / `assets` / `tokens`; the operations discriminated union; `validateBoardStructure`, hierarchy inspection. **The data model is the product — change it first, carefully, with migration.**
-- `packages/renderers/` — React/Tailwind, spec-markdown, SVG export generators.
-- `apps/server/` — `boardService.ts` (operation application, undo/redo stacks), `mcpServer.ts` (41 MCP tools, stdio + HTTP `/mcp` — `npm run mcp:check` is the source of truth, not this number), `cloudStore.ts`, Express API (`/api/boards`, operations, exports), WS broadcast (`board.changed` + `agentActivity`).
-- `apps/web/` — `App.tsx` (being split into `canvas/`/`panels/`/`inspector/`/`state/`), DOM canvas (CSS `translate3d`+`scale` camera, SVG connector layer), `api.ts` (server + browser-local fallback).
+- `packages/renderers/` — React/Tailwind, spec-markdown, SVG, Mermaid export generators.
+- `apps/server/` — `boardService.ts` (operation application, undo/redo stacks), `mcpServer.ts` (47 MCP tools, stdio + HTTP `/mcp` — `npm run mcp:check` is the source of truth, not this number), `cloudStore.ts`, Express API (`/api/boards`, operations, exports), WS broadcast (`board.changed` + `agentActivity`).
+- `apps/web/` — `App.tsx` (6.2k lines; the `canvas/`/`panels/`/`inspector/`/`state/` split has not started — only dialogs/overlays are extracted into `components/`), DOM canvas (CSS `translate3d`+`scale` camera, SVG connector layer), `api.ts` (server + browser-local fallback).
 - `apps/desktop/` — Electron shell (Phase 1): main process runs the server in-process, loads the built web bundle, owns native menus + storage paths.
 
 ## Core engineering rules (first-principles — inherits `~/.claude/CLAUDE.md`)
