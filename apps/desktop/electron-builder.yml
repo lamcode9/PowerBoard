@@ -11,6 +11,10 @@ files:
 asarUnpack:
   - "**/node_modules/sharp/**"
   - "**/node_modules/@img/**"
+  # The rasterizer worker is spawned as a real process, so it has to be a real file on disk —
+  # a plain Node child cannot read an entry inside app.asar. Unpacked here it also sits one level
+  # above node_modules/sharp, which is exactly where its `import sharp` resolves from.
+  - "dist/rasterizeWorker.mjs"
 mac:
   category: public.app-category.graphics-design
   icon: build/icon.icns

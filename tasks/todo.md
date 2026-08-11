@@ -986,3 +986,44 @@ price-free · availability · submit · get`. For the next release only `attach`
   `Month-end close — process map`), but their compressed snapshots remain in iCloud at
   `~/Library/Mobile Documents/com~apple~CloudDocs/PowerBoard/Backups/board_3u8my_sldegb` and
   `…/board_3u8nt_lr4sn9` — the unsandboxed dev run backs up to iCloud. Safe to delete by hand.
+
+---
+
+## PNG export killed the app (build 202608111024) — diagnosis + fix
+
+**Reported:** an agent session exported from PowerBoard on 2026-08-11; PNG export crashed the app
+three times, so the agent used SVG instead and restarted PowerBoard twice.
+
+**Evidence** (`~/Library/Logs/DiagnosticReports/Retired/PowerBoard-2026-08-11-15{2159,2319}.ips`):
+both crashes identical — `EXC_BREAKPOINT (SIGTRAP)` on a `libvips worker` thread,
+`rsvg_handle_render_document` → pango itemize → `g_log_writer_default` → `abort()`.
+
+**Reproduced deterministically** by launching the installed app from Terminal and POSTing
+`/api/boards/:id/render`:
+
+```
+Pango-WARNING: couldn't load font "emoji weight=750 Not-Rotated With-Color 11.5", …
+Pango-ERROR:   Could not load fallback font, bailing out.
+```
+
+**Root cause, two layers:**
+
+1. **Trigger.** Under the MAS App Sandbox, pango's CoreText backend can resolve no emoji font at
+   all. Any emoji in board text makes `pango_core_text_font_map_load_fontset` return empty, and
+   pango's response is `g_error()` — which is *always* fatal. Boards without emoji export fine
+   (verified); dev never reproduces it, because an unsandboxed process finds a fallback. That is why
+   this shipped.
+2. **Blast radius.** The server — and therefore sharp/libvips — runs inside the Electron **main
+   process**, so a native `abort()` takes the whole app down. No JS `try/catch` can catch it, and the
+   user gets no error, just a vanished window.
+
+**Fix (both layers):**
+
+- [x] Rasterize in a **child process**. Any native abort, OOM or hang becomes a rejected promise and
+      a visible "Export failed" in the dialog. Protects every future libvips fatality, not just this one.
+- [x] On child death, **retry once** with `PANGOCAIRO_BACKEND=fc` + a generated `fonts.conf`
+      (system font dirs, `Inter`/`ui-sans-serif`/`system-ui`/`sans-serif` → Helvetica Neue,
+      `emoji` → Apple Color Emoji). Verified: emoji boards render, typography matches the CoreText
+      output closely. CoreText stays the primary path because it matches the on-screen canvas.
+- [x] Keep an in-process fallback for the Vercel/serverless path, where spawning is neither
+      available nor needed.

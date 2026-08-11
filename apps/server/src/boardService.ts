@@ -27,7 +27,7 @@ import {
   type RenderedFile,
   type SceneScope
 } from "@powerboard/renderers";
-import sharp from "sharp";
+import { rasterize } from "./rasterizer.js";
 import { jpegToPdf } from "./pdf.js";
 import { AgentIdentity } from "./agentIdentity.js";
 import { CloudFileRecord, CloudStore, createCloudStoreFromEnv } from "./cloudStore.js";
@@ -755,18 +755,19 @@ export class BoardStore {
     const width = Math.round(scene.width * scale);
     const height = Math.round(scene.height * scale);
     // Rasterize by raising the SVG's render density rather than upscaling pixels, so text and
-    // vector strokes stay sharp at 4x instead of turning into a blurred 1x image.
-    const raster = sharp(Buffer.from(scene.svg), { density: Math.round(72 * scale) }).resize(width, height);
+    // vector strokes stay sharp at 4x instead of turning into a blurred 1x image. This runs in a
+    // child process — see rasterizer.ts for why a font it cannot find must not be able to kill the app.
+    const job = { svg: scene.svg, density: Math.round(72 * scale), width, height };
 
     if (format === "jpg") {
-      const jpeg = await raster.flatten({ background: "#FFFFFF" }).jpeg({ quality: 92 }).toBuffer();
+      const jpeg = await rasterize({ ...job, format: "jpg", flatten: "#FFFFFF", quality: 92 });
       return { data: jpeg, contentType: "image/jpeg", fileName: `${baseName}.jpg`, width, height, scale, requestedScale };
     }
     if (format === "pdf") {
-      const jpeg = await raster.flatten({ background: "#FFFFFF" }).jpeg({ quality: 94 }).toBuffer();
+      const jpeg = await rasterize({ ...job, format: "jpg", flatten: "#FFFFFF", quality: 94 });
       return { data: jpegToPdf(jpeg, width, height), contentType: "application/pdf", fileName: `${baseName}.pdf`, width, height, scale, requestedScale };
     }
-    const png = await raster.png().toBuffer();
+    const png = await rasterize({ ...job, format: "png" });
     return { data: png, contentType: "image/png", fileName: `${baseName}.png`, width, height, scale, requestedScale };
   }
 
@@ -821,11 +822,10 @@ export class BoardStore {
 
   async exportPagePdf(boardId: string, pageId?: string): Promise<{ filePath: string }> {
     const project = await this.readBoard(boardId);
-    const svg = renderPageSvg(project, pageId);
-    const image = sharp(Buffer.from(svg));
-    const { width, height } = await image.metadata();
-    const jpeg = await image.flatten({ background: "#F1F5F9" }).jpeg({ quality: 92 }).toBuffer();
-    const pdf = jpegToPdf(jpeg, width ?? 1200, height ?? 800);
+    // Through renderExport so there is exactly one rasterizer, and so this path is protected by the
+    // same child process — an agent asking for a PDF must not be able to kill the app either.
+    const rendered = await this.renderExport(boardId, { scope: "page", pageId, format: "pdf", scale: 1 });
+    const pdf = rendered.data;
     const fileName = `${safeSegment(project.pages.find((page) => page.id === pageId)?.name ?? "page")}.pdf`;
     const filePath = this.isCloudPrimary() ? `cloud://${boardId}/exports/${fileName}` : path.join(await this.ensureExportDir(boardId), fileName);
     if (!this.isCloudPrimary()) {

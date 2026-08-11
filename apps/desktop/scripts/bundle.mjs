@@ -32,6 +32,11 @@ await build({
   logLevel: "info"
 });
 
+// The rasterizer worker ships as a sibling of dist/server.js, because that is where the bundled
+// server looks for it (`new URL("./rasterizeWorker.mjs", import.meta.url)`). It is plain ESM and
+// must stay unbundled — esbuild would inline it into server.js and there would be nothing to spawn.
+cpSync(path.join(repoRoot, "apps/server/src/rasterizeWorker.mjs"), path.join(desktopRoot, "dist/rasterizeWorker.mjs"));
+
 rmSync(path.join(desktopRoot, "dist/web"), { recursive: true, force: true });
 cpSync(webDist, path.join(desktopRoot, "dist/web"), { recursive: true });
 console.log("Bundled server + staged web dist.");
