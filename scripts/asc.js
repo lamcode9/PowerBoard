@@ -19,6 +19,7 @@
  *   node scripts/asc.js metadata <version> <file>    # apply listing copy from a JSON file
  *   node scripts/asc.js review <version> <file>      # app review contact + notes
  *   node scripts/asc.js screenshots <version> <dir>  # upload macOS screenshots
+ *   node scripts/asc.js cancel                       # withdraw the open review submission
  *   node scripts/asc.js submit <version>             # submit for review
  */
 
@@ -611,6 +612,36 @@ async function submit(versionString) {
   console.log(`✓ Submitted ${versionString} for review (reviewSubmission ${submission.id}).`);
 }
 
+/**
+ * Withdraws the open review submission so the version can take a different build. A submission
+ * that is WAITING_FOR_REVIEW cannot have its build swapped underneath it — Apple pins the binary
+ * at submit time — so replacing a build is always cancel → attach → submit.
+ */
+async function cancel() {
+  const app = await appId();
+  const open = await api(
+    `/reviewSubmissions?filter[app]=${app.id}&filter[state]=WAITING_FOR_REVIEW,IN_REVIEW,UNRESOLVED_ISSUES,READY_FOR_REVIEW&limit=10`
+  );
+  const submissions = (open.data ?? []).filter((s) => s.attributes?.platform === PLATFORM);
+  if (!submissions.length) {
+    console.log("No open review submission to cancel.");
+    return;
+  }
+  for (const submission of submissions) {
+    const state = submission.attributes?.state;
+    if (state === "READY_FOR_REVIEW") {
+      // Never submitted, so there is nothing to withdraw — it is already an editable draft.
+      console.log(`Review submission ${submission.id} is ${state}; left as-is.`);
+      continue;
+    }
+    await api(`/reviewSubmissions/${submission.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ data: { type: "reviewSubmissions", id: submission.id, attributes: { canceled: true } } })
+    });
+    console.log(`✓ Cancelled review submission ${submission.id} (was ${state}).`);
+  }
+}
+
 // ---------------------------------------------------------------- cli
 
 const [command, ...args] = process.argv.slice(2);
@@ -632,6 +663,7 @@ const commands = {
   screenshots: () => screenshots(args[0], args[1]),
   "price-free": () => priceFree(),
   availability: () => availabilityWorldwide(),
+  cancel: () => cancel(),
   submit: () => submit(args[0])
 };
 

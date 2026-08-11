@@ -9,11 +9,11 @@ files:
   - dist/**
   - package.json
 asarUnpack:
-  - "**/node_modules/sharp/**"
-  - "**/node_modules/@img/**"
-  # The rasterizer worker is spawned as a real process, so it has to be a real file on disk —
-  # a plain Node child cannot read an entry inside app.asar. Unpacked here it also sits one level
-  # above node_modules/sharp, which is exactly where its `import sharp` resolves from.
+  # The rasterizer runs in a spawned child process (see rasterizer.ts), and a plain Node child
+  # cannot read anything inside app.asar. So the worker *and* everything it resolves must be real
+  # files on disk — the whole production dependency tree, not just sharp: sharp itself requires
+  # detect-libc and semver, and unpacking sharp alone leaves the child failing to load it.
+  - "**/node_modules/**"
   - "dist/rasterizeWorker.mjs"
 mac:
   category: public.app-category.graphics-design
