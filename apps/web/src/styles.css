@@ -419,6 +419,11 @@ button {
 
 .home-connect-more {
   margin-left: auto;
+  /* Ghost link, not a chrome button: without this reset the UA button-face paints a light grey
+     box that reads as a rendering bug on the dark banner. */
+  border: 0;
+  padding: 0;
+  background: transparent;
   color: var(--accent);
   font-size: 12px;
   font-weight: 600;
@@ -3164,6 +3169,12 @@ button {
 [data-theme="dark"] .app-shell {
   background: #0c111b;
 }
+/* The loading shell is the very first thing a dark-mode launch paints. Left light, it flashed a
+   near-white screen over the whole window before the board appeared. */
+[data-theme="dark"] .loading-shell {
+  background: #0c111b;
+  color: #93a4bd;
+}
 [data-theme="dark"] .topbar,
 [data-theme="dark"] .left-panel,
 [data-theme="dark"] .right-panel {
@@ -3178,11 +3189,8 @@ button {
 [data-theme="dark"] .panel-heading {
   color: #93a4bd;
 }
-[data-theme="dark"] .brand-mark,
-[data-theme="dark"] .loading-mark {
-  background: var(--accent);
-  color: var(--accent-fg);
-}
+/* No dark-mode background behind the brand mark: the SVG paints its own dark tile with its own
+   115/512 corner radius, so any fill here shows as accent-coloured corners around the logo. */
 [data-theme="dark"] .artboard-control select,
 [data-theme="dark"] .field input,
 [data-theme="dark"] .field select {
@@ -4225,6 +4233,13 @@ button {
 .pane-resize-handle:hover::after,
 .pane-resize-handle:active::after {
   background: var(--accent);
+}
+/* Specificity note: the generic `[data-tip] { position: relative }` rule below this in the sheet
+   ties with a single class and wins on order, which pushed these tabs out of absolute positioning
+   and parked the right one entirely off-screen — the panel could be closed but never reopened.
+   Qualifying by the parent keeps the intended positioning regardless of rule order. */
+.app-shell > .pane-edge-tab {
+  position: absolute;
 }
 .pane-edge-tab {
   position: absolute;

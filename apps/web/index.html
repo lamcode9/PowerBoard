@@ -5,7 +5,30 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preload" as="font" type="font/woff2" href="/fonts/InterVariable.woff2" crossorigin />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>PowerBoard</title>
+    <script>
+      // Decide the theme before the first paint. React sets data-theme in an effect, which lands
+      // after the browser has already painted, so every dark-mode launch flashed a light window.
+      // Keep the key and the fallback in sync with THEME_STORAGE_KEY / readStoredTheme in App.tsx.
+      (function () {
+        var theme = "light";
+        try {
+          var stored = window.localStorage.getItem("powerboard.theme");
+          if (stored === "dark" || stored === "light") {
+            theme = stored;
+          } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+            theme = "dark";
+          }
+        } catch (error) {
+          // Storage can be unavailable; the light default below is still correct.
+        }
+        var root = document.documentElement;
+        root.dataset.theme = theme;
+        root.style.colorScheme = theme;
+        root.style.background = theme === "dark" ? "#0c111b" : "#e7edf5";
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -482,6 +482,10 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    // Keeps native chrome — scrollbars, form controls, the window backdrop — on the same side as
+    // the app surfaces. Without it a dark board keeps light scrollbars.
+    document.documentElement.style.colorScheme = theme;
+    document.documentElement.style.background = theme === "dark" ? "#0c111b" : "#e7edf5";
     try {
       window.localStorage.setItem(THEME_STORAGE_KEY, theme);
     } catch {
@@ -2493,6 +2497,8 @@ export function App() {
         { id: "focus-selection", section: "View", title: "Focus selection", run: focusSelection },
         { id: "zoom-100", section: "View", title: "Zoom to 100%", hint: "⌘0", run: () => { zoomAtViewportCenter(1); setStatus("Zoom 100%"); } },
         { id: "focus-mode", section: "View", title: focusMode ? "Exit focus mode" : "Enter focus mode", hint: "F", run: () => setFocusMode((current) => !current) },
+        { id: "left-pane", section: "View", title: leftPaneOpen ? "Hide left panel" : "Show left panel", keywords: "layers sidebar panel", run: toggleLeftPane },
+        { id: "right-pane", section: "View", title: rightPaneOpen ? "Hide right panel" : "Show right panel", keywords: "inspector sidebar panel properties", run: toggleRightPane },
         { id: "theme", section: "View", title: theme === "dark" ? "Switch to light mode" : "Switch to dark mode", run: () => setTheme((current) => (current === "dark" ? "light" : "dark")) },
         { id: "connect-agent", section: "Agent", title: "Connect an agent (MCP)…", run: () => setConnectOpen(true), keywords: "mcp claude cursor endpoint" },
         { id: "backup-now", section: "Backup", title: "Back up all boards now", run: () => void backupAllNow() },
@@ -6077,6 +6083,9 @@ function readStoredTheme(): Theme {
   try {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
     if (stored === "dark" || stored === "light") return stored;
+    // No explicit choice yet: follow the desktop. Mirrors the pre-paint bootstrap in index.html —
+    // if the two disagree the app repaints from light to dark on the first frame.
+    if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) return "dark";
   } catch {
     // Ignore storage failures; default below.
   }

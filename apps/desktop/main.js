@@ -1,7 +1,7 @@
 // PowerBoard desktop shell. Runs the PowerBoard server (Express + WS + MCP) inside the
 // Electron main process, then opens a window on it. One process owns UI, storage, and MCP,
 // so agents connecting to http://127.0.0.1:4318/mcp always see the board the user sees.
-import { app, BrowserWindow, Menu, dialog, session, shell, clipboard } from "electron";
+import { app, BrowserWindow, Menu, dialog, session, shell, clipboard, nativeTheme } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -133,7 +133,9 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 640,
     show: false,
-    backgroundColor: "#E7EDF5",
+    // Follows the desktop appearance so a dark-mode launch never flashes a light window between
+    // the frame appearing and the board painting. Matches the pre-paint bootstrap in index.html.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0C111B" : "#E7EDF5",
     webPreferences: { contextIsolation: true, nodeIntegration: false }
   });
   win.once("ready-to-show", () => win.show());
