@@ -147,3 +147,62 @@ gap with the pessimistic guess instead of the one my own earlier measurements su
 
 **How to apply:** Before concluding a release step failed, name the observation window and check it
 against known latency. If the answer is "I looked too early," wait — don't act.
+
+## 2026-08-11 — The App Store submission blockers the API cannot see
+
+**Context:** First Mac App Store submission. Every field the App Store Connect API exposes was
+filled and `submit` still failed, three times, with the same message: `STATE_ERROR.ENTITY_STATE_INVALID
+— appStoreVersions ... is not in valid state. This resource cannot be reviewed, please check
+associated errors to see why.` There is no endpoint that lists those associated errors.
+
+**Rule:**
+- **Three required things are not in the ASC API at all, and their absence is invisible to it.**
+  *App Privacy* (the data-collection questionnaire + its Publish step) has no relationship on the
+  app and no top-level collection — `appDataUsages`, `appPrivacyDetails` and every variant 404.
+  *Content Rights* is likewise UI-only. Both silently block review. Budget a browser trip for a
+  first submission; the API gets you ~90% and then stops without saying so.
+- **`copyright` starts null on a new appStoreVersion and blocks submission.** It is a plain PATCH
+  attribute, so it is easy to fix and easy to never think of — nothing in the API surface flags it.
+- **The version page in the ASC web UI is the only place that names what is missing.** When the
+  submit error is opaque, stop probing endpoints and open the page; it showed Content Rights
+  unset and an age-rating banner in one glance, after I had burned several calls guessing.
+- **Age-rating fields are a mix of string enums and booleans, and the API validates one at a time.**
+  `gunsOrOtherWeapons` is a STRING (`NONE`), `gambling` is a boolean, `ageAssurance` is required and
+  boolean. Expect an iteration loop; each 409 names exactly one field.
+- **Match the build's marketing version to the App Store version string before building.** A build
+  can only attach to the version whose string equals its `CFBundleShortVersionString`. Shipping
+  `0.1.0` against a `1.0` record cost a full rebuild-and-reupload cycle. Check
+  `asc.js state` *first*, and rename the ASC record (`asc.js rename`) rather than creating a second
+  version — ASC allows only one editable version per platform.
+
+**Why:** The API's silence reads as completeness. Every call returned 200, every field I could see
+was populated, and the thing actually blocking review was a questionnaire the API does not model.
+
+**How to apply:** For a first submission on any platform, drive the API for everything it supports,
+then open the console page and read it before declaring a blocker. For subsequent releases these
+one-time records persist, so the API path alone is enough.
+
+## 2026-08-11 — A CSS rule that ties on specificity wins by position, and hides a whole panel
+
+**Correction:** The user reported the right panel had no way to reopen. It had one — `.pane-edge-tab.right`,
+rendered, visible, `opacity: 1` — parked at `x = 1280` on a 1280px viewport. `[data-tip] { position: relative }`
+sits ~700 lines below `.pane-edge-tab { position: absolute }` in the same sheet, ties it at one-class
+specificity, and wins on order. The tab lost absolute positioning, flowed into the grid, and left the screen.
+
+**Rule:**
+- **A generic attribute-selector utility (`[data-tip]`, `[data-state]`, `[hidden]`) has exactly class
+  specificity and will silently override component rules declared earlier.** When a utility sets a
+  positioning or layout property, qualify the component rule by its parent (`.app-shell > .pane-edge-tab`)
+  so rule order stops mattering.
+- **"Element exists and is visible" is not "element is reachable."** The diagnostic that found this in one
+  step was `document.elementFromPoint(centreX, centreY)` returning `null` — present in the DOM, absent from
+  the viewport. Check hit-testing, not `getComputedStyle`.
+- **A hidden panel with no working reopen is a trap, not a bug.** Any collapse control needs a second,
+  independent path back: the edge tab AND a command-palette entry. One affordance is one point of failure.
+
+**Why:** Every individual signal said the feature worked. The tab was in the DOM, styled, event-bound, and
+its own `data-tip` tooltip rule was written specifically for it — by the same hand that broke it.
+
+**How to apply:** When a control "does nothing," get its rect and hit-test its centre before reading its
+CSS. And grep for later `[attr]` rules whenever a component's `position`, `display` or `overflow` is
+mysteriously not what the source says.

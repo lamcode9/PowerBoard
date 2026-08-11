@@ -890,3 +890,43 @@ Decisions taken with the user this session:
   it to the *project* — so the custom-domain exemption never applies and the whole site sits behind a
   Vercel login while every URL still returns 200 to a `curl -L`. `vercel domains add <domain>` against
   the linked project is the step that actually makes it public. Check without `-L` next time.
+
+## Shipped — v1.0.0 submitted to the Mac App Store (2026-08-11)
+
+**Status: `WAITING_FOR_REVIEW`.** Version 1.0.0, build `202608111024`, review submission
+`ef991948-6beb-490c-90fc-d4dd41893e63`, submitted 03:53 UTC. Release is `AFTER_APPROVAL`, so it
+goes live automatically once Apple approves — nothing further to press.
+
+Also shipped this session: the dark-mode brand-mark fix, the right-panel reopen fix, the
+pre-paint theme bootstrap, and the marketing-site screenshot/claim corrections (commits
+`c098383`, `b637b15`, `a2beffa`).
+
+### What is on the listing
+
+- Free, 175 territories + new ones automatically. Graphics & Design / Developer Tools. 4+.
+- App Privacy: **Data Not Collected**, published. Content Rights: no third-party content.
+- Four macOS screenshots at 2880×1800, captured from the 1.0.0 Electron build. Kept in
+  `scripts/store/screenshots/`; listing copy in `scripts/store/listing.json` so it diffs.
+- Review notes explain the loopback server + that the agent feature is optional, since a
+  reviewer with no MCP client must still be able to exercise every advertised feature.
+
+### Tooling added
+
+`scripts/asc.js` — macOS ASC operations, no new dependencies (ES256 signed with `node:crypto`).
+`state · rename · create · attach · set-version · metadata · agerating · review · screenshots ·
+price-free · availability · submit · get`. For the next release only `attach` → `metadata`
+(What's New) → `submit` are needed; the one-time records persist.
+
+### Open
+
+- **App Privacy and Content Rights are web-UI only** — no ASC API endpoint exists. Fine now that
+  they are set, but a fresh app record will need the browser again. See `tasks/lessons.md`.
+- **The Supabase cloud project (`Creo`, `jwllfgqwqrnqdgsqpkdt`) is INACTIVE**, so cloud storage
+  mode fails at boot and the seven boards the original website screenshots were taken against are
+  unreachable. Not a blocker — the app is offline-first by decision D2 — but `POWERBOARD_STORAGE_MODE=cloud`
+  is broken until someone resumes or retires that project.
+- **Three demo boards were created in the app container** (`Habit tracker — app screens`,
+  `Month-end close — process map`) to shoot the screenshots. They are real boards in your local
+  PowerBoard; delete them from the board list if you don't want them.
+- `AGENTS.md` still says "24 MCP tools"; `npm run mcp:check` answers 47. The website is now correct;
+  the brief is not.
