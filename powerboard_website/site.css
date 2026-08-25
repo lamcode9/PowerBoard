@@ -180,35 +180,6 @@ a { color: inherit; }
 .btn-ghost:hover { background: rgba(243, 243, 248, 0.05); filter: none; }
 .btn svg { width: 17px; height: 17px; flex: none; }
 
-/* Not a button. PowerBoard has no public download yet, and a control that looks
-   clickable but isn't would be the one unforgivable thing on a page like this —
-   so this reads as a status readout: squared off, dashed, quieter than the button
-   beside it, and with a live dot instead of a label that implies an action. */
-.status-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 11px 18px;
-  border-radius: 10px;
-  border: 1px dashed var(--line);
-  background: rgba(19, 19, 32, 0.5);
-  color: var(--ink-mute);
-  font-size: 14.5px;
-  font-weight: 500;
-  cursor: default;
-  -webkit-user-select: none;
-  user-select: none;
-}
-.status-chip svg { width: 15px; height: 15px; flex: none; color: var(--ink-faint); }
-.status-chip .dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--violet);
-  box-shadow: 0 0 0 4px rgba(139, 92, 255, 0.16);
-  flex: none;
-}
-
 /* ───────────── hero ───────────── */
 
 .hero {
