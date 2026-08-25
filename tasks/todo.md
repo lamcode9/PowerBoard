@@ -1094,3 +1094,37 @@ was. Drop it in the next build that rebuilds for a real reason.
 
 **Do not tell the reviewer the entitlements are minimal** while `application-groups` is still in the
 plist and unused. The Resolution Center reply was written without that claim on purpose.
+
+---
+
+## 1.0.0 is live on the Mac App Store (2026-08-25)
+
+`node scripts/asc.js state` → **`READY_FOR_SALE`**, build `202608111608`, no code change from the
+rejected submission. Listing: https://apps.apple.com/app/powerboard/id6787366599
+
+The whole rejection was a wording mismatch, not a defect: the automated check wanted the phrase
+"listens for and responds to incoming connections", the old notes described the loopback server as
+something the app does for itself, and nothing about the binary ever needed to change. Submission
+`eb4182e1…` went `UNRESOLVED_ISSUES` → `WAITING_FOR_REVIEW` on the Resolution Center reply alone.
+
+### Website updated to match (`powerboard_website/`, deployed)
+
+Live at https://powerboard.lamonade.xyz — verified over HTTPS *without* `curl -L`, per the
+deployment-protection lesson above.
+
+- Hero status readout → real "Download on the Mac App Store" button; "See how it works" dropped to
+  `.btn-ghost` so the hierarchy reads. 29 lines of dead `.status-chip` CSS removed with it,
+  including the comment explaining why it deliberately was not a button.
+- Beta framing retired in `terms.html` and the `support.html` "can I get into the beta" answer.
+
+**Two facts the page must keep carrying.** The shipped binary is **arm64 only** (`lipo -archs` on
+the signed app) and `LSMinimumSystemVersion` is **12.0**. The CTA note says "Apple silicon Mac on
+macOS 12 or later" for that reason — a vaguer "for macOS" strands every Intel user *after* the
+click. If a universal build ever ships, that line is the thing to update.
+
+### Still open
+
+- `com.apple.security.application-groups` is still in `entitlements.mas.plist`, unused and unbacked
+  by the provisioning profile. Drop it in the next build that rebuilds for a real reason, and
+  re-check the Electron Login Helper signs. Nothing calls `setLoginItemSettings`.
+- Next release only needs `attach` → `metadata` (What's New) → `submit`; the one-time records persist.
