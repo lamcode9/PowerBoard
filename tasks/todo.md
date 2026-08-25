@@ -1074,3 +1074,23 @@ Login Helper still signs — Electron's MAS guide carries app-groups in its pare
 **Lesson.** `files.user-selected.read-write` *is* used, via `will-download` →
 `dialog.showSaveDialog` (powerbox) in `apps/desktop/main.js:112`. Verify each entitlement against a
 real call site before believing either Apple's scanner or your own memory.
+
+### Build `202608111608` already carries the crash fix — verified, do not rebuild
+
+Checked before cutting a replacement build, and the replacement turned out to be unnecessary. The
+build number encodes 16:08 and `497e071` landed at 16:08:07 — it was cut *minutes after* the fix,
+not before it. Verified against the signed bundle rather than timestamps:
+
+- `Contents/Resources/app.asar.unpacked/dist/rasterizeWorker.mjs` is present in the shipped `.app`.
+- `node_modules` is unpacked alongside it (the `asarUnpack` change from `497e071`).
+- The bundled `server.js` contains both `PANGOCAIRO_BACKEND` and `Apple Color Emoji` — the
+  fontconfig fallback retry from `ef17385`.
+- `git diff 497e071..HEAD -- apps/ packages/` is **empty**: zero code drift since that build.
+
+**Decision: resubmit as-is.** A fresh build would be functionally identical, so it would buy nothing
+except a processing wait and a new binary to re-verify. `application-groups` stays in for this
+submission — it was not what Apple flagged, and the review notes now justify the entitlement that
+was. Drop it in the next build that rebuilds for a real reason.
+
+**Do not tell the reviewer the entitlements are minimal** while `application-groups` is still in the
+plist and unused. The Resolution Center reply was written without that claim on purpose.
