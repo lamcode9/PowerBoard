@@ -1,0 +1,89 @@
+<title>PowerBoard App Audit</title>
+<style>
+  :root{--bg:#fbfbfd;--panel:#fff;--ink:#16161d;--mute:#5b5b6b;--faint:#8a8a9a;--line:#e4e4ec;--accent:#6d4aff;--ok:#0f7b4f;--warn:#9a6100;--bad:#b3261e;--code:#f4f4f8}
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d0d14;--panel:#14141d;--ink:#f2f2f7;--mute:#a6a6b8;--faint:#77778a;--line:#26263400;--line:#262634;--accent:#9b7dff;--ok:#4ade9a;--warn:#e8b464;--bad:#ff8a80;--code:#1a1a25}}
+  :root[data-theme="dark"]{--bg:#0d0d14;--panel:#14141d;--ink:#f2f2f7;--mute:#a6a6b8;--faint:#77778a;--line:#262634;--accent:#9b7dff;--ok:#4ade9a;--warn:#e8b464;--bad:#ff8a80;--code:#1a1a25}
+  body{background:var(--bg);color:var(--ink);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:48px 24px 96px}
+  .wrap{max-width:820px;margin:0 auto}
+  h1{font-size:32px;line-height:1.2;margin:0 0 6px;letter-spacing:-.02em}
+  .sub{color:var(--mute);margin:0 0 40px}
+  h2{font-size:21px;margin:44px 0 14px;letter-spacing:-.01em}
+  h3{font-size:16px;margin:26px 0 8px}
+  p,li{color:var(--ink)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:14px 0}
+  .tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:3px 9px;border-radius:99px;margin-bottom:10px}
+  .t-bad{background:color-mix(in srgb,var(--bad) 15%,transparent);color:var(--bad)}
+  .t-warn{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn)}
+  .t-ok{background:color-mix(in srgb,var(--ok) 15%,transparent);color:var(--ok)}
+  code{background:var(--code);padding:2px 6px;border-radius:5px;font-size:13.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow-x:auto;font-size:13px}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line)}
+  th{color:var(--faint);font-size:12px;text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+  .scroll{overflow-x:auto}
+  .note{color:var(--mute);font-size:14.5px}
+  strong{font-weight:650}
+</style>
+<div class="wrap">
+<h1>PowerBoard — app audit</h1>
+<p class="sub">2026-08-25 · measured against the production bundle, on the largest real board (817 elements, 8 artboards, 34 connectors, depth 3)</p>
+
+<div class="card">
+<p style="margin:0"><strong>Method note.</strong> Every number here comes from the <em>production</em> build served over HTTP, not the Vite dev server. Dev-mode figures were 3–5× worse and entirely misleading, because <code>StrictMode</code> double-renders. Two candidate findings were measured and <strong>discarded</strong> as non-issues — they are listed at the bottom so nobody re-opens them.</p>
+</div>
+
+<h2>1. The one real performance problem</h2>
+<div class="card">
+<span class="tag t-bad">Confirmed · user-visible</span>
+<h3 style="margin-top:0">Every state change re-renders the entire board</h3>
+<p><code>App.tsx</code> is 6,243 lines holding <strong>61 <code>useState</code> hooks</strong>, with <strong>zero <code>React.memo</code>, zero <code>useCallback</code></strong>. There is no viewport culling and no virtualisation, so all 817 elements and all 1,835 layer rows sit in the DOM at once — <strong>7,757 nodes</strong>.</p>
+<p>The consequence is that any state change costs a full re-render of everything:</p>
+<div class="scroll"><table>
+<tr><th>Interaction</th><th>Blocking main thread</th><th>Network involved</th></tr>
+<tr><td>Theme toggle (pure client state)</td><td><strong>89 ms</strong> — one long task</td><td>none</td></tr>
+<tr><td>Select an element</td><td>~80–110 ms</td><td><code>/selection</code> 81 ms</td></tr>
+<tr><td>Drag one element</td><td><strong>416 ms</strong> across 4 long tasks (77/107/112/120)</td><td><code>/operations</code> 55 ms</td></tr>
+<tr><td>Typing in the inspector</td><td>~53 ms per character</td><td>debounced</td></tr>
+</table></div>
+<p>The theme-toggle number is the cleanest evidence: no network, no board mutation, nothing but a re-render — and it still blocks for 89 ms. Anything over 50 ms drops input responsiveness.</p>
+<p class="note"><strong>Fix shape (not done — it is its own project).</strong> This is the <code>canvas/</code>&#8202;/&#8202;<code>panels/</code>&#8202;/&#8202;<code>inspector/</code>&#8202;/&#8202;<code>state/</code> split the brief already calls for, plus <code>React.memo</code> on <code>ElementView</code>, and virtualising the layer tree. Do not attempt it inside a release cut.</p>
+</div>
+
+<h2>2. Correctness — fixed this session</h2>
+<div class="card">
+<span class="tag t-ok">Fixed · commit 071e7bd</span>
+<h3 style="margin-top:0">Live sync broke on any non-default port</h3>
+<p><code>mcpEndpointUrl()</code> derived its origin from <code>window.location</code>, but <code>liveSocketUrl()</code> sitting beside it hardcoded <code>ws://127.0.0.1:4318</code>. <code>main.js</code> honours <code>POWERBOARD_PORT</code>, so on any other port the HTTP API worked while live sync silently died behind an "unavailable" banner. Both now share one <code>localServerBase()</code> helper. Verified by serving the production bundle on 4320 — the exact case that used to fail — and confirming a clean console and a live socket.</p>
+</div>
+<div class="card">
+<span class="tag t-ok">Fixed · commit 071e7bd</span>
+<h3 style="margin-top:0">A status message promised cloud saves that do not exist</h3>
+<p>On socket failure the status bar said <em>"Live sync unavailable; cloud saves still work"</em> — including when storage mode is <code>local</code>, where there is no cloud. It now says the change is saved locally, which is true.</p>
+</div>
+
+<h2>3. Open — worth fixing, not urgent</h2>
+<div class="card">
+<span class="tag t-warn">Open</span>
+<h3 style="margin-top:0">Raw Node errors are shown to the user, filesystem paths included</h3>
+<p>Roughly ten call sites do <code>setStatus(error instanceof Error ? error.message : "…")</code>. Opening a missing board puts this in the status bar verbatim:</p>
+<pre>ENOENT: no such file or directory, open
+'/Users/km/Developer/PowerBoard/boards/board_perfaudit_tmp/board.json'</pre>
+<p>Failing loud is right and is the house rule; leaking <code>errno</code> strings and absolute paths into UI copy is not. These want a small mapper from error → human sentence, keeping the raw text for <code>console.error</code>. Left alone deliberately: ten call sites each needing a judgement call is not a release-cut change.</p>
+</div>
+<div class="card">
+<span class="tag t-warn">Open · documentation</span>
+<h3 style="margin-top:0">There is a third board container, not two</h3>
+<p><code>tasks/todo.md</code> documents two (sandboxed app container, unsandboxed <code>~/Library/Application Support</code>). There is a third: <code>npm run dev</code> resolves <code>POWERBOARD_ROOT</code> to the repo's own <code>boards/</code>. That is what produced the ENOENT above, when a board placed in container two was invisible to a server reading container three.</p>
+</div>
+
+<h2>4. Measured and discarded</h2>
+<div class="card">
+<p style="margin-top:0"><strong>The <code>ArtboardView</code> full-array scan.</strong> It scans all <code>project.elements</code> twice per artboard per render with an <code>Array.includes</code> inside each filter, and <code>elementPositionInArtboard</code> does a linear <code>.find()</code> per ancestor level. It looks like an obvious O(A×N×S) bug. Benchmarked against the real 817-element board: <strong>0.141 ms per render</strong>, versus 0.031 ms for a <code>Map</code>-indexed rewrite. That is 0.85% of a frame. <strong>Not worth touching</strong> — the win is real and irrelevant.</p>
+<p style="margin-bottom:0"><strong>Slow typing in the inspector.</strong> Real typing of 16 characters took 10.5 s, which looked catastrophic. A control run typing the same string into a plain detached <code>&lt;input&gt;</code> on the same page took 9.6 s — the cost was the automation tool, not the app. Actual app overhead is ~53 ms/char. <strong>Not a finding.</strong></p>
+</div>
+
+<h2>5. Health baseline</h2>
+<div class="card">
+<p style="margin:0"><code>npm run typecheck</code> clean · <code>npm test</code> <strong>130 passed</strong> · no empty <code>catch</code> blocks on any write path · the <code>localStorage</code> P0 named in the brief is <strong>already fixed</strong> — <code>api.ts</code> migrated to IndexedDB, and only theme, pane and export preferences remain in <code>localStorage</code>, which is exactly what the persistence rule permits. The brief is stale on that point.</p>
+</div>
+</div>
