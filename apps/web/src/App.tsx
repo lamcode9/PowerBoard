@@ -716,7 +716,12 @@ export function App() {
     };
     ws.onerror = () => {
       if (projectRef.current?.id === boardId) {
-        setStatus("Live sync unavailable; cloud saves still work");
+        // In local mode there are no cloud saves to reassure anyone about.
+        setStatus(
+          storageStatus?.storageMode === "cloud"
+            ? "Live sync unavailable; cloud saves still work"
+            : "Live sync unavailable; your changes are still saved locally"
+        );
       }
     };
     return () => ws.close();
@@ -3120,13 +3125,19 @@ function BackupPanel({ status, onBackupNow, onOpenRestore }: { status?: ApiHealt
 }
 
 /**
- * The MCP endpoint this running server exposes. In dev the web app is served from 5173 behind a
- * proxy, but the server — and therefore MCP — always listens on 4318.
+ * The origin the running server is reachable at. In dev the web app is served from 5173 behind a
+ * proxy while the server listens on 4318; everywhere else — Electron, the cloud deploy — the page
+ * and the server share an origin, so derive it rather than assuming a port. Electron honours
+ * POWERBOARD_PORT, so anything that hardcodes 4318 breaks the moment that override is used.
  */
-function mcpEndpointUrl(): string {
+function localServerBase(): string {
   const origin = typeof window !== "undefined" && window.location.origin.startsWith("http") ? window.location.origin : "http://127.0.0.1:4318";
-  const serverBase = origin.includes("5173") ? "http://127.0.0.1:4318" : origin;
-  return `${serverBase}/mcp`;
+  return origin.includes("5173") ? "http://127.0.0.1:4318" : origin;
+}
+
+/** The MCP endpoint this running server exposes. */
+function mcpEndpointUrl(): string {
+  return `${localServerBase()}/mcp`;
 }
 
 /**
@@ -5930,7 +5941,9 @@ function liveSocketUrl(boardId: string): string | null {
     return `${base}?boardId=${encodeURIComponent(boardId)}`;
   }
   if (!isLocalBrowserHost()) return null;
-  return `ws://127.0.0.1:4318/ws?boardId=${encodeURIComponent(boardId)}`;
+  // Same origin as the HTTP API — http→ws, https→wss — so a non-default POWERBOARD_PORT keeps
+  // live sync working instead of silently falling back to the "unavailable" banner.
+  return `${localServerBase().replace(/^http/, "ws")}/ws?boardId=${encodeURIComponent(boardId)}`;
 }
 
 function isLocalBrowserHost(): boolean {
