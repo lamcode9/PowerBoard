@@ -940,9 +940,11 @@ Decisions taken with the user this session:
 
 ## Shipped — v1.0.0 submitted to the Mac App Store (2026-08-11)
 
-**Status: `WAITING_FOR_REVIEW`.** Version 1.0.0, build `202608111024`, review submission
-`ef991948-6beb-490c-90fc-d4dd41893e63`, submitted 03:53 UTC. Release is `AFTER_APPROVAL`, so it
-goes live automatically once Apple approves — nothing further to press.
+**Status: superseded — see "1.0.0 was rejected" below.** This section recorded
+`WAITING_FOR_REVIEW` for version 1.0.0, build `202608111024`, review submission
+`ef991948-6beb-490c-90fc-d4dd41893e63`, submitted 03:53 UTC, release `AFTER_APPROVAL`. That
+submission completed and a second one (build `202608111608`) came back rejected. **The app is not
+live.** Do not read this section as current status.
 
 Also shipped this session: the dark-mode brand-mark fix, the right-panel reopen fix, the
 pre-paint theme bootstrap, and the marketing-site screenshot/claim corrections (commits
@@ -1027,3 +1029,48 @@ Pango-ERROR:   Could not load fallback font, bailing out.
       output closely. CoreText stays the primary path because it matches the on-screen canvas.
 - [x] Keep an in-process fallback for the Vercel/serverless path, where spawning is neither
       available nor needed.
+
+---
+
+## 1.0.0 was rejected — the `network.server` entitlement (2026-08-25)
+
+**Live ASC state, not inferred:** version 1.0.0 is `REJECTED`, attached build `202608111608`,
+release `AFTER_APPROVAL`. Two review submissions exist — `ef991948…` (03:53 UTC 2026-08-11)
+`COMPLETE`, and `eb4182e1…` (09:18 UTC 2026-08-11) `UNRESOLVED_ISSUES`. The app info record is
+`REJECTED` too. Check with `node scripts/asc.js state` — never trust a status written in this file.
+
+**The rejection is automated, not a human reviewer.** Apple's static analysis says the app declares
+`com.apple.security.network.server` but "does not appear to have matching functionality", and offers
+two exits: drop the entitlement, or describe the usage in App Review Information and reply in
+Resolution Center.
+
+**The entitlement is genuinely required — do not remove it.** `apps/server/src/index.ts:14` pins
+`const host = "127.0.0.1"` and line 373 calls `httpServer.listen(port, host)`;
+`apps/desktop/main.js:150` then does `win.loadURL("http://127.0.0.1:4318")`. The UI *is* an incoming
+connection to our own listener, and `/mcp` on the same port accepts inbound connections from local
+agent clients. Under App Sandbox, `listen()` requires the server entitlement even on loopback.
+Removing it yields a blank window and a dead app. The scanner is pattern-matching, and it is wrong.
+
+**Fix applied (no rebuild needed — this is a metadata + Resolution Center action):**
+
+- [x] Rewrote App Review Information to lead with the entitlement justification in Apple's own
+      vocabulary ("listens for and responds to incoming network connections"), naming both inbound
+      clients, the hardcoded loopback bind, and an `lsof -nP -i :4318` verification step. Stored as
+      `scripts/store/review-details.json` so it diffs; applied with
+      `node scripts/asc.js review 1.0.0 scripts/store/review-details.json` and read back to confirm.
+      The old notes did mention loopback but framed the server as self-serving, which is precisely
+      what the scanner failed to match.
+- [ ] **User action — Resolution Center reply.** No public ASC API endpoint exists for Resolution
+      Center messages, so this cannot be scripted. Reply text is drafted; paste it in ASC.
+- [ ] After the reply, if the version stays `REJECTED`, resubmit: `node scripts/asc.js submit 1.0.0`.
+
+**Deferred, deliberately: `com.apple.security.application-groups` is unused.** Nothing in our code
+or config references the group, and `app-builder-lib` does not inject it — it came from our own
+`entitlements.mas.plist`. Apple's "minimum set of entitlements" line invites removing it, but doing
+so needs a rebuild, re-upload and fresh review, while the actual rejection needs none of that. It
+was not the thing flagged. Drop it in the next build that rebuilds anyway, and check the Electron
+Login Helper still signs — Electron's MAS guide carries app-groups in its parent entitlements.
+
+**Lesson.** `files.user-selected.read-write` *is* used, via `will-download` →
+`dialog.showSaveDialog` (powerbox) in `apps/desktop/main.js:112`. Verify each entitlement against a
+real call site before believing either Apple's scanner or your own memory.
