@@ -14,5 +14,16 @@
   <string>R5Z99F8UNV.com.lamonade.powerboard</string>
   <key>com.apple.developer.team-identifier</key>
   <string>R5Z99F8UNV</string>
+  <!-- Nothing in PowerBoard uses an app group, and the MAS provisioning profile does not carry
+       the capability. It is here because @electron/osx-sign injects it unconditionally for mas
+       builds (util-entitlements.js: creates the key if absent, then pushes the app identifier
+       into it) and signs from its own temp plist, so deleting it here changes the file and not
+       the binary — verified by rebuilding without it and finding it still in the signed app.
+       Removing it for real means patching the signer, which is not worth it: every Electron MAS
+       app ships this, and App Review approved 1.0.0 with it. Do not "clean this up" again. -->
+  <key>com.apple.security.application-groups</key>
+  <array>
+    <string>R5Z99F8UNV.com.lamonade.powerboard</string>
+  </array>
 </dict>
 </plist>
