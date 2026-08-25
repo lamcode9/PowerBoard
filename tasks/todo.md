@@ -1128,3 +1128,65 @@ click. If a universal build ever ships, that line is the thing to update.
   by the provisioning profile. Drop it in the next build that rebuilds for a real reason, and
   re-check the Electron Login Helper signs. Nothing calls `setLoginItemSettings`.
 - Next release only needs `attach` → `metadata` (What's New) → `submit`; the one-time records persist.
+
+---
+
+## 1.0.1 submitted (2026-08-25) — and the entitlement that cannot be removed
+
+**Submitted:** version 1.0.1, build `202608251532`, review submission
+`4e39d8de-ab40-492d-9df9-22f13c3165cb`, `WAITING_FOR_REVIEW`, release `AFTER_APPROVAL`.
+1.0.0 stays `READY_FOR_SALE` until it is approved. Review notes were re-applied to 1.0.1 —
+**always do this**, since they are what cleared the automated `network.server` check.
+
+### `application-groups` is NOT removable from our side — stop trying
+
+Removed it from `entitlements.mas.plist`, rebuilt, and it was **still in the signed app**.
+`@electron/osx-sign` (`dist/esm/util-entitlements.js`) creates the key if absent, pushes the app
+identifier into it, writes its own temp plist and signs from *that* — so editing our file changes
+the file and not the binary. There is no config opt-out on that path. The plist now carries a
+comment saying so. Correcting the earlier note in this file: `app-builder-lib` does not inject it,
+but the **signer** does, and that is where to look. Removing it for real means patching a
+dependency — not worth it; every Electron MAS app ships it and App Review approved 1.0.0 with it.
+
+**Also learned:** a new build cannot reuse an approved `CFBundleShortVersionString`. altool rejects
+it (`90062`). Once a version is live, bump the marketing version before `fastlane mac beta`.
+
+### What 1.0.1 actually ships
+
+- **Live sync died on any non-default port.** `mcpEndpointUrl()` derived its origin from
+  `window.location` while `liveSocketUrl()` beside it hardcoded `ws://127.0.0.1:4318`. `main.js`
+  honours `POWERBOARD_PORT`, so HTTP worked while the socket silently failed behind an
+  "unavailable" banner. Both now share `localServerBase()`. Verified on the production bundle
+  served from 4320 — the exact case that used to fail.
+- **A status message promised cloud saves in local mode**, where there are none.
+
+### Audit — `docs/powerboard-app-audit-2026-08-25.html`
+
+Measured on the **production** bundle (dev numbers are 3–5× worse and pure StrictMode artifact),
+against the largest real board (817 elements, 8 artboards, depth 3).
+
+**The one real problem: every state change re-renders the whole board.** A theme toggle — no
+network, no mutation — blocks **89 ms**. A drag costs **416 ms** across four long tasks. 6,243
+lines, 61 `useState`, **zero `React.memo`/`useCallback`**, 7,757 DOM nodes with no culling and no
+layer-tree virtualisation. This is the `canvas/`/`panels/`/`inspector/`/`state/` split the brief
+already calls for. Do not attempt it inside a release cut.
+
+**Two findings measured and discarded** — do not re-open:
+- `ArtboardView` scans all `project.elements` twice per artboard with `Array.includes` inside the
+  filter, and `elementPositionInArtboard` does a linear `.find()` per ancestor. Looks like a
+  textbook O(A×N×S) bug. Benchmarked: **0.141 ms/render** vs 0.031 ms indexed. 0.85% of a frame.
+  Real, and irrelevant.
+- "Typing in the inspector is slow" — 16 chars took 10.5 s, but a control run typing the same
+  string into a plain detached `<input>` on the same page took **9.6 s**. It was the automation
+  tool. App overhead is ~53 ms/char. **Not a finding.**
+
+### Still open
+
+- **Raw Node errors reach the user.** ~10 sites do `setStatus(error.message)`; opening a missing
+  board prints `ENOENT … '/Users/km/Developer/PowerBoard/boards/…/board.json'` into the status bar.
+  Failing loud is right; leaking `errno` and absolute paths into UI copy is not. Wants an
+  error→sentence mapper, keeping raw text for `console.error`.
+- **There is a third board container.** `npm run dev` resolves `POWERBOARD_ROOT` to the repo's own
+  `boards/`, not the two this file documents. That is what produced the ENOENT above.
+- The `localStorage` P0 named in `CLAUDE.md` is **already fixed** — `api.ts` uses IndexedDB and only
+  theme/pane/export prefs remain in `localStorage`. The brief is stale; correct it.
